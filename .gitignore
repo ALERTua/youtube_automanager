@@ -1,1 +1,3 @@
-﻿.idea
+/.env
+/venv/
+/.idea/
