@@ -12,9 +12,9 @@ log = Log.get_logger()
 
 
 class YoutubeAPI:
-    def __init__(self, access_foken_filepath=constants.TOKEN_FILEPATH, client_id=constants.CLIENT_ID,
+    def __init__(self, access_token_filepath=constants.TOKEN_FILEPATH, client_id=constants.CLIENT_ID,
                  client_secret=constants.CLIENT_SECRET):
-        self._access_token_filepath = Path(access_foken_filepath)
+        self._access_token_filepath = Path(access_token_filepath)
         self._client_id = client_id
         self._client_secret = client_secret
         self._access_token = None

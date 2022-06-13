@@ -13,11 +13,11 @@ log = Log.get_logger()
 
 
 class YoutubeAutoManager:
-    def __init__(self, db_filepath=constants.DB_FILEPATH, access_foken_filepath=constants.TOKEN_FILEPATH,
+    def __init__(self, db_filepath=constants.DB_FILEPATH, access_token_filepath=constants.TOKEN_FILEPATH,
                  config_filepath=constants.CONFIG_FILEPATH):
-        self.youtube = YoutubeAPI(access_foken_filepath=access_foken_filepath)
-        self.dbc = DatabaseController(db_filepath=db_filepath)
         self.config = YoutubeAutoManagerConfig(config_filepath=config_filepath)
+        self.youtube = YoutubeAPI(access_token_filepath=access_token_filepath)
+        self.dbc = DatabaseController(db_filepath=db_filepath)
 
     def check_config(self):
         if not self.config.ok:
