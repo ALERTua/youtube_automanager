@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import json
 from functools import cached_property
 from pathlib import Path
 import yaml
@@ -13,6 +14,7 @@ log = Log.get_logger()
 class YoutubeAutoManagerConfig:
     def __init__(self, config_filepath=constants.CONFIG_FILEPATH):
         self.config_filepath = Path(config_filepath)
+        self.__auth_file = None
 
     @property
     def ok(self):
@@ -34,15 +36,59 @@ class YoutubeAutoManagerConfig:
                 log.error(f"Rule has no playlist_id or playlist_name:\n{rule}")
                 return False
 
+        auth_file = config.get('auth_file')
+        if not auth_file:
+            log.error(f"No auth_file found in config @ {self.config_filepath}")
+            return False
+
+        if not self._auth_file:
+            return False
+
         return True
+
+    @property
+    def _auth_file(self):
+        if self.__auth_file is None:
+            auth_file = self.config.get('auth_file')
+            if not auth_file:
+                log.error(f"No auth_file found in config @ {self.config_filepath}")
+                return
+
+            candidates = [Path(auth_file), Path(constants.PROJECT_FOLDERPATH / auth_file)]
+            for candidate in candidates:
+                if candidate.exists():
+                    log.debug(f"Found auth_file @ {candidate}")
+                    self.__auth_file = candidate
+                    return self.__auth_file
+
+            candidates_str = '\n'.join([str(c) for c in candidates])
+            log.error(f"Auth file not found among {candidates_str}")
+        return self.__auth_file
+
+    @property
+    def _auth_data(self):
+        path = self._auth_file
+        if not path or not path.exists():
+            return {}
+
+        with path.open(mode='r', encoding='utf-8') as f:
+            return json.loads(f.read())
+
+    @property
+    def client_id(self):
+        return self._auth_data.get('web', {}).get('client_id')
+
+    @property
+    def client_secret(self):
+        return self._auth_data.get('web', {}).get('client_secret')
 
     def _config(self):
         path = self.config_filepath
-        if not path.exists():
+        if not path or not path.exists():
             log.error(f"Config file {path} not found")
             return
 
-        with path.open() as f:
+        with path.open(mode='r', encoding='utf-8') as f:
             return yaml.safe_load(f)
 
     @cached_property

@@ -1,3 +1,4 @@
+auth_file: client.json
 rules:
   - channel_name: "Channel .* Name Pattern"
     video_title_pattern: "Interesting Video Episode [0-9]+"

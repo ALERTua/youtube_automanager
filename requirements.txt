@@ -1,3 +1,8 @@
 global-logger
 PyYAML
 SQLAlchemy
+fastapi
+uvicorn
+trustme
+oauth2client
+google-api-python-client
