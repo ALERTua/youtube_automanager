@@ -15,7 +15,7 @@ Adds videos to your YouTube playlists automatically based on rules
 - Fill in the config file with your credential file path: "auth_file: full_json_path"
 - Fill in the config file with your prefered video management rules
 - Install the dependencies using "pip install -r requirements.txt"
-- Run the program using "python main.py"
+- Run the program using "python -m youtube_automanager"
 
 The script:
 - Gets all your subscribed channels

@@ -3,10 +3,11 @@
 import json
 from functools import cached_property
 from pathlib import Path
+
 import yaml
 from global_logger import Log
 
-import constants
+from . import constants
 
 log = Log.get_logger()
 

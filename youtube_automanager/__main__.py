@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import os
 import re
 from functools import cached_property
 
 from global_logger import Log
 from pyyoutube import Activity
 
-import constants
-from config import YoutubeAutoManagerConfig
-from db import DatabaseController, Video
-from youtube_api import YoutubeAPI
+from . import constants
+from .config import YoutubeAutoManagerConfig
+from .db import DatabaseController, Video
+from .youtube_api import YoutubeAPI
 
 log = Log.get_logger()
 
@@ -116,21 +117,15 @@ class YoutubeAutoManager:
             for activity in activities.items:
                 if activity.snippet.type == 'upload':
                     self.parse_activity(activity)
-                elif not activity.snippet.type:
-                    pass
-                else:
-                    pass
-            pass
+
         self.dbc.commit()
 
 
 def main():
-    log.verbose = True
+    log.verbose = os.getenv('YAM_VERBOSE', None) is not None
     yam = YoutubeAutoManager()
     yam.run()
-    print("")
 
 
 if __name__ == '__main__':
     main()
-    print("")

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from functools import cached_property
+from pathlib import Path
 from typing import Iterable
 
-from pathlib import Path
-from sqlalchemy import Column, Integer, create_engine, String, update, insert
+from global_logger import Log
+from sqlalchemy import Column, create_engine, String, update
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-import constants
-from global_logger import Log
+
+from . import constants
 
 log = Log.get_logger()
 
@@ -101,7 +102,8 @@ class DatabaseController:
 
 
 def main():
-    db = DatabaseController()
+    log.verbose = True
+    db = DatabaseController(constants.DB_FILEPATH)
     print("")
 
 

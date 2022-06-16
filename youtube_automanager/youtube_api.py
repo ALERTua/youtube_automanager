@@ -16,10 +16,10 @@ from googleapiclient.discovery import build
 from oauth2client.client import AccessTokenCredentials
 from pyyoutube import Api, AccessToken
 
-import constants
+from . import constants
 
 if TYPE_CHECKING:
-    from db import DatabaseController
+    from .db import DatabaseController
 log = Log.get_logger()
 
 
@@ -222,7 +222,11 @@ class YoutubeAPI:
 
 def main():
     log.verbose = True
-    youtube = YoutubeAPI()
+    import os
+    from .db import DatabaseController
+    # noinspection PyUnusedLocal
+    youtube = YoutubeAPI(client_id=os.getenv('YOUTUBE_CLIENT_ID'), client_secret=os.getenv('YOUTUBE_CLIENT_SECRET'),
+                         database_controller=DatabaseController(db_filepath=constants.DB_FILEPATH))
     print("")
 
 
