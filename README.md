@@ -3,14 +3,14 @@ Adds videos to your YouTube playlists automatically based on rules
 - Create a Project in the [Google Cloud Platform](https://console.cloud.google.com/projectcreate)
 - Click Create Credentials
 
-![](media/creds_list.jpg)
+![](docs/images/creds_list.jpg)
 - Select OAuth Client ID
 - Select Application Type: Web Application
 - Enter any Name
 - Add Authorized redirect URI: https://localhost/
 - Download Credentials JSON file
 
-![](media/creds_create.jpg)
+![](docs/images/creds_create.jpg)
 - Create config file @ ~/youtube_automanager/youtube_automanager.yaml using the template file youtube_automanager.yaml.example  
 - Fill in the config file with your credential file path: "auth_file: full_json_path"
 - Fill in the config file with your prefered video management rules
