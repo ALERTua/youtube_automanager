@@ -11,7 +11,7 @@ Adds videos to your YouTube playlists automatically based on rules
 - Download Credentials JSON file
 
 ![](media/creds_create.jpg)
-- Create config file @ ~/youtube_automanager/youtube_automanager.yaml using the [template](youtube_automanager.yaml.example)  
+- Create config file @ ~/youtube_automanager/youtube_automanager.yaml using the template file youtube_automanager.yaml.example  
 - Fill in the config file with your credential file path: "auth_file: full_json_path"
 - Fill in the config file with your prefered video management rules
 - Install the dependencies using "pip install -r requirements.txt"
