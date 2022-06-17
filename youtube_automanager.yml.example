@@ -1,7 +1,36 @@
 auth_file: path/to/client.json
+start_date: 2022-06-17 00:00
 rules:
   - channel_name: "Channel .* Name Pattern"
+    # in case channel name changes, the script can use channel_id as a main key to find the channel
+    channel_id: "Channel_id"
     video_title_pattern: "Interesting Video Episode [0-9]+"
     playlist_name: "Playlist Name"
+    # in case playlist_name name changes, the script can use playlist_id as a main key to find the playlist
+    playlist_id: "Playlist_id"
+    # adds all videos that match pattern to the playlist
+
   - channel_id: "Channel_id"
-    playlist_id: "Playlist_id2"
+    playlist_id: "Playlist_id"
+    # adds all videos from the channel to the playlist
+
+  - channel_id:
+     - "Channel_id1"
+     - "Channel_id2"
+    playlist_id: "Playlist_id"
+    # channel_id can be a list of channel ids
+
+  - channel_name:
+    - "Channel Name 1"
+    - "Channel Name 2"
+    playlist_id: "Playlist_id"
+    # channel_name can be a list of channel names
+
+  - channel_name:
+    - "Channel Name 1"
+    - "Channel Name 2"
+    # video_title_pattern can be a list of video title patterns
+    video_title_pattern:
+    - "Interesting Video Episode [0-9]+"
+    - "Video .* Episode [0-9]+"
+    playlist_id: "Playlist_id"

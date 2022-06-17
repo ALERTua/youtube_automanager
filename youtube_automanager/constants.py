@@ -1,12 +1,16 @@
 import os
 from pathlib import Path
 
+from global_logger import Log
+
 project_name = Path(__file__).parent.name
 USERNAME = os.environ.get("USERNAME")
 HOME = Path(os.environ.get("YAM_HOME", Path.home()))
 PROJECT_FOLDERPATH = HOME / project_name
-if not PROJECT_FOLDERPATH.exists():
-    PROJECT_FOLDERPATH.mkdir()
+PROJECT_FOLDERPATH.mkdir(exist_ok=True)
+LOGS_FOLDER = PROJECT_FOLDERPATH / 'logs'
+LOGS_FOLDER.mkdir(exist_ok=True)
+log = Log.get_logger(logs_dir=LOGS_FOLDER, max_log_files=10)
 
 FILENAME_BASE = f'{project_name}'
 TOKEN_FILENAME = f'{FILENAME_BASE}.json'

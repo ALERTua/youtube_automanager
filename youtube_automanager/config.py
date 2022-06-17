@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import datetime
 import json
 from functools import cached_property
 from pathlib import Path
 
+import pendulum
 import yaml
 from global_logger import Log
 
@@ -16,12 +18,29 @@ class YoutubeAutoManagerConfig:
     def __init__(self, config_filepath=constants.CONFIG_FILEPATH):
         self.config_filepath = Path(config_filepath)
         self.__auth_file = None
+        self.start_date = None  # type: pendulum.DateTime
 
     @property
     def ok(self):
         config = self.config
         if config is None:
             return False
+
+        auth_file = config.get('auth_file')
+        if not auth_file:
+            log.error(f"No auth_file found in config @ {self.config_filepath}")
+            return False
+
+        if not self._auth_file:
+            return False
+
+        start_date = config.get('start_date', None)
+        if start_date is not None:
+            try:
+                self.start_date = pendulum.instance(datetime.datetime.fromisoformat(start_date))
+            except Exception as e:
+                log.exception(f"Failed to parse start_date {start_date}. Please use ISO8601 format", exc_info=e)
+                return False
 
         rules = config.get('rules', [])
         if not rules:
@@ -36,14 +55,6 @@ class YoutubeAutoManagerConfig:
             if not any((rule.get('playlist_id'), rule.get('playlist_name'))):
                 log.error(f"Rule has no playlist_id or playlist_name:\n{rule}")
                 return False
-
-        auth_file = config.get('auth_file')
-        if not auth_file:
-            log.error(f"No auth_file found in config @ {self.config_filepath}")
-            return False
-
-        if not self._auth_file:
-            return False
 
         return True
 

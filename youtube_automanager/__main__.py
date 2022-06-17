@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import datetime
 import os
 import re
 from functools import cached_property
 
+import pendulum
 from global_logger import Log
 from pyyoutube import Activity
 
@@ -47,26 +49,45 @@ class YoutubeAutoManager:
         video_channel_id = activity.snippet.channelId
         video_channel_name = activity.snippet.channelTitle
         video_title = activity.snippet.title
+        video_date = pendulum.instance(datetime.datetime.fromisoformat(activity.snippet.publishedAt))
         log.debug(f"Working on {video_channel_name} : {video_title}")
         db_video = Video.find(self.dbc.db, id=video_id)
         if db_video:
-            log.debug(f"Video {video_id} already parsed")
+            log.debug(f"Video {video_id} '{video_title}' already parsed")
+            return
+
+        start_date = self.config.start_date
+        if start_date and video_date < start_date:
+            log.debug(f"Video {video_id} '{video_title}' is too old")
             return
 
         rules = self.config.config.get('rules', [])
         for rule in rules:
             rule_channel_id = rule.get('channel_id')
-            rule_channel_name = rule.get('channel_name')
-            if rule_channel_id and rule_channel_id != video_channel_id:
+            if rule_channel_id and not isinstance(rule_channel_id, list):
+                rule_channel_id = [rule_channel_id]
+
+            if rule_channel_id and not any([i for i in rule_channel_id if i == video_channel_id]):
+                log.debug(f"Video {video_id} '{video_title}' doesn't match any of the rule channel ids: "
+                          f"{rule_channel_id}")
                 continue
 
-            if rule_channel_name and not re.match(rule_channel_name, video_channel_name):
+            rule_channel_name = rule.get('channel_name')
+            if rule_channel_name and not isinstance(rule_channel_name, list):
+                rule_channel_name = [rule_channel_name]
+            if rule_channel_name and not any([i for i in rule_channel_name if re.match(i, video_channel_name)]):
+                log.debug(f"Video {video_id} '{video_title}' doesn't match any of the rule channel names: "
+                          f"{rule_channel_name}")
                 continue
 
             rule_video_title_pattern = rule.get('video_title_pattern')
-            if rule_video_title_pattern and not (re.match(rule_video_title_pattern, video_title, flags=re.I)
-                                                 or re.search(rule_video_title_pattern, video_title, flags=re.I)):
-                log.debug(f"Video {video_id} '{video_title}' title does not match pattern {rule_video_title_pattern}")
+            if rule_video_title_pattern and not isinstance(rule_video_title_pattern, list):
+                rule_video_title_pattern = [rule_video_title_pattern]
+            if rule_video_title_pattern and not any([i for i in rule_video_title_pattern if
+                                                     re.match(i, video_title, flags=re.I)
+                                                     or re.search(i, video_title, flags=re.I)]):
+                log.debug(f"Video {video_id} '{video_title}' title does not match any of the patterns "
+                          f"{rule_video_title_pattern}")
                 continue
 
             rule_playlist_id = rule.get('playlist_id')
@@ -95,6 +116,7 @@ class YoutubeAutoManager:
                 self.dbc.add(video)
                 continue
 
+            log.green(f"Adding video {video_id} '{video_title}' to playlist {playlist_id} '{playlist_title}'")
             self.youtube.add_video_to_playlist(video_id, playlist_id)
             self.dbc.add(video)
 
@@ -109,14 +131,24 @@ class YoutubeAutoManager:
             log.error("Failed to authorize")
             return
 
+        start_date = self.config.start_date
+        if start_date:
+            log.green(f"Using {start_date} as a Start Date")
+            start_date = start_date.to_iso8601_string()
+
         subscriptions = self.youtube.get_subscriptions()
-        for subscription in subscriptions:
+        log.green(f"Processing videos for {len(subscriptions)} subscriptions")
+        for i, subscription in enumerate(subscriptions):
             channel_id = subscription.snippet.resourceId.channelId
+            channel_name = subscription.snippet.title
             activities = self.youtube.api.get_activities_by_channel(
-                channel_id=channel_id, parts=['id', 'snippet', 'contentDetails'])
-            for activity in activities.items:
-                if activity.snippet.type == 'upload':
-                    self.parse_activity(activity)
+                channel_id=channel_id, after=start_date, parts=['id', 'snippet', 'contentDetails'])
+            activities = [a for a in activities.items if a.snippet.type == 'upload']
+
+            log.green(f"Processing {len(activities)} videos for {channel_name} ({i + 1}/{len(subscriptions)})")
+            for j, activity in enumerate(activities):
+                # log.green(f"Processing video {j+1}/{len(activities)}")
+                self.parse_activity(activity)
 
         self.dbc.commit()
 
