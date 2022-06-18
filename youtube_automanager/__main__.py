@@ -144,8 +144,11 @@ class YoutubeAutoManager:
             activities = self.youtube.api.get_activities_by_channel(
                 channel_id=channel_id, after=start_date, parts=['id', 'snippet', 'contentDetails'])
             activities = [a for a in activities.items if a.snippet.type == 'upload']
+            if not activities:
+                log.debug(f"No videos found for channel {channel_id} '{channel_name}'")
+                continue
 
-            log.green(f"Processing {len(activities)} videos for {channel_name} ({i + 1}/{len(subscriptions)})")
+            log.green(f"{i + 1}/{len(subscriptions)} Processing {len(activities)} videos for {channel_name}")
             for j, activity in enumerate(activities):
                 # log.green(f"Processing video {j+1}/{len(activities)}")
                 self.parse_activity(activity)
