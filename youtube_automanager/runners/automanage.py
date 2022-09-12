@@ -1,0 +1,247 @@
+import datetime
+import re
+import time
+
+import pendulum
+from global_logger import Log
+from pyyoutube import Api, Activity
+
+from youtube_automanager import constants
+from youtube_automanager.config import YoutubeAutoManagerConfig
+from youtube_automanager.db import DatabaseController
+from youtube_automanager.oauth import OAuth
+from youtube_automanager.youtube_api import YoutubeAPI
+
+LOG = Log.get_logger()
+
+
+def token_expired(dt: datetime.datetime):
+    return datetime.datetime.now() > dt
+
+
+class YoutubeAutoManager:
+    def __init__(self, oauth: OAuth, db: DatabaseController, config: YoutubeAutoManagerConfig):
+        self.oauth: OAuth = oauth
+        self.db: DatabaseController = db
+        self.config: YoutubeAutoManagerConfig = config
+        self._yt_api = None
+        self._start_date = None
+
+    def check_config(self):
+        config = self.config
+        if not config.ok:
+            LOG.error(f"Config is not ok. "
+                      f"Please create a properly formatted YAML config file @ {config.config_filepath}")
+            return False
+
+        return True
+
+    def save_token(self):
+        LOG.debug("Saving new token")
+        db = self.db
+        oauth = self.oauth
+        db.config.token = oauth.access_token
+        db.config.token_expires = oauth.token_expires_at
+        db.config.refresh_token = oauth.refresh_token
+        db.save_config()
+        db.commit()
+
+    def authorize(self):
+        db = self.db
+        _ = db.config
+
+        token = db.config.token
+        LOG.debug(f"Got saved token: {token}")
+        token_expires_dt = db.config.token_expires
+        LOG.debug(f"Got saved token expiration: {token_expires_dt}")
+        refresh_token = db.config.refresh_token
+        LOG.debug(f"Got saved refresh token: {refresh_token}")
+        if token_expires_dt and token_expired(token_expires_dt):
+            LOG.green("The saved token has expired. Need to get a new one.")
+            token = None
+            token_expires_dt = None
+            refresh_token = None
+        elif token_expires_dt:
+            LOG.green(f"Using the saved token. It expires @ {pendulum.instance(token_expires_dt).to_datetime_string()}")
+
+        oauth = self.oauth
+        oauth.authorize(
+            token=token,
+            expires_at_dt=token_expires_dt,
+            refresh_token=refresh_token,
+        )
+        if token:
+            oauth.refresh_token_()
+            LOG.green(f"Using the saved token. It expires @ {pendulum.instance(token_expires_dt).to_datetime_string()}")
+        self.save_token()
+        oauth.run_token_refreshing_daemon()
+        LOG.green("done authorizing")
+
+    @property
+    def start_date(self) -> datetime.datetime:
+        if self._start_date is None:
+            last_update = self.db.config.last_update
+            cfg_date = self.config.start_date
+            if cfg_date and last_update:
+                if cfg_date.timestamp() > last_update.timestamp():
+                    start_date = cfg_date
+                else:
+                    start_date = last_update
+            elif cfg_date:
+                start_date = cfg_date
+            elif last_update:
+                start_date = last_update
+            else:
+                start_date = datetime.datetime.now()
+
+            LOG.green(f"Using {pendulum.instance(start_date).to_datetime_string()} as a Start Date")
+            self._start_date = start_date
+        return self._start_date
+
+    @start_date.setter
+    def start_date(self, value: datetime.datetime):
+        LOG.green(f"Saving new start date {pendulum.instance(value).to_datetime_string()}")
+        self._start_date = value
+        self.db.config.last_update = value
+        self.db.save_config()
+        self.db.commit()
+
+    def parse_activity(self, activity: Activity, start_date: datetime.datetime):
+        video_id = activity.contentDetails.upload.videoId
+        video_channel_id = activity.snippet.channelId
+        video_channel_name = activity.snippet.channelTitle
+        video_title = activity.snippet.title
+        video_date = pendulum.instance(datetime.datetime.fromisoformat(activity.snippet.publishedAt))
+        LOG.debug(f"Working on {video_channel_name} : {video_title}")
+
+        if video_date < pendulum.instance(start_date):
+            LOG.debug(f"Video {video_id} '{video_title}' is too old")
+            return
+
+        rules = self.config.config.get('rules', [])
+        for rule in rules:
+            rule_channel_id = rule.get('channel_id')
+            if rule_channel_id and not isinstance(rule_channel_id, list):
+                rule_channel_id = [rule_channel_id]
+
+            if rule_channel_id and not any([i for i in rule_channel_id if i == video_channel_id]):
+                LOG.debug(f"Video {video_id} '{video_title}' doesn't match any of the rule channel ids: "
+                          f"{rule_channel_id}")
+                continue
+
+            rule_channel_name = rule.get('channel_name')
+            if rule_channel_name and not isinstance(rule_channel_name, list):
+                rule_channel_name = [rule_channel_name]
+            if rule_channel_name and not any([i for i in rule_channel_name if re.match(i, video_channel_name)]):
+                LOG.debug(f"Video {video_id} '{video_title}' doesn't match any of the rule channel names: "
+                          f"{rule_channel_name}")
+                continue
+
+            rule_video_title_pattern = rule.get('video_title_pattern')
+            if rule_video_title_pattern and not isinstance(rule_video_title_pattern, list):
+                rule_video_title_pattern = [rule_video_title_pattern]
+            if rule_video_title_pattern and not any([i for i in rule_video_title_pattern if
+                                                     re.match(i, video_title, flags=re.I)
+                                                     or re.search(i, video_title, flags=re.I)]):
+                LOG.debug(f"Video {video_id} '{video_title}' title does not match any of the patterns "
+                          f"{rule_video_title_pattern}")
+                continue
+
+            rule_playlist_id = rule.get('playlist_id')
+            rule_playlist_name = rule.get('playlist_name')
+            playlist_parts = ['snippet']
+            if rule_playlist_id:
+                playlist = self.yt_api.api.get_playlist_by_id(playlist_id=rule_playlist_id, parts=playlist_parts)
+            elif rule_playlist_name:
+                playlist = self.yt_api.api.get_playlists(mine=True, parts=playlist_parts, count=None)
+                playlist = next((p for p in playlist.items if p.snippet.localized.title == rule_playlist_name), None)
+            else:
+                LOG.error(f"Rule has no playlist_id or playlist_name:\n{rule}")
+                continue
+
+            if not playlist:
+                LOG.error(f"Failed to find playlist for rule:\n{rule}")
+                continue
+
+            playlist_title = playlist.snippet.localized.title
+            playlist_id = playlist.id
+            LOG.green(f"Video {video_id} '{video_title}' matches rule:\n{rule}\n"
+                      f"Adding it to playlist {playlist_id} '{playlist_title}'")
+            if self.yt_api.video_in_playlist(video_id=video_id, playlist_id=playlist_id):
+                LOG.green(f"Video {video_id} '{video_title}' already in playlist {playlist_id} '{playlist_title}'")
+                continue
+
+            LOG.green(f"Adding video {video_id} '{video_title}' to playlist {playlist_id} '{playlist_title}'")
+            self.yt_api.add_video_to_playlist(video_id, playlist_id)
+
+    def parse(self):
+        LOG.green("Parsing")
+        start_date = self.start_date
+        start_date_str = pendulum.instance(start_date).to_iso8601_string()
+        subscriptions = self.yt_api.get_subscriptions()
+        new_start_date = datetime.datetime.now()
+        LOG.green(f"Processing videos for {len(subscriptions)} subscriptions")
+        for i, subscription in enumerate(subscriptions):
+            channel_id = subscription.snippet.resourceId.channelId
+            channel_name = subscription.snippet.title
+            activities = self.yt_api.api.get_activities_by_channel(
+                channel_id=channel_id, after=start_date_str, parts=['id', 'snippet', 'contentDetails'])
+            activities = [a for a in activities.items if a.snippet.type == 'upload']
+            if not activities:
+                LOG.debug(f"{i + 1}/{len(subscriptions)} No videos found for channel {channel_id} '{channel_name}'")
+                continue
+
+            LOG.green(f"{i + 1}/{len(subscriptions)} Processing {len(activities)} videos for {channel_name}")
+            for j, activity in enumerate(activities):
+                # log.green(f"Processing video {j+1}/{len(activities)}")
+                self.parse_activity(activity=activity, start_date=start_date)
+
+        LOG.green(f"Done parsing {len(subscriptions)} subscriptions")
+        self.start_date = new_start_date
+
+    def start(self):
+        self.authorize()
+        while True:
+            self.parse()
+            sleep = 60 * 60
+            LOG.green(f"Sleeping {sleep} seconds")
+            time.sleep(sleep)
+            self.config.re_read_config()
+            self.check_config()
+
+    @property
+    def api(self):
+        return Api(
+            client_id=self.oauth.client_id,
+            client_secret=self.oauth.client_secret,
+            access_token=self.oauth.access_token,
+        )
+
+    @property
+    def yt_api(self):
+        if self._yt_api is None:
+            self._yt_api = YoutubeAPI(self.api, self.oauth.access_token)
+        self._yt_api.access_token = self.oauth.access_token
+        return self._yt_api
+
+
+if __name__ == '__main__':
+    oauth_ = OAuth(
+        client_secrets_file=constants.SECRETS_FILE,
+        scopes=constants.SCOPES,
+        host=constants.HOST,
+        port=constants.PORT,
+        redirect_uri=constants.REDIRECT_URI,
+        token_url=constants.TOKEN_URL,
+    )
+    db_ = DatabaseController(
+        db_filepath=constants.DB_FILEPATH,
+        username=constants.USERNAME,
+    )
+    config_ = YoutubeAutoManagerConfig(config_filepath=constants.CONFIG_FILEPATH)
+    if not config_.ok:
+        exit(1)
+
+    manager = YoutubeAutoManager(oauth=oauth_, db=db_, config=config_)
+    manager.start()
+    pass

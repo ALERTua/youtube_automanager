@@ -1,32 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import datetime
 from functools import cached_property
 from pathlib import Path
 from typing import Iterable
 
 from global_logger import Log
-from sqlalchemy import Column, create_engine, String, update
+from sqlalchemy import Column, create_engine, String, update, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.sql import func
 
-from . import constants
+from youtube_automanager import constants
 
 log = Log.get_logger()
 
-Base = declarative_base()  # https://leportella.com/sqlalchemy-tutorial/
-
-
-class Video(Base):
-    __tablename__ = 'videos'
-
-    id = Column(String(50), primary_key=True)
-
-    def __repr__(self):
-        return f'{self.__class__.__name__} {self.id}'
-
-    @classmethod
-    def find(cls, session, **kwargs):
-        return session.query(cls).filter_by(**kwargs).all()
+# https://docs.sqlalchemy.org/
+# https://leportella.com/sqlalchemy-tutorial/
+Base = declarative_base()
 
 
 class YAMConfig(Base):
@@ -35,6 +26,9 @@ class YAMConfig(Base):
 
     username = Column(INDEX_NAME, String(50), primary_key=True)
     token = Column('token', String, nullable=True)
+    token_expires = Column('token_expires', DateTime, nullable=True)
+    refresh_token = Column('refresh_token', String, nullable=True)
+    last_update = Column('last_update', DateTime, default=datetime.datetime.utcnow())
 
     @classmethod
     def instantiate(cls, session, username):
@@ -64,8 +58,9 @@ class YAMConfig(Base):
 
 
 class DatabaseController:
-    def __init__(self, db_filepath=constants.DB_FILEPATH):
-        self.db_filepath = Path(db_filepath)
+    def __init__(self, db_filepath: str | Path, username: str):
+        self.db_filepath: Path = Path(db_filepath)
+        self.username: str = username
         self._config = None
 
     @cached_property
@@ -92,9 +87,9 @@ class DatabaseController:
         return self.db.add_all(obj)
 
     @property
-    def config(self):
+    def config(self) -> YAMConfig:
         if self._config is None:
-            self._config = YAMConfig.instantiate(self.db, constants.USERNAME)
+            self._config = YAMConfig.instantiate(self.db, self.username)
         return self._config
 
     def save_config(self):
@@ -103,7 +98,8 @@ class DatabaseController:
 
 def main():
     log.verbose = True
-    db = DatabaseController(constants.DB_FILEPATH)
+    db = DatabaseController(constants.DB_FILEPATH, constants.USERNAME)
+    db.db.query()
     print("")
 
 
