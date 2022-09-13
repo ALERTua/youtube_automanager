@@ -7,9 +7,12 @@ project_name = Path(__file__).parent.name
 USERNAME = os.environ.get("USERNAME", 'user')
 HOME = Path(os.environ.get("HOME", '/app/config'))
 SECRETS_FILE = HOME / os.getenv('SECRETS_FILENAME', 'client_secret.json')
-LOGS_FOLDER = HOME / 'logs'
-LOGS_FOLDER.mkdir(exist_ok=True)
-log = Log.get_logger(logs_dir=LOGS_FOLDER, max_log_files=10)
+log_kwargs = dict()
+if os.getenv('LOGFILES') == 'True':
+    LOGS_FOLDER = HOME / 'logs'
+    LOGS_FOLDER.mkdir(exist_ok=True)
+    log_kwargs = dict(logs_dir=LOGS_FOLDER, max_log_files=10)
+log = Log.get_logger(**log_kwargs)
 if os.getenv('VERBOSE') == 'True':
     log.verbose = True
 
