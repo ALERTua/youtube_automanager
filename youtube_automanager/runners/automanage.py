@@ -43,16 +43,11 @@ class YoutubeAutoManager:
         db = self.db
         oauth = self.oauth
 
-        new_access_token = oauth.access_token
-        LOG.debug(f"Saving new token {new_access_token}")
-        db.config.token = new_access_token
-
-        new_token_expires = oauth.token_expires_at
-        new_token_expires_local = pendulum.instance(new_token_expires, UTC).in_timezone(pendulum.local_timezone())
-        LOG.debug(f"Saving new token expires: {new_token_expires_local.to_datetime_string()}")
-        db.config.token_expires = new_token_expires
-
+        saved_refresh_token = db.config.refresh_token
         new_refresh_token = oauth.refresh_token
+        if saved_refresh_token == new_refresh_token:
+            return
+
         LOG.debug(f"Saving new refresh token {new_refresh_token}")
         db.config.refresh_token = new_refresh_token
 
@@ -64,34 +59,15 @@ class YoutubeAutoManager:
         _ = db.config
         oauth = self.oauth
 
-        token = db.config.token
-        LOG.debug(f"Got saved token: {token}")
-        token_expires_dt = db.config.token_expires
-        LOG.debug(f"Got saved token expiration: {pendulum.instance(token_expires_dt).to_datetime_string()}")
         refresh_token = db.config.refresh_token
-        oauth.session.token['refresh_token'] = refresh_token
-        LOG.debug(f"Got saved refresh token: {refresh_token}")
+        if refresh_token:
+            oauth.session.token['refresh_token'] = refresh_token
+            LOG.debug(f"Got saved refresh token: {refresh_token}")
         if refresh_token and (success := oauth.refresh_token_()):
-            pass
+            LOG.green(f"Authorized using the saved refresh token.")
         else:
-            if token_expires_dt and token_expired(token_expires_dt):
-                LOG.green("The saved token has expired. Need to get a new one.")
-                token = None
-                token_expires_dt = None
-                refresh_token = None
-            elif token_expires_dt:
-                LOG.green(f"Using the saved token. It expires @ {pendulum.instance(token_expires_dt).to_datetime_string()}")
-
-            oauth.authorize(
-                token=token,
-                expires_at_dt=token_expires_dt,
-                refresh_token=refresh_token,
-            )
-            if token:
-                oauth.refresh_token_()
-                token_expires_str = pendulum.instance(token_expires_dt).to_datetime_string()
-                LOG.green(f"Using the saved token. It expires @ {token_expires_str}")
-        self.save_token()
+            oauth.authorize()
+            self.save_token()
         # oauth.run_token_refreshing_daemon()  # todo:
         LOG.green("done authorizing")
 

@@ -24,8 +24,6 @@ class YAMConfig(Base):
     INDEX_NAME = 'username'
 
     username = Column(INDEX_NAME, String(50), primary_key=True)
-    token = Column('token', String, nullable=True)
-    token_expires = Column('token_expires', DateTime, nullable=True)
     refresh_token = Column('refresh_token', String, nullable=True)
     last_update = Column('last_update', DateTime, default=datetime.datetime.utcnow())
 

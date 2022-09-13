@@ -81,14 +81,13 @@ class OAuth:
     def _token_updater(self, token):
         self.session.access_token = token
 
-    def _flow(self, token=None) -> InstalledAppFlow:
+    def _flow(self) -> InstalledAppFlow:
         if self.__flow is None:
             output = InstalledAppFlow.from_client_secrets_file(
                 client_secrets_file=self.client_secrets_file,
                 scopes=self.scopes,
                 auto_refresh_url=self.token_url,
                 redirect_uri=self.redirect_uri,
-                # token=token,
             )
             extra = {
                 'client_id': output.client_config.get('client_id'),
@@ -163,21 +162,11 @@ class OAuth:
         self.session.token = output = self.flow.fetch_token(authorization_response=response)
         LOG.debug(f"Fetched token:\n{pprint.pformat(output)}")
 
-    def authorize(self, token=None, expires_at_dt: datetime = None, refresh_token=None):
+    def authorize(self, refresh_token=None):
         if self.__flow is None:
             self._flow()
-            if refresh_token and (success := self.refresh_token_()):
-                pass
-            elif token and expires_at_dt:  # and refresh_token
-                date_diff = pendulum.instance(expires_at_dt, tz=UTC) - pendulum.now(UTC)
-                seconds_diff = date_diff.in_seconds()
-                self.flow.oauth2session.token = {
-                    'access_token': token,
-                    'expires_at': expires_at_dt.timestamp(),
-                    'expires_in': seconds_diff,
-                    'refresh_token': refresh_token,
-                }
-                pass
+            if refresh_token:
+                self.refresh_token_()
 
         if self.authorized:
             return
