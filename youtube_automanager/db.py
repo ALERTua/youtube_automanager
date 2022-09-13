@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import datetime
+from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from typing import Iterable
@@ -25,7 +25,7 @@ class YAMConfig(Base):
 
     username = Column(INDEX_NAME, String(50), primary_key=True)
     refresh_token = Column('refresh_token', String, nullable=True)
-    last_update = Column('last_update', DateTime, default=datetime.datetime.utcnow())
+    last_update = Column('last_update', DateTime, default=datetime.now())
 
     @classmethod
     def instantiate(cls, session, username):
