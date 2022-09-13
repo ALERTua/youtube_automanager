@@ -1,9 +1,11 @@
-import datetime
+from datetime import datetime
 import re
 import time
+from functools import cache
 
 import pendulum
 from global_logger import Log
+from pendulum import UTC
 from pyyoutube import Api, Activity
 
 from youtube_automanager import constants
@@ -15,8 +17,8 @@ from youtube_automanager.youtube_api import YoutubeAPI
 LOG = Log.get_logger()
 
 
-def token_expired(dt: datetime.datetime):
-    return datetime.datetime.now() > dt
+def token_expired(dt: datetime):
+    return datetime.now() > dt
 
 
 class YoutubeAutoManager:
@@ -40,45 +42,61 @@ class YoutubeAutoManager:
         LOG.debug("Saving new token")
         db = self.db
         oauth = self.oauth
-        db.config.token = oauth.access_token
-        db.config.token_expires = oauth.token_expires_at
-        db.config.refresh_token = oauth.refresh_token
+
+        new_access_token = oauth.access_token
+        LOG.debug(f"Saving new token {new_access_token}")
+        db.config.token = new_access_token
+
+        new_token_expires = oauth.token_expires_at
+        new_token_expires_local = pendulum.instance(new_token_expires, UTC).in_timezone(pendulum.local_timezone())
+        LOG.debug(f"Saving new token expires: {new_token_expires_local.to_datetime_string()}")
+        db.config.token_expires = new_token_expires
+
+        new_refresh_token = oauth.refresh_token
+        LOG.debug(f"Saving new refresh token {new_refresh_token}")
+        db.config.refresh_token = new_refresh_token
+
         db.save_config()
         db.commit()
 
     def authorize(self):
         db = self.db
         _ = db.config
+        oauth = self.oauth
 
         token = db.config.token
         LOG.debug(f"Got saved token: {token}")
         token_expires_dt = db.config.token_expires
-        LOG.debug(f"Got saved token expiration: {token_expires_dt}")
+        LOG.debug(f"Got saved token expiration: {pendulum.instance(token_expires_dt).to_datetime_string()}")
         refresh_token = db.config.refresh_token
+        oauth.session.token['refresh_token'] = refresh_token
         LOG.debug(f"Got saved refresh token: {refresh_token}")
-        if token_expires_dt and token_expired(token_expires_dt):
-            LOG.green("The saved token has expired. Need to get a new one.")
-            token = None
-            token_expires_dt = None
-            refresh_token = None
-        elif token_expires_dt:
-            LOG.green(f"Using the saved token. It expires @ {pendulum.instance(token_expires_dt).to_datetime_string()}")
+        if refresh_token and (success := oauth.refresh_token_()):
+            pass
+        else:
+            if token_expires_dt and token_expired(token_expires_dt):
+                LOG.green("The saved token has expired. Need to get a new one.")
+                token = None
+                token_expires_dt = None
+                refresh_token = None
+            elif token_expires_dt:
+                LOG.green(f"Using the saved token. It expires @ {pendulum.instance(token_expires_dt).to_datetime_string()}")
 
-        oauth = self.oauth
-        oauth.authorize(
-            token=token,
-            expires_at_dt=token_expires_dt,
-            refresh_token=refresh_token,
-        )
-        if token:
-            oauth.refresh_token_()
-            LOG.green(f"Using the saved token. It expires @ {pendulum.instance(token_expires_dt).to_datetime_string()}")
+            oauth.authorize(
+                token=token,
+                expires_at_dt=token_expires_dt,
+                refresh_token=refresh_token,
+            )
+            if token:
+                oauth.refresh_token_()
+                token_expires_str = pendulum.instance(token_expires_dt).to_datetime_string()
+                LOG.green(f"Using the saved token. It expires @ {token_expires_str}")
         self.save_token()
-        oauth.run_token_refreshing_daemon()
+        # oauth.run_token_refreshing_daemon()  # todo:
         LOG.green("done authorizing")
 
     @property
-    def start_date(self) -> datetime.datetime:
+    def start_date(self) -> datetime:
         if self._start_date is None:
             last_update = self.db.config.last_update
             cfg_date = self.config.start_date
@@ -92,26 +110,26 @@ class YoutubeAutoManager:
             elif last_update:
                 start_date = last_update
             else:
-                start_date = datetime.datetime.now()
+                start_date = datetime.now()
 
             LOG.green(f"Using {pendulum.instance(start_date).to_datetime_string()} as a Start Date")
             self._start_date = start_date
         return self._start_date
 
     @start_date.setter
-    def start_date(self, value: datetime.datetime):
+    def start_date(self, value: datetime):
         LOG.green(f"Saving new start date {pendulum.instance(value).to_datetime_string()}")
         self._start_date = value
         self.db.config.last_update = value
         self.db.save_config()
         self.db.commit()
 
-    def parse_activity(self, activity: Activity, start_date: datetime.datetime):
+    def parse_activity(self, activity: Activity, start_date: datetime):
         video_id = activity.contentDetails.upload.videoId
         video_channel_id = activity.snippet.channelId
         video_channel_name = activity.snippet.channelTitle
         video_title = activity.snippet.title
-        video_date = pendulum.instance(datetime.datetime.fromisoformat(activity.snippet.publishedAt))
+        video_date = pendulum.instance(datetime.fromisoformat(activity.snippet.publishedAt))
         LOG.debug(f"Working on {video_channel_name} : {video_title}")
 
         if video_date < pendulum.instance(start_date):
@@ -149,11 +167,10 @@ class YoutubeAutoManager:
 
             rule_playlist_id = rule.get('playlist_id')
             rule_playlist_name = rule.get('playlist_name')
-            playlist_parts = ['snippet']
             if rule_playlist_id:
-                playlist = self.yt_api.api.get_playlist_by_id(playlist_id=rule_playlist_id, parts=playlist_parts)
+                playlist = self.yt_api.get_playlist_by_id(playlist_id=rule_playlist_id)
             elif rule_playlist_name:
-                playlist = self.yt_api.api.get_playlists(mine=True, parts=playlist_parts, count=None)
+                playlist = self.yt_api.get_playlists()
                 playlist = next((p for p in playlist.items if p.snippet.localized.title == rule_playlist_name), None)
             else:
                 LOG.error(f"Rule has no playlist_id or playlist_name:\n{rule}")
@@ -179,35 +196,44 @@ class YoutubeAutoManager:
         start_date = self.start_date
         start_date_str = pendulum.instance(start_date).to_iso8601_string()
         subscriptions = self.yt_api.get_subscriptions()
-        new_start_date = datetime.datetime.now()
-        LOG.green(f"Processing videos for {len(subscriptions)} subscriptions")
+        total_subs = len(subscriptions)
+        LOG.green(f"Got {total_subs} subscriptions")
+        after_date = datetime.now()
+        after_date_str = pendulum.instance(after_date).to_iso8601_string()
+
+        LOG.green(f"Processing videos from {total_subs} subscriptions")
         for i, subscription in enumerate(subscriptions):
+            LOG.debug(f"Parsing subscription {i + 1}")
             channel_id = subscription.snippet.resourceId.channelId
             channel_name = subscription.snippet.title
-            activities = self.yt_api.api.get_activities_by_channel(
-                channel_id=channel_id, after=start_date_str, parts=['id', 'snippet', 'contentDetails'])
-            activities = [a for a in activities.items if a.snippet.type == 'upload']
+            activities = self.yt_api.get_channel_activities(channel_id=channel_id, after=start_date_str,
+                                                            before=after_date_str)
+            activities = [a for a in activities.get('items', list()) if a.snippet.type == 'upload']
             if not activities:
-                LOG.debug(f"{i + 1}/{len(subscriptions)} No videos found for channel {channel_id} '{channel_name}'")
+                LOG.debug(f"{i + 1}/{total_subs} No videos found for channel {channel_id} '{channel_name}'")
                 continue
 
-            LOG.green(f"{i + 1}/{len(subscriptions)} Processing {len(activities)} videos for {channel_name}")
+            LOG.green(f"{i + 1}/{total_subs} Processing {len(activities)} videos for {channel_name}")
             for j, activity in enumerate(activities):
                 # log.green(f"Processing video {j+1}/{len(activities)}")
                 self.parse_activity(activity=activity, start_date=start_date)
 
-        LOG.green(f"Done parsing {len(subscriptions)} subscriptions")
-        self.start_date = new_start_date
+        LOG.debug(f"Done parsing {total_subs} subscriptions")
+        self.start_date = after_date
 
     def start(self):
         self.authorize()
-        while True:
+        try:
             self.parse()
-            sleep = 60 * 60
-            LOG.green(f"Sleeping {sleep} seconds")
-            time.sleep(sleep)
-            self.config.re_read_config()
-            self.check_config()
+        except Exception as e:
+            LOG.exception("an error occured", exc_info=e)
+
+        # LOG.debug("Parsing Done. Preparing to sleep")
+        # sleep = 60 * 60
+        # LOG.green(f"Sleeping {sleep} seconds")
+        # time.sleep(sleep)
+        # self.config.re_read_config()
+        # self.check_config()
 
     @property
     def api(self):

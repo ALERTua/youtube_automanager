@@ -9,11 +9,10 @@ from global_logger import Log
 from sqlalchemy import Column, create_engine, String, update, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.sql import func
 
 from youtube_automanager import constants
 
-log = Log.get_logger()
+LOG = Log.get_logger()
 
 # https://docs.sqlalchemy.org/
 # https://leportella.com/sqlalchemy-tutorial/
@@ -66,18 +65,18 @@ class DatabaseController:
     @cached_property
     def db(self) -> Session:
         engine_str = fr'sqlite:///{self.db_filepath}'
-        log.green(f"Opening database {engine_str}")
+        LOG.green(f"Opening database {engine_str}")
         engine = create_engine(engine_str)  # , echo=log.verbose)
         Base.metadata.create_all(engine)
         session = sessionmaker(bind=engine)()
         return session
 
     def commit(self):
-        log.green("Saving database")
+        LOG.green("Saving database")
         self.db.commit()
 
     def close(self):
-        log.green("Closing database")
+        LOG.green("Closing database")
         self.db.close()
 
     def add(self, obj):
@@ -97,7 +96,7 @@ class DatabaseController:
 
 
 def main():
-    log.verbose = True
+    LOG.verbose = True
     db = DatabaseController(constants.DB_FILEPATH, constants.USERNAME)
     db.db.query()
     print("")

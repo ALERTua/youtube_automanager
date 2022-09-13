@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import pprint
 from datetime import datetime
 import threading
 from copy import copy
@@ -139,6 +140,7 @@ class OAuth:
         def root(request=Depends(get_request)):
             self._auth_response = str(request.url)
             self.fetch_token(self._auth_response)
+            return {"success": "You can now close the tab"}
 
         LOG.debug(f"Starting webserver @ {self.host}:{self.port}")
         config = uvicorn.Config(app, host=self.host, port=int(self.port),
@@ -158,12 +160,15 @@ class OAuth:
         return self._web_server
 
     def fetch_token(self, response):
-        self.session.token = self.flow.fetch_token(authorization_response=response)
+        self.session.token = output = self.flow.fetch_token(authorization_response=response)
+        LOG.debug(f"Fetched token:\n{pprint.pformat(output)}")
 
     def authorize(self, token=None, expires_at_dt: datetime = None, refresh_token=None):
         if self.__flow is None:
             self._flow()
-            if token and expires_at_dt and refresh_token:
+            if refresh_token and (success := self.refresh_token_()):
+                pass
+            elif token and expires_at_dt:  # and refresh_token
                 date_diff = pendulum.instance(expires_at_dt, tz=UTC) - pendulum.now(UTC)
                 seconds_diff = date_diff.in_seconds()
                 self.flow.oauth2session.token = {
@@ -173,6 +178,7 @@ class OAuth:
                     'refresh_token': refresh_token,
                 }
                 pass
+
         if self.authorized:
             return
 
@@ -181,7 +187,7 @@ class OAuth:
         _ = self.web_server
         while not self.authorized:
             sleep(1)
-
+        self.web_server.thread_exit()
         LOG.green("Authorized")
 
     @property
@@ -197,7 +203,9 @@ class OAuth:
         return self.client_config.get('client_secret')
 
     def refresh_token_(self):
-        self.session.token = self.session.refresh_token(token_url=self.token_url)
+        self.session.token = output = self.session.refresh_token(token_url=self.token_url)
+        LOG.debug(f"Token refresh result:\n{pprint.pformat(output)}")
+        return output
 
     @property
     def refresh_token(self):
@@ -254,6 +262,4 @@ class OAuth:
 
 
 if __name__ == '__main__':
-    oauth = OAuth()
-    oauth.authorize()
     pass
