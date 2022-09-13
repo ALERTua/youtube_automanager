@@ -39,37 +39,29 @@ class YoutubeAutoManager:
         return True
 
     def save_token(self):
-        LOG.debug("Saving new token")
-        db = self.db
-        oauth = self.oauth
-
-        saved_refresh_token = db.config.refresh_token
-        new_refresh_token = oauth.refresh_token
+        saved_refresh_token = self.db.config.refresh_token
+        new_refresh_token = self.oauth.refresh_token
         if saved_refresh_token == new_refresh_token:
             return
 
         LOG.debug(f"Saving new refresh token {new_refresh_token}")
-        db.config.refresh_token = new_refresh_token
-
-        db.save_config()
-        db.commit()
+        self.db.config.refresh_token = new_refresh_token
+        self.db.save_config()
+        self.db.commit()
 
     def authorize(self):
-        db = self.db
-        _ = db.config
-        oauth = self.oauth
-
-        refresh_token = db.config.refresh_token
+        refresh_token = self.db.config.refresh_token
         if refresh_token:
-            oauth.session.token['refresh_token'] = refresh_token
+            self.oauth.session.token['refresh_token'] = refresh_token
             LOG.debug(f"Got saved refresh token: {refresh_token}")
-        if refresh_token and (success := oauth.refresh_token_()):
+        if refresh_token and (success := self.oauth.refresh_token_()):
             LOG.green(f"Authorized using the saved refresh token.")
         else:
-            oauth.authorize()
+            self.oauth.authorize()
             self.save_token()
+
         # oauth.run_token_refreshing_daemon()  # todo:
-        LOG.green("done authorizing")
+        LOG.green("Authorization complete")
 
     @property
     def start_date(self) -> datetime:
