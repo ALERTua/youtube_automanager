@@ -39,4 +39,5 @@ HOST = os.getenv('HOST', 'localhost')
 SCOPES = os.getenv('SCOPES', YOUTUBE_READ_WRITE_SCOPE)
 SCOPES = SCOPES.split(',')
 REDIRECT_URI = os.getenv('REDIRECT_URI')
-
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')

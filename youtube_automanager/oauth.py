@@ -11,6 +11,7 @@ from typing import Optional, List
 from urllib.request import Request
 
 import pendulum
+import requests
 from pendulum import UTC
 from google_auth_oauthlib.flow import InstalledAppFlow
 from time import sleep
@@ -175,6 +176,14 @@ class OAuth:
 
         auth_url = self.generate_auth_url()
         LOG.yellow(auth_url)
+        if (tg_token := constants.TELEGRAM_BOT_TOKEN) and (tg_chat_id := constants.TELEGRAM_CHAT_ID):
+            message = f'Youtube Automanager Authorization URL:\n{auth_url}'
+            url = f'https://api.telegram.org/bot{tg_token}/sendMessage'
+            try:
+                requests.post(url, json={'chat_id': tg_chat_id, 'text': message})
+            except:
+                pass
+
         _ = self.web_server
         while not self.authorized:
             sleep(1)
