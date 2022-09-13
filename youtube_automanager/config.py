@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import datetime
+from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from typing import Optional
@@ -29,7 +29,7 @@ class YoutubeAutoManagerConfig:
         start_date = config.get('start_date', None)
         if start_date is not None:
             try:
-                self.start_date = pendulum.instance(datetime.datetime.fromisoformat(start_date))
+                self.start_date = pendulum.instance(datetime.fromisoformat(start_date))
             except Exception as e:
                 log.exception(f"Failed to parse start_date {start_date}. Please use ISO8601 format", exc_info=e)
                 return False

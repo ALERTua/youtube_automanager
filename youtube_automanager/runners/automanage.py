@@ -1,11 +1,10 @@
-from datetime import datetime
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import re
-import time
-from functools import cache
+from datetime import datetime
 
 import pendulum
 from global_logger import Log
-from pendulum import UTC
 from pyyoutube import Api, Activity
 
 from youtube_automanager import constants
@@ -220,6 +219,10 @@ class YoutubeAutoManager:
 
 
 if __name__ == '__main__':
+    config_ = YoutubeAutoManagerConfig(config_filepath=constants.CONFIG_FILEPATH)
+    if not config_.ok:
+        exit(1)
+
     oauth_ = OAuth(
         client_secrets_file=constants.SECRETS_FILE,
         scopes=constants.SCOPES,
@@ -232,9 +235,6 @@ if __name__ == '__main__':
         db_filepath=constants.DB_FILEPATH,
         username=constants.USERNAME,
     )
-    config_ = YoutubeAutoManagerConfig(config_filepath=constants.CONFIG_FILEPATH)
-    if not config_.ok:
-        exit(1)
 
     manager = YoutubeAutoManager(oauth=oauth_, db=db_, config=config_)
     manager.start()

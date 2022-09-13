@@ -1,12 +1,13 @@
-from functools import cached_property, cache
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from functools import cache
 from typing import List
 
+from global_logger import Log
 # noinspection PyPackageRequirements
 from googleapiclient.discovery import build
 from oauth2client.client import AccessTokenCredentials
 from pyyoutube import Api, Playlist
-
-from global_logger import Log
 
 from youtube_automanager import constants
 
