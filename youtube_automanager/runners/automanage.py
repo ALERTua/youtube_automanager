@@ -105,7 +105,7 @@ class YoutubeAutoManager:
             return
 
         rules = self.config.config.get('rules', [])
-        for rule in rules:
+        for rule in rules:  # todo: video duration filter
             rule_channel_id = rule.get('channel_id')
             if rule_channel_id and not isinstance(rule_channel_id, list):
                 rule_channel_id = [rule_channel_id]
@@ -176,7 +176,7 @@ class YoutubeAutoManager:
             channel_name = subscription.snippet.title
             activities = self.yt_api.get_channel_activities(channel_id=channel_id, after=start_date_str,
                                                             before=after_date_str)
-            activities = [a for a in activities.get('items', list()) if a.snippet.type == 'upload']
+            activities = [a for a in activities.items if a.snippet.type == 'upload']
             if not activities:
                 LOG.debug(f"{i + 1}/{total_subs} No videos found for channel {channel_id} '{channel_name}'")
                 continue
