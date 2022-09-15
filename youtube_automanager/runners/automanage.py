@@ -137,8 +137,8 @@ class YoutubeAutoManager:
             if rule_playlist_id:
                 playlist = self.yt_api.get_playlist_by_id(playlist_id=rule_playlist_id)
             elif rule_playlist_name:
-                playlist = self.yt_api.get_playlists()
-                playlist = next((p for p in playlist.items if p.snippet.localized.title == rule_playlist_name), None)
+                playlists = self.yt_api.get_playlists()
+                playlist = next((p for p in playlists if p.snippet.localized.title == rule_playlist_name), None)
             else:
                 LOG.error(f"Rule has no playlist_id or playlist_name:\n{rule}")
                 continue

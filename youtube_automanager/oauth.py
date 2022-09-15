@@ -79,7 +79,7 @@ class OAuth:
             self.web_server.force_exit = True
             self.web_server.should_exit = True
         self.web_server.thread_exit()
-        self.session.close()
+        # self.session.close()
 
     def _token_updater(self, token):
         self.session.access_token = token

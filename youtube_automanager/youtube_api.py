@@ -27,7 +27,7 @@ class YoutubeAPI:
     @cache
     def video_in_playlist(self, playlist_id, video_id):
         playlist_videos = self.get_playlist_items(playlist_id=playlist_id)
-        output = [i for i in playlist_videos.get('items', []) if i.id == video_id]
+        output = [i for i in playlist_videos if i.id == video_id]
         return len(output) > 0
 
     def add_video_to_playlist(self, video_id, playlist_id):
@@ -88,7 +88,9 @@ class YoutubeAPI:
         kwargs.setdefault('count', None)
         kwargs.setdefault('parts', ['snippet'])
         LOG.green("Getting playlists")
-        return self.api.get_playlists(**kwargs).get('items', list())
+        response = self.api.get_playlists(**kwargs)
+        output = response.items
+        return output
 
     def get_playlist_by_id(self, playlist_id):
         playlists = self.get_playlists()
