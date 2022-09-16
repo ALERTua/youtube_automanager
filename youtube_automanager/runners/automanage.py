@@ -6,6 +6,7 @@ from datetime import datetime
 import pendulum
 from global_logger import Log
 from pyyoutube import Api, Activity
+from knockknock import telegram_sender, discord_sender, slack_sender, teams_sender
 
 from youtube_automanager import constants
 from youtube_automanager.config import YoutubeAutoManagerConfig
@@ -237,5 +238,24 @@ if __name__ == '__main__':
     )
 
     manager = YoutubeAutoManager(oauth=oauth_, db=db_, config=config_)
-    manager.start()
+
+    fnc = manager.start  # https://github.com/huggingface/knockknock
+    if constants.TELEGRAM_ANNOUNCE == 'True':
+        if (tg_token := constants.TELEGRAM_BOT_TOKEN) and (tg_chat := constants.TELEGRAM_CHAT_ID):
+            fnc = telegram_sender(token=tg_token, chat_id=int(tg_chat))(fnc)
+
+    if discord_webhook := constants.DISCORD_WEBHOOK_URL:
+        fnc = discord_sender(discord_webhook)(fnc)
+
+    if (slack_webhook := constants.SLACK_WEBHOOK_URL) and (slack_channel := constants.SLACK_CHANNEL):
+        if slack_user_mentions := constants.SLACK_USER_MENTIONS:
+            slack_user_mentions = slack_user_mentions.split()
+        fnc = slack_sender(slack_webhook, slack_channel, slack_user_mentions)(fnc)
+
+    if teams_webhook := constants.TEAMS_WEBHOOK_URL:
+        if teams_user_mentions := constants.TEAMS_USER_MENTIONS:
+            teams_user_mentions = teams_user_mentions.split()
+        fnc = teams_sender(teams_webhook, teams_user_mentions)(fnc)
+
+    fnc()
     pass
