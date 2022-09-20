@@ -5,7 +5,7 @@ from pathlib import Path
 
 from global_logger import Log
 
-project_name = Path(__file__).parent.name
+PROJECT_NAME = Path(__file__).parent.name
 USERNAME = os.environ.get("USERNAME", 'user')
 HOME = Path(os.environ.get("HOME", '/app/config'))
 SECRETS_FILE = HOME / os.getenv('SECRETS_FILENAME', 'client_secret.json')
@@ -18,7 +18,7 @@ log = Log.get_logger(**log_kwargs)
 if os.getenv('VERBOSE') == 'True':
     log.verbose = True
 
-FILENAME_BASE = f'{project_name}'
+FILENAME_BASE = f'{PROJECT_NAME}'
 TOKEN_FILENAME = f'{FILENAME_BASE}.json'
 DB_FILENAME = os.getenv('DB_FILENAME', f'{FILENAME_BASE}.sqlite')
 CONFIG_FILENAME = os.getenv('CONFIG_FILENAME', f'{FILENAME_BASE}.yaml')
