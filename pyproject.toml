@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "youtube-automanager"
+version = "0.1.0"
+description = ""
+authors = ["Alexey Rubaseff <alexey.rubasheff@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.12"
+global-logger = "*"
+pyyaml = "*"
+sqlalchemy = "*"
+fastapi = "*"
+uvicorn = "*"
+trustme = "*"
+oauth2client = "*"
+google-auth-oauthlib = "*"
+google-api-python-client = "*"
+python-worker = "*"
+pendulum = "*"
+python-youtube = "*"
+knockknock = "*"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
