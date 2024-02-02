@@ -1,5 +1,5 @@
-FROM python:3.11.6-slim as python-base
-# multidict doesn't support 3.12 yet
+FROM python:3.12-slim as python-base
+
 LABEL maintainer="ALERT <alexey.rubasheff@gmail.com>"
 
 ENV \

@@ -22,4 +22,4 @@ The script:
 - Checks if each video is already in the playlist
 - If not, adds the video to the playlist based on rule it meets
 
-Do not forget to run with `--init` for SIGTERM to correctly forward to child processes.
+Do not forget to run the Docker image with `--init` argument for SIGTERM to correctly forward to child processes.
