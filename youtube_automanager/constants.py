@@ -7,7 +7,8 @@ from global_logger import Log
 
 PROJECT_NAME = Path(__file__).parent.name
 USERNAME = os.environ.get("USERNAME", 'user')
-HOME = Path(os.environ.get("HOME", '/app/config'))
+HOME_DEFAULT = '/app/config'
+HOME = Path(os.environ.get("HOME", '/app/config') or HOME_DEFAULT)
 SECRETS_FILE = HOME / os.getenv('SECRETS_FILENAME', 'client_secret.json')
 log_kwargs = dict()
 if os.getenv('LOGFILES') == 'True':
