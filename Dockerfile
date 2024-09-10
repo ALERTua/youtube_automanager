@@ -1,4 +1,4 @@
-FROM python:3.12-slim as python-base
+FROM python:3.12-slim AS python-base
 
 LABEL maintainer="ALERT <alexey.rubasheff@gmail.com>"
 
@@ -33,7 +33,7 @@ RUN python -m venv $VIRTUAL_ENV
 ENV PYTHONPATH="$BASE_DIR:$PYTHONPATH"
 
 
-FROM python-base as builder-base
+FROM python-base AS builder-base
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
@@ -51,7 +51,7 @@ RUN --mount=type=cache,target=$CACHE_PATH \
     poetry install --no-root --only main --compile
 
 
-FROM builder-base as development
+FROM builder-base AS development
 
 WORKDIR $BASE_DIR
 
@@ -61,7 +61,7 @@ RUN --mount=type=cache,target=$CACHE_PATH \
 CMD ["bash"]
 
 
-FROM python-base as production
+FROM python-base AS production
 
 COPY --from=builder-base $POETRY_HOME $POETRY_HOME
 COPY --from=builder-base $VIRTUAL_ENV $VIRTUAL_ENV
