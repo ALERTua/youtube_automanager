@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+from __future__ import annotations
 import asyncio
 import contextlib
 import pprint
 from datetime import datetime
 import threading
 from copy import copy
-from pathlib import Path
-from typing import Optional, List
-from urllib.request import Request
 
 import pendulum
 import requests
@@ -20,15 +17,19 @@ from functools import cached_property, cache
 import trustme
 import uvicorn
 from atexit import register as atexit_register
-from fastapi import FastAPI
-from fastapi import Request, Depends
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from global_logger import Log
+
 # noinspection PyPackageRequirements
 from worker import async_worker
 
 from youtube_automanager import constants
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 LOG = Log.get_logger()
 LOCAL = pendulum.local_timezone()
@@ -61,17 +62,23 @@ class Server(uvicorn.Server):
 
 
 class OAuth:
-    def __init__(self, client_secrets_file: str | Path, scopes: List[str], host: str, port: int, redirect_uri: str,
-                 token_url: str):
+    def __init__(  # noqa: PLR0913
+        self,
+        client_secrets_file: str | Path,
+        scopes: list[str],
+        host: str,
+        port: int,
+        redirect_uri: str,
+        token_url: str,
+    ):
         self.host = host
         self.port = port
         self.scopes = scopes
         self.client_secrets_file = client_secrets_file
         self.token_url = token_url
         self.redirect_uri = redirect_uri
-        self.__flow: Optional[InstalledAppFlow] = None
-        self._web_server: Optional[uvicorn.Server] = None
-        # atexit_register(self.exit)
+        self.__flow: InstalledAppFlow | None = None
+        self._web_server: uvicorn.Server | None = None
 
     @atexit_register
     def exit(self):
@@ -79,7 +86,6 @@ class OAuth:
             self.web_server.force_exit = True
             self.web_server.should_exit = True
             self.web_server.thread_exit()
-        # self.session.close()
 
     def _token_updater(self, token):
         self.session.access_token = token
@@ -93,8 +99,8 @@ class OAuth:
                 redirect_uri=self.redirect_uri,
             )
             extra = {
-                'client_id': output.client_config.get('client_id'),
-                'client_secret': output.client_config.get('client_secret'),
+                "client_id": output.client_config.get("client_id"),
+                "client_secret": output.client_config.get("client_secret"),
             }
             output.oauth2session.auto_refresh_kwargs = extra
             output.oauth2session.token_updater = self._token_updater
@@ -129,6 +135,7 @@ class OAuth:
         def get_request(request: Request) -> Request:
             return request
 
+        # noinspection PyTypeChecker
         app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],
@@ -136,17 +143,24 @@ class OAuth:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+        # noinspection PyTypeChecker
         app.add_middleware(HTTPSRedirectMiddleware)
 
         @app.get("/")
-        def root(request=Depends(get_request)):
+        def root(request=None):
+            request = request or Depends(get_request)
             self._auth_response = str(request.url)
             self.fetch_token(self._auth_response)
             return {"success": "You can now close the tab"}
 
         LOG.debug(f"Starting webserver @ {self.host}:{self.port}")
-        config = uvicorn.Config(app, host=self.host, port=int(self.port),
-                                log_level="info" if not LOG.verbose else 'debug', ssl_certfile=cert_server_filepath)
+        config = uvicorn.Config(
+            app,
+            host=self.host,
+            port=int(self.port),
+            log_level="info" if not LOG.verbose else "debug",
+            ssl_certfile=cert_server_filepath,
+        )
         server = Server(config=config)
         return server
 
@@ -177,12 +191,10 @@ class OAuth:
         auth_url = self.generate_auth_url()
         LOG.yellow(auth_url)
         if (tg_token := constants.TELEGRAM_BOT_TOKEN) and (tg_chat_id := constants.TELEGRAM_CHAT_ID):
-            message = f'Youtube Automanager Authorization URL:\n{auth_url}'
-            url = f'https://api.telegram.org/bot{tg_token}/sendMessage'
-            try:
-                requests.post(url, json={'chat_id': tg_chat_id, 'text': message})
-            except:
-                pass
+            message = f"Youtube Automanager Authorization URL:\n{auth_url}"
+            url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+            with contextlib.suppress(Exception):
+                requests.post(url, json={"chat_id": tg_chat_id, "text": message}, timeout=30)
 
         _ = self.web_server
         while not self.authorized:
@@ -196,11 +208,11 @@ class OAuth:
 
     @property
     def client_id(self):
-        return self.client_config.get('client_id')
+        return self.client_config.get("client_id")
 
     @property
     def client_secret(self):
-        return self.client_config.get('client_secret')
+        return self.client_config.get("client_secret")
 
     def refresh_token_(self):
         self.session.token = output = self.session.refresh_token(token_url=self.token_url)
@@ -209,11 +221,11 @@ class OAuth:
 
     @property
     def refresh_token(self):
-        return self.session.token.get('refresh_token')
+        return self.session.token.get("refresh_token")
 
     @property
     def access_token(self):
-        return self.session.token.get('access_token')
+        return self.session.token.get("access_token")
 
     def token_expires(self):
         if (expires_at := self.token_expires_at) is None:
@@ -226,8 +238,8 @@ class OAuth:
 
     @property
     def token_expires_at(self):
-        if (expires_at := self.session.token.get('expires_at')) is None:
-            return
+        if (expires_at := self.session.token.get("expires_at")) is None:
+            return None
 
         return datetime.fromtimestamp(expires_at, tz=UTC)
 
@@ -252,14 +264,14 @@ class OAuth:
             LOG.debug("token_refreshing_daemon Sleeping 600 seconds")
             await asyncio.sleep(600)
 
-    @cache
+    @cache  # noqa: B019
     def run_token_refreshing_daemon(self):
         asyncio.run(self.token_refreshing_daemon())
 
     def _expire_token(self):
-        self.session.token['expires_at'] = datetime.now(tz=UTC).timestamp()
-        self.session.token['expires_in'] = 0
+        self.session.token["expires_at"] = datetime.now(tz=UTC).timestamp()
+        self.session.token["expires_in"] = 0
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pass

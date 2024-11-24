@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+from __future__ import annotations
+from collections.abc import Iterable
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from typing import Iterable
 
+import pendulum
 from global_logger import Log
 from sqlalchemy import Column, create_engine, String, update, DateTime
 from sqlalchemy.ext.declarative import declarative_base
@@ -20,12 +21,12 @@ Base = declarative_base()
 
 
 class YAMConfig(Base):
-    __tablename__ = 'config'
-    INDEX_NAME = 'username'
+    __tablename__ = "config"
+    INDEX_NAME = "username"
 
     username = Column(INDEX_NAME, String(50), primary_key=True)
-    refresh_token = Column('refresh_token', String, nullable=True)
-    last_update = Column('last_update', DateTime, default=datetime.now())
+    refresh_token = Column("refresh_token", String, nullable=True)
+    last_update = Column("last_update", DateTime, default=datetime.now(tz=pendulum.local_timezone()))
 
     @classmethod
     def instantiate(cls, session, username):
@@ -40,7 +41,7 @@ class YAMConfig(Base):
 
     @property
     def items(self):
-        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
 
     @property
     def updatable_items(self):
@@ -62,7 +63,7 @@ class DatabaseController:
 
     @cached_property
     def db(self) -> Session:
-        engine_str = fr'sqlite:///{self.db_filepath}'
+        engine_str = rf"sqlite:///{self.db_filepath}"
         LOG.green(f"Opening database {engine_str}")
         engine = create_engine(engine_str)  # , echo=log.verbose)
         Base.metadata.create_all(engine)
@@ -97,9 +98,9 @@ def main():
     LOG.verbose = True
     db = DatabaseController(constants.DB_FILEPATH, constants.USERNAME)
     db.db.query()
-    print("")
+    pass
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-    print("")
+    pass
