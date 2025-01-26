@@ -90,7 +90,7 @@ class YoutubeAutoManager:
         self.db.save_config()
         self.db.commit()
 
-    def parse_activity(self, activity: Activity, start_date: datetime):  # noqa: C901, PLR0912
+    def parse_activity(self, activity: Activity, start_date: datetime):  # noqa: C901, PLR0912, PLR0915
         video_id = activity.contentDetails.upload.videoId
         video_channel_id = activity.snippet.channelId
         video_channel_name = activity.snippet.channelTitle
@@ -104,38 +104,53 @@ class YoutubeAutoManager:
 
         rules = self.config.config.get("rules", [])
         for rule in rules:  # TODO: video duration filter
+            match = False
+
             rule_channel_id = rule.get("channel_id")
             if rule_channel_id and not isinstance(rule_channel_id, list):
                 rule_channel_id = [rule_channel_id]
 
-            if rule_channel_id and not any(_ for _ in rule_channel_id if _ == video_channel_id):
+            if rule_channel_id and any(_ for _ in rule_channel_id if _ == video_channel_id):
+                LOG.debug(
+                    f"Video {video_id} '{video_title}' channel id matches rule: {video_channel_id}",
+                )
+                match = True
+            else:
                 LOG.debug(
                     f"Video {video_id} '{video_title}' doesn't match any of the rule channel ids: {rule_channel_id}",
                 )
-                continue
 
             rule_channel_name = rule.get("channel_name")
             if rule_channel_name and not isinstance(rule_channel_name, list):
                 rule_channel_name = [rule_channel_name]
-            if rule_channel_name and not any(_ for _ in rule_channel_name if re.match(_, video_channel_name)):
+            if rule_channel_name and any(_ for _ in rule_channel_name if re.match(_, video_channel_name)):
+                LOG.debug(f"Video {video_id} '{video_title}' matches rule channel name: {video_channel_name}")
+                match = True
+            else:
                 LOG.debug(
                     f"Video {video_id} '{video_title}' doesn't match any of the rule channel names: "
                     f"{rule_channel_name}",
                 )
-                continue
 
             rule_video_title_pattern = rule.get("video_title_pattern")
             if rule_video_title_pattern and not isinstance(rule_video_title_pattern, list):
                 rule_video_title_pattern = [rule_video_title_pattern]
-            if rule_video_title_pattern and not any(
+            if rule_video_title_pattern and any(
                 _
                 for _ in rule_video_title_pattern
                 if re.match(_, video_title, flags=re.IGNORECASE) or re.search(_, video_title, flags=re.IGNORECASE)
             ):
                 LOG.debug(
+                    f"Video {video_id} '{video_title}' match es rule pattern {rule_video_title_pattern}",
+                )
+                match = True
+            else:
+                LOG.debug(
                     f"Video {video_id} '{video_title}' title does not match any of the patterns "
                     f"{rule_video_title_pattern}",
                 )
+
+            if not match:
                 continue
 
             rule_playlist_id = rule.get("playlist_id")
