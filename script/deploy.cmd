@@ -4,7 +4,7 @@ setlocal enabledelayedexpansion enableextensions
 if exist .python-version (
     uv sync --locked || goto :end
     if not exist uv.lock uv lock || goto :end
-) else (
+) else if exist pyproject.toml (
     poetry check || goto :end
     if not exist poetry.lock poetry lock || goto :end
 )
