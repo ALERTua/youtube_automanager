@@ -1,13 +1,13 @@
 [project]
 name = "youtube-automanager"
-version = "0.1.0"
+version = "0.1.1"
 description = "Adds videos to your YouTube playlists automatically based on rules"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi>=0.115.5",
+    "fastapi>=0.115.7",
     "global-logger>=0.4.2",
-    "google-api-python-client>=2.154.0",
+    "google-api-python-client>=2.159.0",
     "google-auth-oauthlib>=1.2.1",
     "knockknock>=0.1.8.1",
     "oauth2client>=4.1.3",
@@ -15,13 +15,13 @@ dependencies = [
     "python-worker>=2.2.4",
     "python-youtube>=0.9.7",
     "pyyaml>=6.0.2",
-    "sqlalchemy>=2.0.36",
-    "trustme>=1.2.0",
-    "uvicorn>=0.32.1",
+    "sqlalchemy>=2.0.37",
+    "trustme>=1.2.1",
+    "uvicorn>=0.34.0",
 ]
 
 [dependency-groups]
 dev = [
-    "pre-commit>=4.0.1",
-    "ruff>=0.8.0",
+    "pre-commit>=4.1.0",
+    "ruff>=0.9.3",
 ]
