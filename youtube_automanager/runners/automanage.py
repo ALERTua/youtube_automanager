@@ -192,8 +192,8 @@ class YoutubeAutoManager:
         after_date_str = pendulum.instance(after_date).to_iso8601_string()
 
         LOG.green(f"Processing videos from {total_subs} subscriptions")
-        for i, subscription in enumerate(subscriptions):
-            LOG.debug(f"Parsing subscription {i + 1}")
+        for i, subscription in enumerate(subscriptions, start=1):
+            LOG.debug(f"Parsing subscription {i}")
             channel_id = subscription.snippet.resourceId.channelId
             channel_name = subscription.snippet.title
             activities = self.yt_api.get_channel_activities(
@@ -203,12 +203,12 @@ class YoutubeAutoManager:
             )
             activities = [a for a in activities.items if a.snippet.type == "upload"]
             if not activities:
-                LOG.debug(f"{i + 1}/{total_subs} No videos found for channel {channel_id} '{channel_name}'")
+                LOG.debug(f"{i}/{total_subs} No videos found for channel {channel_id} '{channel_name}'")
                 continue
 
-            LOG.green(f"{i + 1}/{total_subs} Processing {len(activities)} videos for {channel_name}")
-            for _j, activity in enumerate(activities):
-                LOG.debug(f"Processing video {_j+1}/{len(activities)}")
+            LOG.green(f"{i}/{total_subs} Processing {len(activities)} videos for {channel_name}")
+            for _j, activity in enumerate(activities, start=1):
+                LOG.debug(f"Processing video {_j}/{len(activities)}")
                 self.parse_activity(activity=activity, start_date=start_date)
 
         LOG.debug(f"Done parsing {total_subs} subscriptions")
