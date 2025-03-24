@@ -4,8 +4,12 @@ on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    paths-ignore:
+      - '.pre-commit-config.yaml'
+      - 'userscript/'
+      - 'script/'
+      - '.github/'
+      - 'docs/'
 
 env:
   REGISTRY: ghcr.io
