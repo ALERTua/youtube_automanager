@@ -33,3 +33,11 @@ rules:
     - "Interesting Video Episode [0-9]+"
     - "Video .* Episode [0-9]+"
     playlist_id: "Playlist_id"
+
+  - channel_id: "Channel_id"
+    playlist_id: "Playlist_id"
+    # optionally filter matched videos by duration, in seconds (both bounds are inclusive)
+    video_duration_min: 600   # only videos at least 10 minutes long
+    video_duration_max: 3600  # only videos at most 1 hour long
+    # either bound may be omitted; e.g. video_duration_max only -> only short videos.
+    # if a video's duration can't be determined, the duration filter is skipped for it.

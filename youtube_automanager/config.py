@@ -47,6 +47,27 @@ class YoutubeAutoManagerConfig:
                 log.error(f"Rule has no playlist_id or playlist_name:\n{rule}")
                 return False
 
+            if not self._duration_filters_valid(rule):
+                return False
+
+        return True
+
+    @staticmethod
+    def _duration_filters_valid(rule) -> bool:
+        duration_min = rule.get("video_duration_min")
+        duration_max = rule.get("video_duration_max")
+        for key, value in (("video_duration_min", duration_min), ("video_duration_max", duration_max)):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0):
+                log.error(f"Rule has invalid {key}: {value!r}. Must be a non-negative number.\n{rule}")
+                return False
+
+        if duration_min is not None and duration_max is not None and duration_min > duration_max:
+            log.error(
+                f"Rule has video_duration_min ({duration_min}) greater than "
+                f"video_duration_max ({duration_max}).\n{rule}",
+            )
+            return False
+
         return True
 
     def _config(self):

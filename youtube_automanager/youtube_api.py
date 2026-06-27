@@ -2,6 +2,7 @@
 from __future__ import annotations
 from functools import cache
 
+import pendulum
 from global_logger import Log
 
 # noinspection PyPackageRequirements
@@ -21,6 +22,7 @@ class YoutubeAPI:
     def __init__(self, api: Api, access_token: str):
         self.api = api
         self.access_token = access_token
+        self._duration_cache: dict[str, int | None] = {}
 
     @property
     def google_api(self):
@@ -29,9 +31,10 @@ class YoutubeAPI:
 
     @cache  # noqa: B019
     def video_in_playlist(self, playlist_id, video_id):
-        playlist_videos = self.get_playlist_items(playlist_id=playlist_id)
-        output = [i for i in playlist_videos if i.id == video_id]
-        return len(output) > 0
+        # Server-side videoId filter: returns only matching items, so this is one quota unit
+        # regardless of playlist size (no full-playlist fetch).
+        response = self.api.get_playlist_items(playlist_id=playlist_id, video_id=video_id, count=None)
+        return bool(response and response.items)
 
     def add_video_to_playlist(self, video_id, playlist_id):
         add_video_request = (
@@ -52,21 +55,6 @@ class YoutubeAPI:
             .execute()
         )
         return add_video_request
-
-    @cache  # noqa: B019
-    def get_playlist_items(self, playlist_id):
-        kwargs = dict(playlist_id=playlist_id, limit=50, count=None)
-        response = self.api.get_playlist_items(**kwargs)
-        output = response.items
-        total_results = response.pageInfo.totalResults
-        LOG.debug(f"Got {len(output)}/{total_results} playlist items for {playlist_id}")
-        while len(output) < total_results:
-            page_token = response.nextPageToken
-            response = self.api.get_playlist_items(page_token=page_token, **kwargs)
-            output_ = response.items
-            LOG.debug(f"Got {len(output_)} more playlist items for {playlist_id}")
-            output.extend(output_)
-        return output
 
     @cache  # noqa: B019
     def get_subscriptions(  # noqa: PLR0913
@@ -129,3 +117,44 @@ class YoutubeAPI:
     def get_channel_activities(self, channel_id, **kwargs):
         kwargs.setdefault("parts", ["id", "snippet", "contentDetails"])
         return self.api.get_activities_by_channel(channel_id=channel_id, **kwargs)
+
+    def get_videos_durations(self, video_ids: list[str]) -> dict[str, int]:
+        """Return a ``{video_id: duration_seconds}`` mapping for the given video ids."""
+        # videos.list accepts up to 50 ids per call and costs one quota unit regardless of how
+        # many ids are requested, so we fetch in batches of 50 and cache results per instance.
+        # Ids whose duration can't be determined (unknown/unparsable) are omitted from the result.
+        result: dict[str, int] = {}
+        missing: list[str] = []
+        for video_id in dict.fromkeys(video_ids):  # de-duplicate, preserve order
+            if video_id in self._duration_cache:
+                cached = self._duration_cache[video_id]
+                if cached is not None:
+                    result[video_id] = cached
+            else:
+                missing.append(video_id)
+
+        for start in range(0, len(missing), 50):
+            chunk = missing[start : start + 50]
+            try:
+                response = self.api.get_video_by_id(video_id=chunk, parts=["contentDetails"])
+            except Exception as e:  # noqa: BLE001 - one bad batch must not abort the whole run
+                LOG.warning(f"Failed to fetch durations for {len(chunk)} video(s): {e}")
+                continue
+            for video in (response.items if response else None) or []:
+                duration = self._parse_duration(video.contentDetails.duration)
+                self._duration_cache[video.id] = duration
+                if duration is not None:
+                    result[video.id] = duration
+
+        return result
+
+    @staticmethod
+    def _parse_duration(duration_str: str | None) -> int | None:
+        """Parse an ISO 8601 duration (e.g. ``PT1H23M45S``) into whole seconds, or None."""
+        if not duration_str:
+            return None
+        try:
+            return int(pendulum.parse(duration_str).total_seconds())
+        except Exception as e:  # noqa: BLE001 - an unparsable duration must not abort the run
+            LOG.warning(f"Failed to parse ISO 8601 duration {duration_str!r}: {e}")
+            return None

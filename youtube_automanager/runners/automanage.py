@@ -90,12 +90,94 @@ class YoutubeAutoManager:
         self.db.save_config()
         self.db.commit()
 
-    def parse_activity(self, activity: Activity, start_date: datetime):  # noqa: C901, PLR0912, PLR0915
+    @staticmethod
+    def _activity_video_date(activity: Activity) -> datetime:
+        return pendulum.instance(datetime.fromisoformat(activity.snippet.publishedAt))
+
+    @staticmethod
+    def _rule_has_duration_filter(rule: dict) -> bool:
+        return rule.get("video_duration_min") is not None or rule.get("video_duration_max") is not None
+
+    @staticmethod
+    def _rule_can_match_channel(rule: dict, channel_id: str, channel_name: str) -> bool:
+        """Whether a rule could match any video from this channel (title aside)."""
+        if rule.get("video_title_pattern"):
+            return True  # title-pattern rules can match a video from any channel
+        cids = rule.get("channel_id") or []
+        if channel_id in (cids if isinstance(cids, list) else [cids]):
+            return True
+        cnames = rule.get("channel_name") or []
+        return any(re.match(name, channel_name) for name in (cnames if isinstance(cnames, list) else [cnames]))
+
+    @staticmethod
+    def _rule_matches_metadata(  # noqa: C901, PLR0913
+        rule: dict,
+        video_id: str,
+        video_channel_id: str,
+        video_channel_name: str,
+        video_title: str,
+        *,
+        log: bool = True,
+    ) -> bool:
+        """Whether a video matches a rule by channel id/name or title pattern (duration aside)."""
+        # The criteria are combined with OR semantics, mirroring the original matching logic.
+        # Pass log=False to evaluate silently (used when pre-selecting videos for a duration
+        # lookup, to avoid duplicating the per-criterion debug logs emitted during processing).
+        match = False
+
+        rule_channel_id = rule.get("channel_id")
+        if rule_channel_id and not isinstance(rule_channel_id, list):
+            rule_channel_id = [rule_channel_id]
+        if rule_channel_id and any(_ for _ in rule_channel_id if _ == video_channel_id):
+            if log:
+                LOG.debug(f"Video {video_id} '{video_title}' channel id matches rule: {video_channel_id}")
+            match = True
+        elif log:
+            LOG.debug(
+                f"Video {video_id} '{video_title}' doesn't match any of the rule channel ids: {rule_channel_id}",
+            )
+
+        rule_channel_name = rule.get("channel_name")
+        if rule_channel_name and not isinstance(rule_channel_name, list):
+            rule_channel_name = [rule_channel_name]
+        if rule_channel_name and any(_ for _ in rule_channel_name if re.match(_, video_channel_name)):
+            if log:
+                LOG.debug(f"Video {video_id} '{video_title}' matches rule channel name: {video_channel_name}")
+            match = True
+        elif log:
+            LOG.debug(
+                f"Video {video_id} '{video_title}' doesn't match any of the rule channel names: {rule_channel_name}",
+            )
+
+        rule_video_title_pattern = rule.get("video_title_pattern")
+        if rule_video_title_pattern and not isinstance(rule_video_title_pattern, list):
+            rule_video_title_pattern = [rule_video_title_pattern]
+        if rule_video_title_pattern and any(
+            _
+            for _ in rule_video_title_pattern
+            if re.match(_, video_title, flags=re.IGNORECASE) or re.search(_, video_title, flags=re.IGNORECASE)
+        ):
+            if log:
+                LOG.debug(f"Video {video_id} '{video_title}' matches rule pattern {rule_video_title_pattern}")
+            match = True
+        elif log:
+            LOG.debug(
+                f"Video {video_id} '{video_title}' title does not match any of the patterns {rule_video_title_pattern}",
+            )
+
+        return match
+
+    def parse_activity(  # noqa: C901, PLR0912
+        self,
+        activity: Activity,
+        start_date: datetime,
+        durations: dict[str, int] | None = None,
+    ):
         video_id = activity.contentDetails.upload.videoId
         video_channel_id = activity.snippet.channelId
         video_channel_name = activity.snippet.channelTitle
         video_title = activity.snippet.title
-        video_date = pendulum.instance(datetime.fromisoformat(activity.snippet.publishedAt))
+        video_date = self._activity_video_date(activity)
         LOG.debug(f"Working on {video_channel_name} : {video_title}")
 
         if video_date < pendulum.instance(start_date):
@@ -103,52 +185,35 @@ class YoutubeAutoManager:
             return
 
         rules = self.config.config.get("rules", [])
-        for rule in rules:  # TODO: video duration filter
-            match = False
+        for rule in rules:
+            match = self._rule_matches_metadata(
+                rule,
+                video_id,
+                video_channel_id,
+                video_channel_name,
+                video_title,
+            )
 
-            rule_channel_id = rule.get("channel_id")
-            if rule_channel_id and not isinstance(rule_channel_id, list):
-                rule_channel_id = [rule_channel_id]
-
-            if rule_channel_id and any(_ for _ in rule_channel_id if _ == video_channel_id):
-                LOG.debug(
-                    f"Video {video_id} '{video_title}' channel id matches rule: {video_channel_id}",
-                )
-                match = True
-            else:
-                LOG.debug(
-                    f"Video {video_id} '{video_title}' doesn't match any of the rule channel ids: {rule_channel_id}",
-                )
-
-            rule_channel_name = rule.get("channel_name")
-            if rule_channel_name and not isinstance(rule_channel_name, list):
-                rule_channel_name = [rule_channel_name]
-            if rule_channel_name and any(_ for _ in rule_channel_name if re.match(_, video_channel_name)):
-                LOG.debug(f"Video {video_id} '{video_title}' matches rule channel name: {video_channel_name}")
-                match = True
-            else:
-                LOG.debug(
-                    f"Video {video_id} '{video_title}' doesn't match any of the rule channel names: "
-                    f"{rule_channel_name}",
-                )
-
-            rule_video_title_pattern = rule.get("video_title_pattern")
-            if rule_video_title_pattern and not isinstance(rule_video_title_pattern, list):
-                rule_video_title_pattern = [rule_video_title_pattern]
-            if rule_video_title_pattern and any(
-                _
-                for _ in rule_video_title_pattern
-                if re.match(_, video_title, flags=re.IGNORECASE) or re.search(_, video_title, flags=re.IGNORECASE)
-            ):
-                LOG.debug(
-                    f"Video {video_id} '{video_title}' match es rule pattern {rule_video_title_pattern}",
-                )
-                match = True
-            else:
-                LOG.debug(
-                    f"Video {video_id} '{video_title}' title does not match any of the patterns "
-                    f"{rule_video_title_pattern}",
-                )
+            if match and self._rule_has_duration_filter(rule):
+                duration = (durations or {}).get(video_id)
+                duration_min = rule.get("video_duration_min")
+                duration_max = rule.get("video_duration_max")
+                if duration is None:
+                    LOG.warning(
+                        f"Video {video_id} '{video_title}' duration is unknown; skipping duration filter for this rule",
+                    )
+                elif duration_min is not None and duration < duration_min:
+                    LOG.debug(
+                        f"Video {video_id} '{video_title}' duration {duration}s is below minimum {duration_min}s",
+                    )
+                    match = False
+                elif duration_max is not None and duration > duration_max:
+                    LOG.debug(
+                        f"Video {video_id} '{video_title}' duration {duration}s exceeds maximum {duration_max}s",
+                    )
+                    match = False
+                else:
+                    LOG.debug(f"Video {video_id} '{video_title}' duration {duration}s matches rule")
 
             if not match:
                 continue
@@ -184,7 +249,9 @@ class YoutubeAutoManager:
     def parse(self):
         LOG.green("Parsing")
         start_date = self.start_date
-        start_date_str = pendulum.instance(start_date).to_iso8601_string()
+        start_dt = pendulum.instance(start_date)
+        start_date_str = start_dt.to_iso8601_string()
+        rules = self.config.config.get("rules", [])
         subscriptions = self.yt_api.get_subscriptions()
         total_subs = len(subscriptions)
         LOG.green(f"Got {total_subs} subscriptions")
@@ -196,6 +263,10 @@ class YoutubeAutoManager:
             LOG.debug(f"Parsing subscription {i}")
             channel_id = subscription.snippet.resourceId.channelId
             channel_name = subscription.snippet.title
+            # Skip the activities request for channels no rule could ever match.
+            if not any(self._rule_can_match_channel(rule, channel_id, channel_name) for rule in rules):
+                LOG.debug(f"{i}/{total_subs} No rule targets channel {channel_id} '{channel_name}'")
+                continue
             activities = self.yt_api.get_channel_activities(
                 channel_id=channel_id,
                 after=start_date_str,
@@ -206,10 +277,35 @@ class YoutubeAutoManager:
                 LOG.debug(f"{i}/{total_subs} No videos found for channel {channel_id} '{channel_name}'")
                 continue
 
+            # Pre-fetch durations in a single batched call, only for in-window videos that
+            # actually match a duration-bearing rule by channel/title. This avoids fetching
+            # durations for videos that no duration filter would ever apply to.
+            durations: dict[str, int] = {}
+            if any(self._rule_has_duration_filter(rule) for rule in rules):
+                needed_ids = [
+                    a.contentDetails.upload.videoId
+                    for a in activities
+                    if self._activity_video_date(a) >= start_dt
+                    and any(
+                        self._rule_has_duration_filter(rule)
+                        and self._rule_matches_metadata(
+                            rule,
+                            a.contentDetails.upload.videoId,
+                            a.snippet.channelId,
+                            a.snippet.channelTitle,
+                            a.snippet.title,
+                            log=False,
+                        )
+                        for rule in rules
+                    )
+                ]
+                if needed_ids:
+                    durations = self.yt_api.get_videos_durations(needed_ids)
+
             LOG.green(f"{i}/{total_subs} Processing {len(activities)} videos for {channel_name}")
             for _j, activity in enumerate(activities, start=1):
                 LOG.debug(f"Processing video {_j}/{len(activities)}")
-                self.parse_activity(activity=activity, start_date=start_date)
+                self.parse_activity(activity=activity, start_date=start_date, durations=durations)
 
         LOG.debug(f"Done parsing {total_subs} subscriptions")
         self.start_date = after_date
