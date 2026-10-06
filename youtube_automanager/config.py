@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
@@ -91,10 +92,8 @@ class YoutubeAutoManagerConfig:
 def main():
     log.verbose = True
     yamc = YoutubeAutoManagerConfig()
-    _ = yamc._config()  # noqa: SLF001
-    pass
+    _ = yamc._config()
 
 
 if __name__ == "__main__":
     main()
-    pass

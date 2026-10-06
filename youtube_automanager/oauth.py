@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 import asyncio
 import contextlib
 import pprint
-from datetime import datetime
 import threading
+from atexit import register as atexit_register
 from copy import copy
+from datetime import datetime
+from functools import cache, cached_property
+from time import sleep
+from typing import TYPE_CHECKING
 
 import pendulum
 import requests
-from pendulum import UTC
-from google_auth_oauthlib.flow import InstalledAppFlow
-from time import sleep
-from functools import cached_property, cache
-
 import trustme
 import uvicorn
-from atexit import register as atexit_register
-from fastapi import FastAPI, Request, Depends
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from global_logger import Log
+from google_auth_oauthlib.flow import InstalledAppFlow
+from pendulum import UTC
 
 # noinspection PyPackageRequirements
 from worker import async_worker
 
 from youtube_automanager import constants
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -62,7 +62,7 @@ class Server(uvicorn.Server):
 
 
 class OAuth:
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         client_secrets_file: str | Path,
         scopes: list[str],
@@ -79,13 +79,16 @@ class OAuth:
         self.redirect_uri = redirect_uri
         self.__flow: InstalledAppFlow | None = None
         self._web_server: uvicorn.Server | None = None
+        # a bound method, because atexit calls the callback without arguments
+        atexit_register(self.exit)
 
-    @atexit_register
     def exit(self):
-        if self._web_server is not None and self.web_server.started:
-            self.web_server.force_exit = True
-            self.web_server.should_exit = True
-            self.web_server.thread_exit()
+        # the property web_server would start a new server, so read the field
+        server = self._web_server
+        if server is not None and server.started:
+            server.force_exit = True
+            server.should_exit = True
+            server.thread_exit()
 
     def _token_updater(self, token):
         self.session.access_token = token
