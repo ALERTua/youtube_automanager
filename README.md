@@ -28,3 +28,11 @@ The script:
 - If not, adds the video to the playlist based on rule it meets
 
 Do not forget to run the Docker image with `--init` argument for SIGTERM to correctly forward to child processes.
+
+Image tags on `ghcr.io/alertua/youtube_automanager`:
+
+| Tag | What it is |
+|---|---|
+| `latest` | The newest release. A run without a tag uses it. |
+| `0.1`, `0.1.2` | A release line or one exact release. `0.1` gets each new `0.1.x` release. |
+| `edge` | The newest commit of `main`. It can break at any time. |

@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # the actions of the workflows, pinned by their commit SHA
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
