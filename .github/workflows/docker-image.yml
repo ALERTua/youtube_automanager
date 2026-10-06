@@ -51,10 +51,3 @@ jobs:
     with:
       alert-server: ${{ github.event_name != 'workflow_dispatch' || inputs.alert-server }}
       push: ${{ github.event_name == 'workflow_dispatch' && inputs.push }}
-
-  report:
-    needs: build-and-publish
-    if: always()
-    uses: ALERTua/ci-workflows/.github/workflows/pr-report.yml@v4.0.0
-    permissions:
-      pull-requests: write # comment of the build results on the open pull request of the branch
