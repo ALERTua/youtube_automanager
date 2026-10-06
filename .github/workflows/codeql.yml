@@ -37,7 +37,6 @@ jobs:
     timeout-minutes: ${{ (matrix.language == 'swift' && 120) || 360 }}
     permissions:
       security-events: write # upload of the CodeQL results
-      actions: read # read of the workflow run, which only a private repository needs
       contents: read # checkout
 
     strategy:
