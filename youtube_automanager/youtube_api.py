@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 from functools import cache
+from typing import TYPE_CHECKING
 
 import pendulum
 from global_logger import Log
@@ -10,7 +12,6 @@ from googleapiclient.discovery import build
 from oauth2client.client import AccessTokenCredentials
 
 from youtube_automanager import constants
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pyyoutube import Api, Playlist
@@ -57,7 +58,7 @@ class YoutubeAPI:
         return add_video_request
 
     @cache  # noqa: B019
-    def get_subscriptions(  # noqa: PLR0913
+    def get_subscriptions(
         self,
         mine=True,
         count=None,

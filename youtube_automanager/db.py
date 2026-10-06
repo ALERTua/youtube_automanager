@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 from collections.abc import Iterable
 from datetime import datetime
 from functools import cached_property
@@ -7,9 +8,9 @@ from pathlib import Path
 
 import pendulum
 from global_logger import Log
-from sqlalchemy import Column, create_engine, String, update, DateTime
+from sqlalchemy import Column, DateTime, String, create_engine, update
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager import constants
 
@@ -98,9 +99,7 @@ def main():
     LOG.verbose = True
     db = DatabaseController(constants.DB_FILEPATH, constants.USERNAME)
     db.db.query()
-    pass
 
 
 if __name__ == "__main__":
     main()
-    pass

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 import re
+import sys
 from datetime import datetime
 
 import pendulum
 from global_logger import Log
-from pyyoutube import Api, Activity
-from knockknock import telegram_sender, discord_sender, slack_sender, teams_sender
+from knockknock import discord_sender, slack_sender, teams_sender, telegram_sender
+from pyyoutube import Activity, Api
 
 from youtube_automanager import constants
 from youtube_automanager.config import YoutubeAutoManagerConfig
 from youtube_automanager.db import DatabaseController
 from youtube_automanager.oauth import OAuth
 from youtube_automanager.youtube_api import YoutubeAPI
-import sys
 
 LOG = Log.get_logger()
 
@@ -61,7 +61,7 @@ class YoutubeAutoManager:
             self.oauth.authorize()
             self.save_token()
 
-        # oauth.run_token_refreshing_daemon()  # TODO:  # noqa: ERA001
+        # oauth.run_token_refreshing_daemon()  # TODO:
         LOG.green("Authorization complete")
 
     @property
@@ -110,7 +110,7 @@ class YoutubeAutoManager:
         return any(re.match(name, channel_name) for name in (cnames if isinstance(cnames, list) else [cnames]))
 
     @staticmethod
-    def _rule_matches_metadata(  # noqa: C901, PLR0913
+    def _rule_matches_metadata(
         rule: dict,
         video_id: str,
         video_channel_id: str,
@@ -167,7 +167,7 @@ class YoutubeAutoManager:
 
         return match
 
-    def parse_activity(  # noqa: C901, PLR0912
+    def parse_activity(
         self,
         activity: Activity,
         start_date: datetime,
@@ -376,4 +376,3 @@ if __name__ == "__main__":
         fnc = teams_sender(teams_webhook, teams_user_mentions)(fnc)
 
     fnc()
-    pass

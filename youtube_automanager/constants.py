@@ -13,7 +13,7 @@ log_kwargs = {}
 if os.getenv("LOGFILES") == "True":
     LOGS_FOLDER = HOME / "logs"
     LOGS_FOLDER.mkdir(exist_ok=True)
-    log_kwargs = dict(logs_dir=LOGS_FOLDER, max_log_files=10)
+    log_kwargs = {"logs_dir": LOGS_FOLDER, "max_log_files": 10}
 log = Log.get_logger(**log_kwargs)
 if os.getenv("VERBOSE") == "True":
     log.verbose = True
@@ -33,7 +33,7 @@ CERT_SERVER_FILEPATH = HOME / CERT_SERVER_FILENAME
 YOUTUBE_READ_WRITE_SCOPE = "https://www.googleapis.com/auth/youtube"
 YOUTUBE_API_SERVICE_NAME = "youtube"
 YOUTUBE_API_VERSION = "v3"
-TOKEN_URL = "https://accounts.google.com/o/oauth2/token"  # noqa: S105
+TOKEN_URL = "https://accounts.google.com/o/oauth2/token"
 PORT = int(os.getenv("PORT", "8080"))
 HOST = os.getenv("HOST", "localhost")
 SCOPES = os.getenv("SCOPES", YOUTUBE_READ_WRITE_SCOPE)
