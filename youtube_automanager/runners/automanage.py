@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
+import logging
 import re
 import sys
 from datetime import datetime
 
 import pendulum
-from global_logger import Log
 from knockknock import discord_sender, slack_sender, teams_sender, telegram_sender
 from pyyoutube import Activity, Api
 
-from youtube_automanager import constants
 from youtube_automanager.config import YoutubeAutoManagerConfig
 from youtube_automanager.db import DatabaseController
+from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.oauth import OAuth
+from youtube_automanager.settings import TOKEN_URL, get_settings
 from youtube_automanager.youtube_api import YoutubeAPI
 
-LOG = Log.get_logger()
+# python -m runs this module as __main__, so the name keeps it under the package logger
+LOG = logging.getLogger("youtube_automanager.runners.automanage")
 
 
 def token_expired(dt: datetime):
@@ -45,7 +47,7 @@ class YoutubeAutoManager:
         if saved_refresh_token == new_refresh_token:
             return
 
-        LOG.debug(f"Saving new refresh token {new_refresh_token}")
+        LOG.debug("Saving a new refresh token")
         self.db.config.refresh_token = new_refresh_token
         self.db.save_config()
         self.db.commit()
@@ -54,15 +56,15 @@ class YoutubeAutoManager:
         refresh_token = self.db.config.refresh_token
         if refresh_token:
             self.oauth.session.token["refresh_token"] = refresh_token
-            LOG.debug(f"Got saved refresh token: {refresh_token}")
+            LOG.debug("Got a saved refresh token")
         if refresh_token and self.oauth.refresh_token_():
-            LOG.green("Authorized using the saved refresh token.")
+            LOG.info("Authorized using the saved refresh token.")
         else:
             self.oauth.authorize()
             self.save_token()
 
         # oauth.run_token_refreshing_daemon()  # TODO:
-        LOG.green("Authorization complete")
+        LOG.info("Authorization complete")
 
     @property
     def start_date(self) -> datetime:
@@ -78,13 +80,13 @@ class YoutubeAutoManager:
             else:
                 start_date = datetime.now(tz=pendulum.local_timezone())
 
-            LOG.green(f"Using {pendulum.instance(start_date).to_datetime_string()} as a Start Date")
+            LOG.info(f"Using {pendulum.instance(start_date).to_datetime_string()} as a Start Date")
             self._start_date = start_date
         return self._start_date
 
     @start_date.setter
     def start_date(self, value: datetime):
-        LOG.green(f"Saving new start date {pendulum.instance(value).to_datetime_string()}")
+        LOG.info(f"Saving new start date {pendulum.instance(value).to_datetime_string()}")
         self._start_date = value
         self.db.config.last_update = value
         self.db.save_config()
@@ -235,30 +237,30 @@ class YoutubeAutoManager:
 
             playlist_title = playlist.snippet.localized.title
             playlist_id = playlist.id
-            LOG.green(
+            LOG.info(
                 f"Video {video_id} '{video_title}' matches rule:\n{rule}\n"
                 f"Adding it to playlist {playlist_id} '{playlist_title}'",
             )
             if self.yt_api.video_in_playlist(video_id=video_id, playlist_id=playlist_id):
-                LOG.green(f"Video {video_id} '{video_title}' already in playlist {playlist_id} '{playlist_title}'")
+                LOG.info(f"Video {video_id} '{video_title}' already in playlist {playlist_id} '{playlist_title}'")
                 continue
 
-            LOG.green(f"Adding video {video_id} '{video_title}' to playlist {playlist_id} '{playlist_title}'")
+            LOG.info(f"Adding video {video_id} '{video_title}' to playlist {playlist_id} '{playlist_title}'")
             self.yt_api.add_video_to_playlist(video_id, playlist_id)
 
     def parse(self):
-        LOG.green("Parsing")
+        LOG.info("Parsing")
         start_date = self.start_date
         start_dt = pendulum.instance(start_date)
         start_date_str = start_dt.to_iso8601_string()
         rules = self.config.config.get("rules", [])
         subscriptions = self.yt_api.get_subscriptions()
         total_subs = len(subscriptions)
-        LOG.green(f"Got {total_subs} subscriptions")
+        LOG.info(f"Got {total_subs} subscriptions")
         after_date = datetime.now(tz=pendulum.local_timezone())
         after_date_str = pendulum.instance(after_date).to_iso8601_string()
 
-        LOG.green(f"Processing videos from {total_subs} subscriptions")
+        LOG.info(f"Processing videos from {total_subs} subscriptions")
         for i, subscription in enumerate(subscriptions, start=1):
             LOG.debug(f"Parsing subscription {i}")
             channel_id = subscription.snippet.resourceId.channelId
@@ -302,7 +304,7 @@ class YoutubeAutoManager:
                 if needed_ids:
                     durations = self.yt_api.get_videos_durations(needed_ids)
 
-            LOG.green(f"{i}/{total_subs} Processing {len(activities)} videos for {channel_name}")
+            LOG.info(f"{i}/{total_subs} Processing {len(activities)} videos for {channel_name}")
             for _j, activity in enumerate(activities, start=1):
                 LOG.debug(f"Processing video {_j}/{len(activities)}")
                 self.parse_activity(activity=activity, start_date=start_date, durations=durations)
@@ -334,44 +336,47 @@ class YoutubeAutoManager:
 
 
 if __name__ == "__main__":
-    config_ = YoutubeAutoManagerConfig(config_filepath=constants.CONFIG_FILEPATH)
+    settings = get_settings()
+    setup_logging(settings.verbose)
+
+    config_ = YoutubeAutoManagerConfig(config_filepath=settings.config_filepath)
     if not config_.ok:
         sys.exit(1)
 
     oauth_ = OAuth(
-        client_secrets_file=constants.SECRETS_FILE,
-        scopes=constants.SCOPES,
-        host=constants.HOST,
-        port=constants.PORT,
-        redirect_uri=constants.REDIRECT_URI,
-        token_url=constants.TOKEN_URL,
+        client_secrets_file=settings.secrets_file,
+        scopes=settings.scopes,
+        host=settings.host,
+        port=settings.port,
+        redirect_uri=settings.redirect_uri,
+        token_url=TOKEN_URL,
     )
     db_ = DatabaseController(
-        db_filepath=constants.DB_FILEPATH,
-        username=constants.USERNAME,
+        db_filepath=settings.db_filepath,
+        username=settings.username,
     )
 
     manager = YoutubeAutoManager(oauth=oauth_, db=db_, config=config_)
 
     fnc = manager.start  # https://github.com/huggingface/knockknock
     if (
-        constants.TELEGRAM_ANNOUNCE == "True"
-        and (tg_token := constants.TELEGRAM_BOT_TOKEN)
-        and (tg_chat := constants.TELEGRAM_CHAT_ID)
+        settings.telegram_announce
+        and (tg_token := settings.telegram_bot_token)
+        and (tg_chat := settings.telegram_chat_id)
     ):
         # noinspection PyUnboundLocalVariable
         fnc = telegram_sender(token=tg_token, chat_id=int(tg_chat))(fnc)
 
-    if discord_webhook := constants.DISCORD_WEBHOOK_URL:
+    if discord_webhook := settings.discord_webhook_url:
         fnc = discord_sender(discord_webhook)(fnc)
 
-    if (slack_webhook := constants.SLACK_WEBHOOK_URL) and (slack_channel := constants.SLACK_CHANNEL):
-        if slack_user_mentions := constants.SLACK_USER_MENTIONS:
+    if (slack_webhook := settings.slack_webhook_url) and (slack_channel := settings.slack_channel):
+        if slack_user_mentions := settings.slack_user_mentions:
             slack_user_mentions = slack_user_mentions.split()
         fnc = slack_sender(slack_webhook, slack_channel, slack_user_mentions)(fnc)
 
-    if teams_webhook := constants.TEAMS_WEBHOOK_URL:
-        if teams_user_mentions := constants.TEAMS_USER_MENTIONS:
+    if teams_webhook := settings.teams_webhook_url:
+        if teams_user_mentions := settings.teams_user_mentions:
             teams_user_mentions = teams_user_mentions.split()
         fnc = teams_sender(teams_webhook, teams_user_mentions)(fnc)
 

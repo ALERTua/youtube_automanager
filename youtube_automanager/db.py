@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 
 import pendulum
-from global_logger import Log
 from sqlalchemy import Column, DateTime, String, create_engine, update
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
 
-from youtube_automanager import constants
+from youtube_automanager.log_setup import setup_logging
+from youtube_automanager.settings import get_settings
 
-LOG = Log.get_logger()
+LOG = logging.getLogger(__name__)
 
 # https://docs.sqlalchemy.org/
 # https://leportella.com/sqlalchemy-tutorial/
@@ -65,18 +66,18 @@ class DatabaseController:
     @cached_property
     def db(self) -> Session:
         engine_str = rf"sqlite:///{self.db_filepath}"
-        LOG.green(f"Opening database {engine_str}")
+        LOG.info(f"Opening database {engine_str}")
         engine = create_engine(engine_str)  # , echo=log.verbose)
         Base.metadata.create_all(engine)
         session = sessionmaker(bind=engine)()
         return session
 
     def commit(self):
-        LOG.green("Saving database")
+        LOG.info("Saving database")
         self.db.commit()
 
     def close(self):
-        LOG.green("Closing database")
+        LOG.info("Closing database")
         self.db.close()
 
     def add(self, obj):
@@ -96,8 +97,9 @@ class DatabaseController:
 
 
 def main():
-    LOG.verbose = True
-    db = DatabaseController(constants.DB_FILEPATH, constants.USERNAME)
+    setup_logging(True)
+    settings = get_settings()
+    db = DatabaseController(settings.db_filepath, settings.username)
     db.db.query()
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import pprint
+import logging
 import threading
 from atexit import register as atexit_register
 from copy import copy
@@ -19,19 +19,18 @@ import uvicorn
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
-from global_logger import Log
 from google_auth_oauthlib.flow import InstalledAppFlow
 from pendulum import UTC
 
 # noinspection PyPackageRequirements
 from worker import async_worker
 
-from youtube_automanager import constants
+from youtube_automanager.settings import get_settings
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-LOG = Log.get_logger()
+LOG = logging.getLogger(__name__)
 LOCAL = pendulum.local_timezone()
 
 
@@ -128,8 +127,9 @@ class OAuth:
 
     def _fastapi_server(self) -> Server:
         ca = trustme.CA()
-        cert_ca_filepath = str(constants.CERT_CA_FILEPATH)
-        cert_server_filepath = str(constants.CERT_SERVER_FILEPATH)
+        settings = get_settings()
+        cert_ca_filepath = str(settings.cert_ca_filepath)
+        cert_server_filepath = str(settings.cert_server_filepath)
         cert = ca.issue_cert(self.host)
         ca.cert_pem.write_to_path(cert_ca_filepath)
         cert.private_key_and_cert_chain_pem.write_to_path(cert_server_filepath)
@@ -161,7 +161,7 @@ class OAuth:
             app,
             host=self.host,
             port=int(self.port),
-            log_level="info" if not LOG.verbose else "debug",
+            log_level="debug" if LOG.isEnabledFor(logging.DEBUG) else "info",
             ssl_certfile=cert_server_filepath,
         )
         server = Server(config=config)
@@ -179,8 +179,8 @@ class OAuth:
         return self._web_server
 
     def fetch_token(self, response):
-        self.session.token = output = self.flow.fetch_token(authorization_response=response)
-        LOG.debug(f"Fetched token:\n{pprint.pformat(output)}")
+        self.session.token = self.flow.fetch_token(authorization_response=response)
+        LOG.debug("Fetched a token")
 
     def authorize(self, refresh_token=None):
         if self.__flow is None:
@@ -192,8 +192,9 @@ class OAuth:
             return
 
         auth_url = self.generate_auth_url()
-        LOG.yellow(auth_url)
-        if (tg_token := constants.TELEGRAM_BOT_TOKEN) and (tg_chat_id := constants.TELEGRAM_CHAT_ID):
+        LOG.warning(auth_url)
+        settings = get_settings()
+        if (tg_token := settings.telegram_bot_token) and (tg_chat_id := settings.telegram_chat_id):
             message = f"Youtube Automanager Authorization URL:\n{auth_url}"
             url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
             with contextlib.suppress(Exception):
@@ -203,7 +204,7 @@ class OAuth:
         while not self.authorized:
             sleep(1)
         self.web_server.thread_exit()
-        LOG.green("Authorized")
+        LOG.info("Authorized")
 
     @property
     def client_config(self):
@@ -219,7 +220,7 @@ class OAuth:
 
     def refresh_token_(self):
         self.session.token = output = self.session.refresh_token(token_url=self.token_url)
-        LOG.debug(f"Token refresh result:\n{pprint.pformat(output)}")
+        LOG.debug("Token refresh result received")
         return output
 
     @property
@@ -252,18 +253,18 @@ class OAuth:
             while not self.token_expires():
                 if (expires_at := self.token_expires_at) is not None:
                     diff = pendulum.instance(expires_at, pendulum.UTC) - pendulum.now(pendulum.UTC)
-                    LOG.green(f"Token expires in {diff.in_words()}")
+                    LOG.info(f"Token expires in {diff.in_words()}")
                 await asyncio.sleep(60)
 
-            LOG.green("Refreshing token")
+            LOG.info("Refreshing token")
             refresh_token = copy(self.refresh_token)
-            LOG.debug(f"Using refresh token {refresh_token}")
+            LOG.debug("Using the refresh token")
             self.session.refresh_token(token_url=self.token_url)
             new_refresh_token = copy(self.refresh_token)
-            LOG.debug(f"New refresh token: {new_refresh_token}")
-            LOG.green(f"Refresh Token updated: {refresh_token != new_refresh_token}")
+            LOG.debug("Got a new refresh token")
+            LOG.info(f"Refresh Token updated: {refresh_token != new_refresh_token}")
             expires_local = pendulum.instance(self.token_expires_at, tz=UTC).astimezone(tz=LOCAL)
-            LOG.green(f"New Token expiration date: {expires_local.to_datetime_string()}")
+            LOG.info(f"New Token expiration date: {expires_local.to_datetime_string()}")
             LOG.debug("token_refreshing_daemon Sleeping 600 seconds")
             await asyncio.sleep(600)
 
