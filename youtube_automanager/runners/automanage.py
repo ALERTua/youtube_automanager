@@ -1,34 +1,21 @@
 #!/usr/bin/env python3
 import logging
 import re
-import sys
 from datetime import datetime
 
 import pendulum
-from knockknock import discord_sender, slack_sender, teams_sender, telegram_sender
-from pyyoutube import Activity, Api
 
 from youtube_automanager.config import YoutubeAutoManagerConfig
 from youtube_automanager.db import DatabaseController
-from youtube_automanager.log_setup import setup_logging
-from youtube_automanager.oauth import OAuth
-from youtube_automanager.settings import TOKEN_URL, get_settings
-from youtube_automanager.youtube_api import YoutubeAPI
 
-# python -m runs this module as __main__, so the name keeps it under the package logger
-LOG = logging.getLogger("youtube_automanager.runners.automanage")
-
-
-def token_expired(dt: datetime):
-    return datetime.now(tz=pendulum.local_timezone()) > dt
+LOG = logging.getLogger(__name__)
 
 
 class YoutubeAutoManager:
-    def __init__(self, oauth: OAuth, db: DatabaseController, config: YoutubeAutoManagerConfig):
-        self.oauth: OAuth = oauth
+    def __init__(self, db: DatabaseController, config: YoutubeAutoManagerConfig, yt_api):
         self.db: DatabaseController = db
         self.config: YoutubeAutoManagerConfig = config
-        self._yt_api = None
+        self.yt_api = yt_api
         self._start_date = None
 
     def check_config(self):
@@ -40,31 +27,6 @@ class YoutubeAutoManager:
             return False
 
         return True
-
-    def save_token(self):
-        saved_refresh_token = self.db.config.refresh_token
-        new_refresh_token = self.oauth.refresh_token
-        if saved_refresh_token == new_refresh_token:
-            return
-
-        LOG.debug("Saving a new refresh token")
-        self.db.config.refresh_token = new_refresh_token
-        self.db.save_config()
-        self.db.commit()
-
-    def authorize(self):
-        refresh_token = self.db.config.refresh_token
-        if refresh_token:
-            self.oauth.session.token["refresh_token"] = refresh_token
-            LOG.debug("Got a saved refresh token")
-        if refresh_token and self.oauth.refresh_token_():
-            LOG.info("Authorized using the saved refresh token.")
-        else:
-            self.oauth.authorize()
-            self.save_token()
-
-        # oauth.run_token_refreshing_daemon()  # TODO:
-        LOG.info("Authorization complete")
 
     @property
     def start_date(self) -> datetime:
@@ -93,7 +55,7 @@ class YoutubeAutoManager:
         self.db.commit()
 
     @staticmethod
-    def _activity_video_date(activity: Activity) -> datetime:
+    def _activity_video_date(activity) -> datetime:
         return pendulum.instance(datetime.fromisoformat(activity.snippet.publishedAt))
 
     @staticmethod
@@ -171,7 +133,7 @@ class YoutubeAutoManager:
 
     def parse_activity(
         self,
-        activity: Activity,
+        activity,
         start_date: datetime,
         durations: dict[str, int] | None = None,
     ):
@@ -313,71 +275,7 @@ class YoutubeAutoManager:
         self.start_date = after_date
 
     def start(self):
-        self.authorize()
         try:
             self.parse()
         except Exception as e:
             LOG.exception("an error occured", exc_info=e)
-
-    @property
-    def api(self):
-        return Api(
-            client_id=self.oauth.client_id,
-            client_secret=self.oauth.client_secret,
-            access_token=self.oauth.access_token,
-        )
-
-    @property
-    def yt_api(self):
-        if self._yt_api is None:
-            self._yt_api = YoutubeAPI(self.api, self.oauth.access_token)
-        self._yt_api.access_token = self.oauth.access_token
-        return self._yt_api
-
-
-if __name__ == "__main__":
-    settings = get_settings()
-    setup_logging(settings.verbose)
-
-    config_ = YoutubeAutoManagerConfig(config_filepath=settings.config_filepath)
-    if not config_.ok:
-        sys.exit(1)
-
-    oauth_ = OAuth(
-        client_secrets_file=settings.secrets_file,
-        scopes=settings.scopes,
-        host=settings.host,
-        port=settings.port,
-        redirect_uri=settings.redirect_uri,
-        token_url=TOKEN_URL,
-    )
-    db_ = DatabaseController(
-        db_filepath=settings.db_filepath,
-        username=settings.username,
-    )
-
-    manager = YoutubeAutoManager(oauth=oauth_, db=db_, config=config_)
-
-    fnc = manager.start  # https://github.com/huggingface/knockknock
-    if (
-        settings.telegram_announce
-        and (tg_token := settings.telegram_bot_token)
-        and (tg_chat := settings.telegram_chat_id)
-    ):
-        # noinspection PyUnboundLocalVariable
-        fnc = telegram_sender(token=tg_token, chat_id=int(tg_chat))(fnc)
-
-    if discord_webhook := settings.discord_webhook_url:
-        fnc = discord_sender(discord_webhook)(fnc)
-
-    if (slack_webhook := settings.slack_webhook_url) and (slack_channel := settings.slack_channel):
-        if slack_user_mentions := settings.slack_user_mentions:
-            slack_user_mentions = slack_user_mentions.split()
-        fnc = slack_sender(slack_webhook, slack_channel, slack_user_mentions)(fnc)
-
-    if teams_webhook := settings.teams_webhook_url:
-        if teams_user_mentions := settings.teams_user_mentions:
-            teams_user_mentions = teams_user_mentions.split()
-        fnc = teams_sender(teams_webhook, teams_user_mentions)(fnc)
-
-    fnc()
