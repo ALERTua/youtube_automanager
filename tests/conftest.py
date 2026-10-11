@@ -9,10 +9,9 @@ IN_WINDOW = "2026-01-02T00:00:00+00:00"
 
 
 class FakeYoutubeAPI:
-    """Replaces YoutubeAPI of the manager: serves canned data and records each call that writes or fetches."""
+    """Replaces the YouTube source of the manager: serves canned data and records each call that writes or fetches."""
 
     def __init__(self):
-        self.access_token = None
         self.playlists = []
         self.subscriptions = []
         self.activities_by_channel = {}
@@ -80,9 +79,7 @@ def fake_db():
 def make_manager(fake_api, fake_db):
     def factory(rules, start_date=None):
         config = SimpleNamespace(config={"rules": rules}, start_date=start_date)
-        manager = YoutubeAutoManager(oauth=SimpleNamespace(access_token="t"), db=fake_db, config=config)
-        manager._yt_api = fake_api
-        return manager
+        return YoutubeAutoManager(db=fake_db, config=config, yt_api=fake_api)
 
     return factory
 

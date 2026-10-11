@@ -6,17 +6,10 @@ readme = "README.md"
 requires-python = "==3.14.*"
 dependencies = [
     "fastapi",
-    "google-api-python-client",
-    "google-auth-oauthlib",
-    "knockknock",
-    "oauth2client",
     "pendulum",
     "pydantic-settings",
-    "python-worker",
-    "python-youtube",
     "pyyaml",
     "sqlalchemy",
-    "trustme",
     "uvicorn",
 ]
 
