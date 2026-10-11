@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import logging
 from functools import cache
 from typing import TYPE_CHECKING
 
 import pendulum
-from global_logger import Log
 
 # noinspection PyPackageRequirements
 from googleapiclient.discovery import build
 from oauth2client.client import AccessTokenCredentials
 
-from youtube_automanager import constants
+from youtube_automanager.settings import YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION
 
 if TYPE_CHECKING:
     from pyyoutube import Api, Playlist
 
-LOG = Log.get_logger()
+LOG = logging.getLogger(__name__)
 
 
 class YoutubeAPI:
@@ -28,7 +28,7 @@ class YoutubeAPI:
     @property
     def google_api(self):
         creds = AccessTokenCredentials(self.access_token, "")
-        return build(constants.YOUTUBE_API_SERVICE_NAME, constants.YOUTUBE_API_VERSION, credentials=creds)
+        return build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, credentials=creds)
 
     @cache  # noqa: B019
     def video_in_playlist(self, playlist_id, video_id):
@@ -69,7 +69,7 @@ class YoutubeAPI:
         **kwargs,
     ):
         # https://developers.google.com/youtube/v3/docs/subscriptions/list
-        LOG.green("Getting subscriptions")
+        LOG.info("Getting subscriptions")
         parts = parts or ["snippet"]
         subs = self.api.get_subscription_by_me(
             mine=mine,
@@ -104,7 +104,7 @@ class YoutubeAPI:
         kwargs.setdefault("mine", True)
         kwargs.setdefault("count", None)
         kwargs.setdefault("parts", ["snippet"])
-        LOG.green("Getting playlists")
+        LOG.info("Getting playlists")
         response = self.api.get_playlists(**kwargs)
         output = response.items
         return output
