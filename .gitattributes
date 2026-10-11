@@ -1,0 +1,34 @@
+# Line endings are normalised here so they stop depending on whoever's editor touched a file.
+# The repository stores LF, and LF is what lands in the working tree on every platform.
+# Windows tooling (Python, ruff, git, PowerShell) reads LF fine; only .cmd needs CRLF.
+
+# Default: treat everything as text and check it out with LF.
+* text=auto eol=lf
+
+# Sources and config -- explicit so a new tool cannot guess differently.
+*.py    text eol=lf
+*.pyw   text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.lock  text eol=lf
+Justfile text eol=lf
+.env.example text eol=lf
+
+# Batch files are parsed line by line by cmd.exe, which can mis-handle bare LF.
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# Binaries: never touch the bytes, never try to diff them.
+*.png   binary
+*.ico   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pdf   binary
+*.exe   binary
+
+# uv.lock is generated: collapse it in GitHub reviews and never try to merge it line by line
+# (regenerate instead). Local `git diff` still shows it, so dependency changes stay reviewable.
+uv.lock merge=binary linguist-generated
