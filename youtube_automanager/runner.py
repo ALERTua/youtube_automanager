@@ -49,8 +49,9 @@ CHECK_TIMEOUT_S = 120
 # The exit code of a session check child that cannot use the stored cookies, or finds none.
 UNAVAILABLE_EXIT_CODE = 3
 BUSY_TEXT = "A sync run, a session check or a yt-dlp update is active. Try again when it ends."
-# How long a scheduled run waits for the sync lock. A cookie rotation keeps it for up to 2 requests of 30 s and a pause.
-SCHEDULED_WAIT_S = 90
+# How long a scheduled run waits for the sync lock. A cookie rotation or a session check keeps it for seconds, and a
+# refresh of the account lists or a yt-dlp update for a few minutes, so a scheduled run that comes at that time waits.
+SCHEDULED_WAIT_S = 600
 # The longest single wait for the sync lock, so a stop of the service ends a wait soon.
 LOCK_POLL_S = 0.5
 
@@ -271,8 +272,8 @@ class SyncRunner:
     def run_scheduled(self) -> None:
         """The job of the schedule: one run, or nothing when a run is already active.
 
-        A cookie rotation or a session check keeps the sync lock for seconds, so the scheduled run waits up to
-        SCHEDULED_WAIT_S for it, and is not lost to them.
+        A cookie rotation, a session check, a refresh of the account lists or a yt-dlp update keeps the sync lock for
+        a while, so the scheduled run waits up to SCHEDULED_WAIT_S for it, and is not lost to them.
         """
         run_id = self.claim(RunTrigger.SCHEDULE, wait_s=SCHEDULED_WAIT_S)
         if run_id is None:

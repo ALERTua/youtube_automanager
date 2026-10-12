@@ -1,5 +1,6 @@
 import datetime
 import io
+import logging
 import subprocess
 import threading
 
@@ -7,6 +8,7 @@ import pytest
 from nicegui import Client
 from nicegui.testing.general import nicegui_reset_globals
 from sqlalchemy import select
+from ui_support import running_service
 
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.db.models import (
@@ -23,6 +25,66 @@ from youtube_automanager.db.models import (
     Setting,
 )
 from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, SyncRun
+from youtube_automanager.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def history_cleanup_off(monkeypatch):
+    """Stops the service from cleaning the history at its start.
+
+    The cleanup deletes each run that is older than the retention period, so a test that seeds a run with a fixed date
+    and then starts the service would depend on the clock. A test of the cleanup puts the real function back with
+    ``monkeypatch.setattr(youtube_automanager.web.app, "clean_history", clean_history)``.
+    """
+    monkeypatch.setattr("youtube_automanager.web.app.clean_history", lambda sessions: None)
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+def logging_setups(monkeypatch):
+    """Records the logging setup of the lifespan instead of a change of the handlers that pytest captures."""
+    calls = []
+    monkeypatch.setattr("youtube_automanager.web.app.setup_logging", calls.append)
+    return calls
+
+
+@pytest.fixture
+def no_logged_errors(caplog):
+    """Fails a test when the service logged an error. NiceGUI logs an error of a page or a timer instead of a raise."""
+    yield
+    errors = [record.getMessage() for record in caplog.get_records("call") if record.levelno >= logging.ERROR]
+    assert not errors, f"The service logged errors: {errors}"
+
+
+@pytest.fixture
+def settings(tmp_path):
+    home = tmp_path / "data"
+    return Settings(
+        home=home,
+        database_url=f"sqlite:///{home / 'service.sqlite'}",
+        ytdlp_dir=home / "yt-dlp",
+        tz="Europe/Kyiv",
+    )
+
+
+@pytest.fixture
+def sessions(settings):
+    """Sessions of the database of ``settings``, with the newest schema."""
+    settings.home.mkdir(parents=True, exist_ok=True)
+    upgrade_to_head(settings.database_url)
+    engine = make_engine(settings.database_url)
+    yield make_session_factory(engine)
+    engine.dispose()
+
+
+@pytest.fixture
+async def user(nicegui_globals, settings, fake_starter):
+    async with running_service(settings, fake_starter) as user:
+        yield user
 
 
 @pytest.fixture

@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import logging
 import threading
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -11,12 +12,17 @@ from youtube_automanager import scheduler as scheduler_module
 from youtube_automanager.db.models import Run, RunStatus, RunTrigger, Schedule, ScheduleKind
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.scheduler import (
+    CLEANUP_HOUR,
+    CLEANUP_MINUTE,
+    MAX_INTERVAL_S,
     ROTATION_JOB_ID,
     RunNowOutcome,
     Scheduler,
     SchedulerState,
     ScheduleSpec,
     load_schedule,
+    save_enabled,
+    save_schedule,
     upcoming_run_times,
 )
 
@@ -116,6 +122,8 @@ def test_disabled_schedule_has_no_run_times():
         (lambda: cron(""), "cron expression"),
         (lambda: cron("0 18 * * *", timezone="Nowhere/City"), "Unknown time zone"),
         (lambda: interval(0), "1 s or more"),
+        (lambda: interval(MAX_INTERVAL_S + 1), "or less"),
+        (lambda: interval(10**12), "or less"),
         (lambda: ScheduleSpec(kind=ScheduleKind.INTERVAL, timezone="UTC"), "1 s or more"),
     ],
 )
@@ -159,11 +167,11 @@ def runner(db_sessions, db_url, tmp_path, fake_starter):
     )
 
 
-def run_with_scheduler(runner, spec, body):
+def run_with_scheduler(runner, spec, body, cleanup=None):
     """Start a scheduler with ``spec`` on a new event loop, await ``body(scheduler)``, and shut the scheduler down."""
 
     async def main():
-        scheduler = Scheduler(runner)
+        scheduler = Scheduler(runner, cleanup=cleanup)
         await scheduler.start(spec)
         try:
             return await body(scheduler)
@@ -398,3 +406,191 @@ def test_the_rotation_goes_on_while_the_schedule_is_paused(runner):
 def test_the_rotation_needs_a_running_scheduler(runner):
     with pytest.raises(RuntimeError, match="not running"):
         asyncio.run(Scheduler(runner).start_rotation(FakeRotation([])))
+
+
+# The longest interval.
+
+
+def test_the_longest_interval_gives_run_times_and_the_scheduler_starts(runner):
+    assert len(upcoming_run_times(interval(MAX_INTERVAL_S), 3, now=NOW)) == 3
+
+    async def body(scheduler):
+        return await scheduler.state(), len(await scheduler.next_run_times(2))
+
+    assert run_with_scheduler(runner, interval(MAX_INTERVAL_S), body) == (SchedulerState.RUNNING, 2)
+
+
+# The schedule row.
+
+
+def test_save_schedule_replaces_the_single_row(db_sessions):
+    load_schedule(db_sessions, "Europe/Kyiv")
+    spec = ScheduleSpec(
+        kind=ScheduleKind.INTERVAL,
+        timezone="America/New_York",
+        cron_expression="5 4 * * *",
+        interval_s=900,
+        enabled=False,
+    )
+
+    save_schedule(db_sessions, spec)
+
+    assert load_schedule(db_sessions, "UTC") == spec
+    with db_sessions() as session:
+        assert session.scalars(select(Schedule.id)).all() == [1]
+
+
+def test_save_schedule_keeps_an_empty_field_empty(db_sessions):
+    load_schedule(db_sessions, "Europe/Kyiv")
+
+    save_schedule(db_sessions, ScheduleSpec(kind=ScheduleKind.INTERVAL, timezone="UTC", interval_s=60))
+
+    assert load_schedule(db_sessions, "UTC").cron_expression is None
+
+
+def test_save_schedule_writes_the_row_when_the_table_is_empty(db_sessions):
+    save_schedule(db_sessions, cron("30 7 * * *"))
+
+    assert load_schedule(db_sessions, "UTC") == cron("30 7 * * *")
+
+
+def test_save_enabled_changes_only_the_flag(db_sessions):
+    load_schedule(db_sessions, "UTC")
+    save_schedule(db_sessions, interval(600, timezone="America/New_York"))
+
+    save_enabled(db_sessions, False)
+
+    assert load_schedule(db_sessions, "UTC") == interval(600, timezone="America/New_York", enabled=False)
+    save_enabled(db_sessions, True)
+    assert load_schedule(db_sessions, "UTC") == interval(600, timezone="America/New_York")
+
+
+def test_save_enabled_without_a_row_is_an_error(db_sessions):
+    with pytest.raises(LookupError, match="no row"):
+        save_enabled(db_sessions, False)
+
+
+# The cleanup job.
+
+
+class CleanupProbe:
+    """Replaces the cleanup of the history: counts its calls, and fails when ``error`` is set."""
+
+    def __init__(self, error=None):
+        self.calls = 0
+        self.error = error
+        self.ran = threading.Event()
+
+    def __call__(self):
+        self.calls += 1
+        self.ran.set()
+        if self.error is not None:
+            raise self.error
+
+
+async def wait_for_first_cleanup(probe):
+    assert await asyncio.to_thread(probe.ran.wait, WAIT_SECONDS), "The cleanup did not start"
+
+
+def test_the_cleanup_runs_once_when_the_scheduler_starts(runner):
+    probe = CleanupProbe()
+
+    async def body(scheduler):
+        await wait_for_first_cleanup(probe)
+        # The next run is tomorrow, so no second call follows.
+        await asyncio.sleep(0.3)
+        return probe.calls
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body, cleanup=probe) == 1
+
+
+def test_the_cleanup_runs_each_day_at_0330_in_the_time_zone_of_the_schedule(runner):
+    probe = CleanupProbe()
+
+    async def body(scheduler):
+        await wait_for_first_cleanup(probe)
+        return await scheduler.next_cleanup_times(3)
+
+    times = run_with_scheduler(runner, cron("0 18 * * *", timezone="Europe/Kyiv"), body, cleanup=probe)
+
+    assert (CLEANUP_HOUR, CLEANUP_MINUTE) == (3, 30)
+    assert [(time.astimezone(KYIV).hour, time.astimezone(KYIV).minute) for time in times] == [(3, 30)] * 3
+    assert times[0] > datetime.now(UTC)
+    assert [later - earlier for earlier, later in itertools.pairwise(times)] == [timedelta(days=1)] * 2
+
+
+def test_the_cleanup_follows_a_change_of_the_time_zone(runner):
+    probe = CleanupProbe()
+    new_york = ZoneInfo("America/New_York")
+
+    async def body(scheduler):
+        await wait_for_first_cleanup(probe)
+        await scheduler.apply(cron("0 18 * * *", timezone="America/New_York"))
+        return await scheduler.next_cleanup_times(2)
+
+    times = run_with_scheduler(runner, cron("0 18 * * *", timezone="Europe/Kyiv"), body, cleanup=probe)
+
+    assert [(time.astimezone(new_york).hour, time.astimezone(new_york).minute) for time in times] == [(3, 30)] * 2
+
+
+def test_the_cleanup_goes_on_while_the_schedule_is_paused(runner):
+    probe = CleanupProbe()
+
+    async def body(scheduler):
+        await wait_for_first_cleanup(probe)
+        started_paused = await scheduler.state(), len(await scheduler.next_cleanup_times(2))
+        await scheduler.resume()
+        await scheduler.pause()
+        await scheduler.apply(cron("0 6 * * *", enabled=False))
+        return started_paused, await scheduler.state(), len(await scheduler.next_cleanup_times(2))
+
+    started_paused, state, count = run_with_scheduler(runner, cron("0 18 * * *", enabled=False), body, cleanup=probe)
+
+    assert started_paused == (SchedulerState.PAUSED, 2)
+    assert (state, count) == (SchedulerState.PAUSED, 2)
+    assert probe.calls == 1
+
+
+def test_a_failing_cleanup_is_logged_and_the_scheduler_goes_on(runner, caplog):
+    probe = CleanupProbe(error=RuntimeError("the cleanup failed"))
+
+    async def body(scheduler):
+        await wait_for_first_cleanup(probe)
+        # The job writes its log entry after the call returns.
+        for _ in range(100):
+            if any(record.levelno >= logging.ERROR for record in caplog.records):
+                break
+            await asyncio.sleep(0.02)
+        return (
+            await scheduler.state(),
+            len(await scheduler.next_cleanup_times(1)),
+            len(await scheduler.next_run_times(1)),
+        )
+
+    with caplog.at_level(logging.ERROR):
+        result = run_with_scheduler(runner, cron("0 18 * * *"), body, cleanup=probe)
+
+    assert result == (SchedulerState.RUNNING, 1, 1)
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert errors
+    assert "the cleanup failed" in str(errors[0].exc_info[1])
+
+
+def test_a_scheduler_without_a_cleanup_has_no_cleanup_job(runner):
+    async def body(scheduler):
+        return await scheduler.next_cleanup_times(3)
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body) == []
+
+
+def test_a_stopped_scheduler_has_no_cleanup_times(runner):
+    probe = CleanupProbe()
+
+    async def main():
+        scheduler = Scheduler(runner, cleanup=probe)
+        await scheduler.start(cron("0 18 * * *"))
+        await wait_for_first_cleanup(probe)
+        await scheduler.shutdown()
+        return await scheduler.next_cleanup_times(3)
+
+    assert asyncio.run(main()) == []

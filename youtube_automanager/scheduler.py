@@ -1,14 +1,16 @@
 """The schedule of the sync runs: the async interface of the service over APScheduler.
 
 The rest of the service calls APScheduler only through this module, so a move to another major version of APScheduler
-changes only this module. The schedule lives in the ``schedule`` table. APScheduler keeps its one job in memory, and
-a change of the schedule acts at once, without a restart.
+changes only this module. The schedule lives in the ``schedule`` table. APScheduler keeps its jobs in memory, and
+a change of the schedule acts at once, without a restart. Next to the sync job, the scheduler runs one cleanup job,
+which the owner of the history gives to it.
 """
 
 import asyncio
 import enum
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -31,6 +33,15 @@ JOB_ID = "sync"
 ROTATION_JOB_ID = "cookie_rotation"
 # The wait before the first turn of the cookie rotation, and before the next turn after a turn that failed.
 ROTATION_DELAY_S = 60.0
+CLEANUP_JOB_ID = "cleanup"
+
+# The cleanup of the old history runs each day at this time of the day, in the time zone of the schedule.
+CLEANUP_HOUR = 3
+CLEANUP_MINUTE = 30
+
+# The longest interval of an interval schedule, one year. A longer one makes the date arithmetic of APScheduler fail
+# with an OverflowError or an OSError, and a schedule row that fails like this stops the start of the service.
+MAX_INTERVAL_S = 365 * 24 * 60 * 60
 
 # Standard cron counts the days of the week from Sunday, and 7 is Sunday again. APScheduler 3 counts 0 as Monday.
 # A name means the same day in both, so the numbers become names before APScheduler sees them.
@@ -151,8 +162,16 @@ def build_trigger(spec: ScheduleSpec) -> BaseTrigger:
     if spec.kind is ScheduleKind.INTERVAL:
         if spec.interval_s is None or spec.interval_s < 1:
             raise ValueError(f"An interval schedule needs an interval of 1 s or more, got {spec.interval_s}")
+        if spec.interval_s > MAX_INTERVAL_S:
+            raise ValueError(
+                f"An interval schedule needs an interval of {MAX_INTERVAL_S} s or less, got {spec.interval_s}"
+            )
         return IntervalTrigger(seconds=spec.interval_s, timezone=zone)
     raise ValueError(f"Unknown schedule kind {spec.kind!r}")
+
+
+def _cleanup_trigger(timezone: str) -> CronTrigger:
+    return CronTrigger(hour=CLEANUP_HOUR, minute=CLEANUP_MINUTE, timezone=_zone(timezone))
 
 
 def _following_times(trigger: BaseTrigger, first: datetime, count: int) -> list[datetime]:
@@ -205,15 +224,49 @@ def load_schedule(sessions: sessionmaker[Session], default_timezone: str) -> Sch
         return ScheduleSpec.from_row(row)
 
 
+def save_schedule(sessions: sessionmaker[Session], spec: ScheduleSpec) -> None:
+    """Write ``spec`` into the single row of the ``schedule`` table. This call blocks.
+
+    ``spec`` is already valid, because the constructor of ``ScheduleSpec`` refuses a wrong schedule.
+    """
+    with sessions.begin() as session:
+        row = session.get(Schedule, 1)
+        if row is None:
+            row = Schedule(id=1)
+            session.add(row)
+        row.enabled = spec.enabled
+        row.kind = spec.kind
+        row.cron_expression = spec.cron_expression
+        row.interval_s = spec.interval_s
+        row.timezone = spec.timezone
+
+
+def save_enabled(sessions: sessionmaker[Session], enabled: bool) -> None:
+    """Write the ``enabled`` flag into the row of the ``schedule`` table, so a pause survives a restart.
+
+    This call blocks. It raises LookupError when the table has no row, which ``load_schedule`` writes at the start.
+    """
+    with sessions.begin() as session:
+        row = session.get(Schedule, 1)
+        if row is None:
+            raise LookupError("The schedule table has no row")
+        row.enabled = enabled
+
+
 class Scheduler:
-    """Starts ``SyncRunner`` runs by a schedule and on request.
+    """Starts ``SyncRunner`` runs by a schedule and on request, and runs the cleanup of the history each day.
 
     Each method runs on the event loop of the service. A pause or a new schedule acts only in this process: the caller
     keeps the ``enabled`` flag and the schedule in the ``schedule`` table, so they survive a restart.
+
+    ``cleanup`` is a blocking function. It runs once when the scheduler starts, and then each day at ``CLEANUP_HOUR``
+    and ``CLEANUP_MINUTE`` in the time zone of the schedule, also while the schedule is paused. A failed cleanup only
+    writes a log entry, and the next one runs as planned. Without ``cleanup``, the scheduler has no cleanup job.
     """
 
-    def __init__(self, runner: SyncRunner):
+    def __init__(self, runner: SyncRunner, cleanup: Callable[[], object] | None = None):
         self._runner = runner
+        self._cleanup = cleanup
         self._scheduler: AsyncIOScheduler | None = None
 
     def _running_scheduler(self) -> AsyncIOScheduler:
@@ -239,6 +292,17 @@ class Scheduler:
             misfire_grace_time=None,
             **options,
         )
+        if self._cleanup is not None:
+            # An explicit first run time makes the job run once at the start, and then by its daily trigger.
+            scheduler.add_job(
+                self._cleanup,
+                trigger=_cleanup_trigger(spec.timezone),
+                id=CLEANUP_JOB_ID,
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=None,
+                next_run_time=datetime.now(UTC),
+            )
         self._scheduler = scheduler
         LOG.info("The scheduler started: %s", self._describe(spec))
 
@@ -262,6 +326,9 @@ class Scheduler:
         else:
             # reschedule_job sets a next run time, so it would also resume a paused job.
             scheduler.modify_job(JOB_ID, trigger=trigger, next_run_time=None)
+        if self._cleanup is not None:
+            # The cleanup follows the time zone of the schedule, also while the schedule is paused.
+            scheduler.reschedule_job(CLEANUP_JOB_ID, trigger=_cleanup_trigger(spec.timezone))
         LOG.info("The schedule changed: %s", self._describe(spec))
 
     async def pause(self) -> None:
@@ -329,6 +396,15 @@ class Scheduler:
             LOG.exception("A turn of the cookie rotation failed")
             delay_s = ROTATION_DELAY_S
         self._plan_rotation(rotation, delay_s)
+
+    async def next_cleanup_times(self, count: int) -> list[datetime]:
+        """Return the next ``count`` run times of the cleanup. A scheduler without a cleanup has none."""
+        if self._scheduler is None or count < 1:
+            return []
+        job = self._scheduler.get_job(CLEANUP_JOB_ID)
+        if job is None or job.next_run_time is None:
+            return []
+        return _following_times(job.trigger, job.next_run_time, count)
 
     async def state(self) -> SchedulerState:
         if self._scheduler is None:
