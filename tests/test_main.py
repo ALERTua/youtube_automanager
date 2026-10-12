@@ -30,6 +30,16 @@ def test_run_once_runs_the_sync_body_with_the_run_id(settings, logging_setups, m
     assert logging_setups == [True]
 
 
+def test_check_session_runs_the_session_check_body(settings, logging_setups, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "check_session_once", lambda given: calls.append(given) or 3)
+
+    assert cli.main(["check-session"]) == 3
+
+    assert calls == [settings]
+    assert logging_setups == [True]
+
+
 def test_refresh_account_runs_the_refresh_body_with_the_settings_and_gives_its_exit_code(
     settings, logging_setups, monkeypatch
 ):

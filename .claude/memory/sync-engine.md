@@ -22,15 +22,18 @@ metadata:
 - Each add commits its `added_video` row at once. The `seen_video` row of a video comes only after all its adds.
 - A failed add stops that source for the run. The video and the newer ones stay without a record, so the next run reads them again.
 - A read error of a channel writes an `error` action, sends `channel_error`, and the run continues with the other sources.
-- `NotLoggedInError` sets `account.session_state` to `dead` and stops the run.
+- A dead or missing session does not stop the run. The run reads the channels and evaluates the rules. A matching video waits as deferred with the cause, so a later run with a live session adds it while the video stays in the processing window.
+- Without the account, the feed source gets an error action and keeps its state. The run also gets one error that counts the matching videos that wait for the account.
+- A `NotLoggedInError` during the run goes to `session_died`, and the run tries no more adds.
 - When the run stops, the child writes the cause as the last line of stderr. The parent stores the end of stderr as the error text of the run.
-- The engine opens the account only at the first need: a read of the feed or an add. A run that adds nothing needs no cookies.
+- Each run with stored cookies first checks the session. The engine asks for the checked client only at the first need: a read of the feed or an add.
 
 ## Processing modes
 
 - The setting `processing_mode` holds the mode: `{"mode": "stop_at_seen"}` (the default), `{"mode": "newest", "count": N}` or `{"mode": "mark_date"}`.
 - Mode `stop_at_seen` stops when it has read at least 20 entries and met a seen entry. A deferred entry is never a stop point.
 - After the 20 newest entries, mode `stop_at_seen` also stops at the first dated entry that is older than the day of the last read minus 2 days. A source whose stored videos all vanished thus reads only the recent days, not the whole channel. An entry without a date never stops the read.
+- The change tracking of SQLAlchemy compares a JSON value with Python `==`, so a change of a `setting` value from `true` to `1` writes no UPDATE. Replace the row, or compare the types first.
 - The setting `processing_mode_of_state` holds the mode of the stored state. When the mode changes, the engine removes all `seen_video` rows, all marks and all read times, so each source gets a baseline. The videos that came between the last run and the change are then not evaluated.
 - Mode `mark_date` keeps the mark of a channel in `channel.mark_date`, and the mark of the feed in the setting `feed_mark_date`. A source that was read before but has no mark uses the day of its last read as the mark.
 - A flat date comes from relative text, and the text gets less exact with age, for example "1 week ago". An older entry can thus get a date on or after the mark. Mode `mark_date` therefore also stops at the first stored seen video of the mark day, because the upload order is stable. A deferred entry below that stop point gets no new check.
@@ -55,15 +58,13 @@ metadata:
 - `is_cache_stale` treats a missing, unreadable or future refresh time as stale. A copy that is exactly `max_age` old is still fresh. The default `MAX_AGE` is 24 hours.
 - `refresh_if_stale` calls `open_client` only for a stale copy, so a fresh copy needs no cookies and makes no request.
 - Two refreshes at the same time can fail on a duplicate key. The caller holds the sync lock.
-- The route `POST /api/account/refresh` runs `python -m youtube_automanager refresh-account` in a child process. It starts the child with `child_environment`, like a run, so the yt-dlp of the data folder applies and the web process never imports yt-dlp.
-- The route takes the sync lock without a wait and holds it while the child runs. It answers 409 while a run or a yt-dlp update holds the lock.
-- The child ends with exit code 0 and the counts as one JSON line at the end of stdout. The log of the child is on stdout too, so the parent reads the last line.
-- A failed child ends with exit code 3 (account not available), 4 (logged out) or 5 (another account error), and the cause is the last line of stderr. Another exit code is a crash, and the route does not show its stderr.
-- The route answers 409 for the exit codes 3 and 4. It answers 502 for the exit code 5, a crash, a timeout and a child without counts.
-- The child gets `REFRESH_TIMEOUT_SECONDS`, 300 s, and `subprocess.run` kills it after that. This is shorter than the wait of a scheduled run for the sync lock.
-- A stop of the service does not stop a refresh child. The child ends by itself, at the latest at its timeout.
-- The route does not write `account.session_state`. Only the sync engine marks the session `dead`.
-- The texts of `open_account` start with "The run needs the YouTube account", and the route gives them as they are.
+- The route `POST /api/account/refresh` calls `refresh_in_child`, which runs `python -m youtube_automanager refresh-account` through `SyncRunner.run_short_child`. This is the same child body that a run and a session check use, so the yt-dlp of the data folder applies, the web process never imports yt-dlp, and `SyncRunner.stop` stops the child.
+- `run_short_child` takes the sync lock without a wait and holds it while the child runs. The route answers 409 with `BUSY_TEXT` while a run, a session check, another refresh or a yt-dlp update holds the lock.
+- The refresh child works with the account as a run does: it checks the session, reads the lists, and saves the updated cookies with `AccountSession`. A read that YouTube refuses as logged out marks the session `dead` through `AccountSession.died`.
+- The child ends with exit code 0 and the counts as one JSON line at the end of stderr. The runner copies and keeps only the stderr of a child, so the counts come on that stream. The log of the child is on stdout.
+- A failed child writes its cause as the last line of stderr and ends with a code. `UNAVAILABLE_EXIT_CODE` (3) is for no usable cookies, and a session check child uses the same code. `EXIT_LOGGED_OUT` (4) and `EXIT_ACCOUNT_ERROR` (5) are only for the refresh. Another exit code is a crash, and the route does not show its stderr.
+- The route answers 409 for the codes 3 and 4. It answers 502 for the code 5, a crash, a stop of the service, a timeout and a child without counts.
+- The child gets `REFRESH_TIMEOUT_SECONDS`, 300 s. This is shorter than `SCHEDULED_WAIT_S`, the wait of a scheduled run for the sync lock, so a refresh never makes a scheduled run give up.
 
 ## Processes
 

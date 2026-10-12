@@ -8,12 +8,14 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
+from youtube_automanager import scheduler as scheduler_module
 from youtube_automanager.db.models import Run, RunStatus, RunTrigger, Schedule, ScheduleKind
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.scheduler import (
     CLEANUP_HOUR,
     CLEANUP_MINUTE,
     MAX_INTERVAL_S,
+    ROTATION_JOB_ID,
     RunNowOutcome,
     Scheduler,
     SchedulerState,
@@ -329,6 +331,81 @@ def test_second_start_is_refused(runner):
         return await scheduler.state()
 
     assert run_with_scheduler(runner, cron("0 18 * * *"), body) is SchedulerState.RUNNING
+
+
+# The cookie rotation
+
+
+class FakeRotation:
+    """Counts the turns. Each turn returns the next delay, or raises it when it is an exception."""
+
+    def __init__(self, delays):
+        self.delays = list(delays)
+        self.turns = 0
+
+    def turn(self):
+        self.turns += 1
+        delay = self.delays.pop(0) if self.delays else 3600.0
+        if isinstance(delay, Exception):
+            raise delay
+        return delay
+
+
+def test_each_turn_of_the_rotation_plans_the_next_one_by_its_delay(runner):
+    rotation = FakeRotation([0.05, 0.05, 3600.0])
+
+    async def body(scheduler):
+        await scheduler.start_rotation(rotation, first_delay_s=0.01)
+        await wait_until(lambda: rotation.turns == 3, "Three turns of the rotation")
+        await asyncio.sleep(0.3)
+        return rotation.turns, scheduler._scheduler.get_job(ROTATION_JOB_ID).next_run_time
+
+    turns, next_turn = run_with_scheduler(runner, cron("0 18 * * *"), body)
+
+    assert turns == 3
+    assert next_turn > datetime.now(UTC) + timedelta(seconds=3000)
+
+
+def test_a_turn_that_asks_for_the_next_turn_at_once_still_gets_it(runner):
+    # APScheduler still counts the turn that plans the next one as running when the next one is due.
+    rotation = FakeRotation([0.0, 0.0, 3600.0])
+
+    async def body(scheduler):
+        await scheduler.start_rotation(rotation, first_delay_s=0.0)
+        await wait_until(lambda: rotation.turns == 3, "Three turns of the rotation")
+        return rotation.turns
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body) == 3
+
+
+def test_a_failed_turn_of_the_rotation_still_plans_the_next_turn(runner, monkeypatch, caplog):
+    monkeypatch.setattr(scheduler_module, "ROTATION_DELAY_S", 0.01)
+    rotation = FakeRotation([RuntimeError("a bug in the turn"), 3600.0])
+
+    async def body(scheduler):
+        await scheduler.start_rotation(rotation, first_delay_s=0.01)
+        await wait_until(lambda: rotation.turns == 2, "The turn after the failed turn")
+        return rotation.turns
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body) == 2
+    assert "A turn of the cookie rotation failed" in caplog.text
+
+
+def test_the_rotation_goes_on_while_the_schedule_is_paused(runner):
+    rotation = FakeRotation([0.05, 3600.0])
+
+    async def body(scheduler):
+        await scheduler.pause()
+        await scheduler.start_rotation(rotation, first_delay_s=0.01)
+        await wait_until(lambda: rotation.turns == 2, "Two turns of the rotation")
+        return await scheduler.state()
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body) is SchedulerState.PAUSED
+
+
+def test_the_rotation_needs_a_running_scheduler(runner):
+    with pytest.raises(RuntimeError, match="not running"):
+        asyncio.run(Scheduler(runner).start_rotation(FakeRotation([])))
 
 
 # The longest interval.

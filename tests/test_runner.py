@@ -1,3 +1,4 @@
+import datetime
 import os
 import subprocess
 import sys
@@ -7,24 +8,38 @@ import pytest
 from sqlalchemy import select
 
 from youtube_automanager import notify
-from youtube_automanager.db.models import Run, RunStatus, RunTrigger, Setting
+from youtube_automanager import runner as runner_module
+from youtube_automanager.db.models import Account, CookieVersion, Run, RunStatus, RunTrigger, SessionState, Setting
+from youtube_automanager.engine import account_session
 from youtube_automanager.notify import Event
 from youtube_automanager.runner import (
+    BUSY_TEXT,
     ERROR_TAIL_LINES,
     ERROR_TEXT_MAX_CHARS,
     INTERRUPTED_ERROR,
     SOURCE_ROOT,
     SYNC_LOCK,
+    UNAVAILABLE_EXIT_CODE,
     RunAlreadyActive,
+    SessionCheckOutcome,
+    SessionCheckResult,
     SyncRunner,
+    check_session_once,
     error_text_from_tail,
     mark_interrupted_runs,
     run_once,
     sync_lock_held,
 )
 from youtube_automanager.settings import Settings
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError
+from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
 WAIT_SECONDS = 10
+COOKIES = (
+    "# Netscape HTTP Cookie File\n"
+    ".youtube.com\tTRUE\t/\tTRUE\t4000000000\tSAPISID\tfake-sapisid\n"
+    ".youtube.com\tTRUE\t/\tFALSE\t4000000000\tSIDCC\tfake-sidcc-0\n"
+)
 
 
 @pytest.fixture
@@ -174,12 +189,44 @@ def test_claim_while_a_run_is_active_writes_nothing(runner, db_sessions):
     assert runner.claim(RunTrigger.MANUAL) is not None
 
 
-def test_scheduled_run_does_nothing_while_a_run_is_active(runner, fake_starter, db_sessions):
+def test_scheduled_run_does_nothing_while_a_run_is_active(runner, fake_starter, db_sessions, monkeypatch):
+    monkeypatch.setattr(runner_module, "SCHEDULED_WAIT_S", 0.05)
     first = runner.claim(RunTrigger.MANUAL)
 
     runner.run_scheduled()
 
     assert [run.id for run in read_runs(db_sessions)] == [first]
+    assert fake_starter.calls == []
+
+
+def test_scheduled_run_waits_for_a_short_holder_of_the_sync_lock(make_runner, fake_starter, db_sessions):
+    lock = threading.Lock()
+    runner = make_runner(lock=lock)
+    lock.acquire()
+    threading.Timer(0.3, lock.release).start()
+
+    runner.run_scheduled()
+
+    (run,) = read_runs(db_sessions)
+    assert (run.trigger, run.status) == (RunTrigger.SCHEDULE, RunStatus.SUCCEEDED)
+    assert len(fake_starter.calls) == 1
+
+
+def test_a_stop_ends_the_wait_of_a_scheduled_run(make_runner, fake_starter, db_sessions):
+    lock = threading.Lock()
+    runner = make_runner(lock=lock)
+    lock.acquire()
+    try:
+        worker = threading.Thread(target=runner.run_scheduled)
+        worker.start()
+
+        runner.stop(timeout=0.1)
+        worker.join(WAIT_SECONDS)
+
+        assert not worker.is_alive()
+    finally:
+        lock.release()
+    assert read_runs(db_sessions) == []
     assert fake_starter.calls == []
 
 
@@ -407,3 +454,193 @@ class TestFailureNotification:
         runner.execute(runner.claim(RunTrigger.MANUAL))
 
         assert [notification.event for notification in calls] == [Event.RUN_FAILED]
+
+
+# The session check on request
+
+
+NOW = datetime.datetime(2026, 10, 12, 18, 0, tzinfo=datetime.UTC)
+LATER = datetime.datetime(2027, 10, 12, 6, 0, tzinfo=datetime.UTC)
+
+
+class TestSessionCheck:
+    def test_a_check_runs_the_check_child_and_gives_the_state_that_it_wrote(
+        self, runner, fake_starter, db_sessions, db_url
+    ):
+        with db_sessions.begin() as session:
+            session.add(Account(session_state=SessionState.EXPIRING, last_checked_at=NOW, earliest_cookie_expiry=LATER))
+
+        result = runner.check_session()
+
+        assert result == SessionCheckResult(SessionCheckOutcome.CHECKED, SessionState.EXPIRING, NOW, LATER, None)
+        ((command, env),) = fake_starter.calls
+        assert command == [sys.executable, "-m", "youtube_automanager", "check-session"]
+        assert env["DATABASE_URL"] == db_url
+        assert not runner.is_active()
+        # A check is not a run.
+        assert read_runs(db_sessions) == []
+
+    def test_a_check_without_usable_cookies_names_the_cause(self, runner, fake_starter):
+        fake_starter.plan.append(
+            {"exit_code": UNAVAILABLE_EXIT_CODE, "stderr": "The service needs the YouTube account, but no cookies.\n"}
+        )
+
+        result = runner.check_session()
+
+        assert result == SessionCheckResult(
+            SessionCheckOutcome.UNAVAILABLE, detail="The service needs the YouTube account, but no cookies."
+        )
+
+    def test_a_failed_check_names_the_cause(self, runner, fake_starter):
+        fake_starter.plan.append({"exit_code": 1, "stderr": "The session check failed: HTTP Error 503\n"})
+
+        result = runner.check_session()
+
+        assert (result.outcome, result.detail) == (
+            SessionCheckOutcome.FAILED,
+            "The session check failed: HTTP Error 503",
+        )
+
+    def test_a_check_while_a_run_is_active_starts_nothing(self, runner, fake_starter):
+        run_id = runner.claim(RunTrigger.MANUAL)
+        try:
+            assert runner.check_session() == SessionCheckResult(SessionCheckOutcome.BUSY, detail=BUSY_TEXT)
+        finally:
+            runner.execute(run_id)
+
+        assert len(fake_starter.calls) == 1
+
+    def test_a_run_does_not_start_while_a_check_is_active(self, runner, fake_starter, db_sessions):
+        fake_starter.plan.append({"blocking": True})
+        results = []
+        worker = threading.Thread(target=lambda: results.append(runner.check_session()))
+        worker.start()
+        assert fake_starter.child_started.wait(WAIT_SECONDS)
+
+        assert runner.claim(RunTrigger.MANUAL) is None
+
+        fake_starter.children[0].finish(0)
+        worker.join(WAIT_SECONDS)
+        assert results[0].outcome is SessionCheckOutcome.CHECKED
+        assert read_runs(db_sessions) == []
+
+    def test_a_check_that_does_not_end_in_time_is_killed(self, runner, fake_starter, monkeypatch):
+        monkeypatch.setattr(runner_module, "CHECK_TIMEOUT_S", 0.05)
+        fake_starter.plan.append({"blocking": True})
+
+        result = runner.check_session()
+
+        assert (result.outcome, result.detail) == (
+            SessionCheckOutcome.FAILED,
+            "The session check did not end within 0.05 s, so the service stopped it.",
+        )
+        assert fake_starter.children[0].killed
+        assert not runner.is_active()
+
+    def test_a_check_that_cannot_start_fails(self, runner, fake_starter):
+        fake_starter.error = OSError("no such program")
+
+        result = runner.check_session()
+
+        assert (result.outcome, result.detail) == (
+            SessionCheckOutcome.FAILED,
+            "The service cannot start the session check: no such program",
+        )
+
+    def test_stop_terminates_an_active_check(self, runner, fake_starter):
+        fake_starter.plan.append({"blocking": True})
+        results = []
+        worker = threading.Thread(target=lambda: results.append(runner.check_session()))
+        worker.start()
+        assert fake_starter.child_started.wait(WAIT_SECONDS)
+
+        assert runner.stop(timeout=WAIT_SECONDS) is True
+
+        worker.join(WAIT_SECONDS)
+        assert fake_starter.children[0].terminated
+        assert (results[0].outcome, results[0].detail) == (
+            SessionCheckOutcome.FAILED,
+            "The service stopped during the session check.",
+        )
+
+
+class TestCheckSessionOnce:
+    @pytest.fixture
+    def settings(self, tmp_path, db_url):
+        return Settings(home=tmp_path, database_url=db_url, tz="UTC", cookies_key=generate_key())
+
+    def store(self, db_sessions, settings):
+        with db_sessions.begin() as session:
+            save_cookies(session, CookieCipher(settings.cookies_key.get_secret_value()), COOKIES)
+
+    def client(self, monkeypatch, check):
+        calls = []
+
+        class FakeClient:
+            def __init__(self, text):
+                self.text = text
+
+            def check_session(self):
+                calls.append("check")
+                check()
+
+            def cookies_text(self):
+                return self.text.replace("fake-sidcc-0", "fake-sidcc-1")
+
+        monkeypatch.setattr(account_session, "AccountClient", FakeClient)
+        return calls
+
+    def test_a_live_session_exits_with_0_and_saves_the_updated_cookies(self, settings, db_sessions, monkeypatch):
+        self.store(db_sessions, settings)
+        calls = self.client(monkeypatch, lambda: None)
+
+        assert check_session_once(settings) == 0
+
+        assert calls == ["check"]
+        with db_sessions() as session:
+            assert session.scalars(select(Account)).one().session_state is SessionState.OK
+            assert len(session.scalars(select(CookieVersion)).all()) == 2
+
+    def test_a_dead_session_exits_with_0(self, settings, db_sessions, monkeypatch):
+        self.store(db_sessions, settings)
+
+        def refuse():
+            raise NotLoggedInError("YouTube answered as to an anonymous user")
+
+        self.client(monkeypatch, refuse)
+
+        assert check_session_once(settings) == 0
+        with db_sessions() as session:
+            assert session.scalars(select(Account)).one().session_state is SessionState.DEAD
+
+    def test_a_failed_check_writes_its_cause_to_stderr(self, settings, db_sessions, monkeypatch, capsys):
+        self.store(db_sessions, settings)
+
+        def fail():
+            raise AccountError("yt-dlp failed to check the session: HTTP Error 503")
+
+        self.client(monkeypatch, fail)
+
+        assert check_session_once(settings) == 1
+        assert capsys.readouterr().err.strip().splitlines()[-1].endswith("HTTP Error 503")
+
+    def test_without_cookies_the_child_exits_with_the_unavailable_code(self, settings, capsys):
+        assert check_session_once(settings) == UNAVAILABLE_EXIT_CODE
+        assert capsys.readouterr().err.strip().splitlines()[-1].endswith("Upload the YouTube cookies.")
+
+
+def test_real_child_process_runs_the_session_check(db_sessions, db_url, tmp_path, capfd):
+    """Starts the real `check-session` child: without stored cookies, it names the cause and sends no request."""
+    runner = SyncRunner(
+        db_sessions,
+        ytdlp_dir=tmp_path / "yt-dlp",
+        database_url=db_url,
+        child_timeout_s=90,
+        lock=threading.Lock(),
+    )
+
+    result = runner.check_session()
+
+    captured = capfd.readouterr()
+    assert result.outcome is SessionCheckOutcome.UNAVAILABLE, captured.err
+    assert result.detail.startswith("The service needs the YouTube account, but")

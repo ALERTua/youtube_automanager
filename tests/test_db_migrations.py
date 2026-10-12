@@ -17,6 +17,7 @@ ROOT = Path(__file__).parent.parent
 
 TABLES = {
     "account",
+    "cookie_version",
     "channel",
     "playlist",
     "rule",
@@ -164,7 +165,35 @@ def test_check_constraints_of_models_and_migrations_agree(sqlite_url, tmp_path):
     migrated = check_constraints(sqlite_url)
 
     assert migrated == check_constraints(created_url)
-    assert len(migrated) == 7
+    assert len(migrated) == 9
+
+
+def test_upgrade_keeps_stored_cookies_as_the_first_cookie_version_and_downgrade_keeps_them_in_the_account(
+    database_url,
+):
+    config = alembic_config(database_url)
+    command.upgrade(config, "bce2013af8cf")
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("INSERT INTO account (cookies, session_state) VALUES (:cookies, 'ok')"),
+                {"cookies": b"encrypted cookies"},
+            )
+
+        command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            versions = connection.execute(text("SELECT origin, state, cookies FROM cookie_version")).all()
+        assert [tuple(row) for row in versions] == [("upload", "unchecked", b"encrypted cookies")]
+
+        command.downgrade(config, "bce2013af8cf")
+
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT cookies FROM account")).scalars().all() == [b"encrypted cookies"]
+    finally:
+        engine.dispose()
+    assert "cookie_version" not in table_names(database_url)
 
 
 def test_comparison_finds_a_column_that_the_migrations_lack(sqlite_url):

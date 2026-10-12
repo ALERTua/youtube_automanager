@@ -230,12 +230,13 @@ class FakeSources:
 
 
 class FakeAccount:
-    """Replaces the account client: serves the subscriptions feed and records each add."""
+    """Replaces the account client: serves the subscriptions feed and records each add and each try of an add."""
 
     def __init__(self):
         self.feed = []
         self.feed_error = None
         self.added = []
+        self.tried = []
         self.add_errors = {}
 
     def iter_subscription_feed(self):
@@ -244,6 +245,7 @@ class FakeAccount:
         return iter(list(self.feed))
 
     def add_video(self, playlist_id, video_id):
+        self.tried.append((playlist_id, video_id))
         error = self.add_errors.get((playlist_id, video_id))
         if error is not None:
             raise error
@@ -259,6 +261,7 @@ class SyncHarness:
         self.account = FakeAccount()
         self.account_error = None
         self.account_opens = 0
+        self.session_deaths = []
         self.sent = []
         self.send_error = None
         self.now = datetime.datetime(2026, 10, 12, 18, 0, tzinfo=datetime.UTC)
@@ -290,6 +293,7 @@ class SyncHarness:
             read_shorts=self.sources.read_shorts,
             open_account=self.open_account,
             send=self.send,
+            session_died=self.session_deaths.append,
             clock=lambda: self.now,
         )
         try:

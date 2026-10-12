@@ -6,6 +6,7 @@ import contextlib
 import json
 import subprocess
 import sys
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +15,7 @@ from sqlalchemy import select
 from youtube_automanager import account_refresh
 from youtube_automanager.account_refresh import EXIT_ACCOUNT_ERROR, EXIT_LOGGED_OUT, EXIT_UNAVAILABLE
 from youtube_automanager.db.models import Channel, Playlist
-from youtube_automanager.runner import SOURCE_ROOT, SYNC_LOCK, sync_lock_held
+from youtube_automanager.runner import BUSY_TEXT, SOURCE_ROOT, SYNC_LOCK, sync_lock_held
 from youtube_automanager.settings import Settings
 from youtube_automanager.web.app import create_app
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
@@ -22,7 +23,6 @@ from youtube_automanager.youtube.session import CookieCipher, generate_key, save
 pytestmark = pytest.mark.usefixtures("logging_setups")
 
 COOKIE_VALUE = "fakeSIDvalue"
-COOKIES = f"# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1893456000\tSID\t{COOKIE_VALUE}\n"
 URL = "/api/account/refresh"
 COUNTS = {
     "channels_new": 1,
@@ -31,30 +31,26 @@ COUNTS = {
     "playlists_new": 4,
     "playlists_updated": 5,
 }
+COUNTS_LINE = json.dumps(COUNTS) + "\n"
 
 
-class FakeRun:
-    """Replaces the start of the refresh child, and records each call."""
+class ProbedStarter:
+    """Wraps the fake starter of the child process, and records the state of the sync lock and of the event loop."""
 
-    def __init__(self, code=0, stdout=None, stderr="", error=None):
-        self.code = code
-        self.stdout = json.dumps(COUNTS) + "\n" if stdout is None else stdout
-        self.stderr = stderr
-        self.error = error
-        self.calls = []
-        self.in_event_loop = None
+    def __init__(self, inner):
+        self.inner = inner
+        self.lock_held = []
+        self.in_event_loop = []
 
-    def __call__(self, command, env, timeout_s):
-        self.calls.append((list(command), timeout_s))
+    def __call__(self, command, env):
+        self.lock_held.append(SYNC_LOCK.locked())
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            self.in_event_loop = False
+            self.in_event_loop.append(False)
         else:
-            self.in_event_loop = True
-        if self.error is not None:
-            raise self.error
-        return subprocess.CompletedProcess(command, self.code, self.stdout, self.stderr)
+            self.in_event_loop.append(True)
+        return self.inner(command, env)
 
 
 @pytest.fixture
@@ -69,73 +65,77 @@ def settings(tmp_path):
 
 
 @pytest.fixture
-def fake_run(monkeypatch):
-    run = FakeRun()
-    monkeypatch.setattr(account_refresh, "run_child", run)
-    return run
+def starter(fake_starter):
+    """The starter of the child processes, with a child that gives the counts. A test changes ``fake_starter.plan``."""
+    fake_starter.plan.append({"stderr": COUNTS_LINE})
+    return ProbedStarter(fake_starter)
 
 
 @contextlib.contextmanager
-def service(settings, fake_starter):
-    with TestClient(create_app(settings, start=fake_starter)) as client:
+def service(settings, start=None):
+    """Run the service. Without ``start``, it starts real child processes."""
+    app = create_app(settings) if start is None else create_app(settings, start=start)
+    with TestClient(app) as client:
         yield client
 
 
-def test_a_refresh_runs_the_child_and_answers_its_counts(settings, fake_starter, fake_run):
-    with service(settings, fake_starter) as client:
+def stored_rows(sessions):
+    with sessions() as session:
+        return session.scalars(select(Channel)).all(), session.scalars(select(Playlist)).all()
+
+
+def test_a_refresh_runs_the_child_and_answers_its_counts(settings, starter, fake_starter):
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
     assert (answer.status_code, answer.json()) == (200, COUNTS)
-    ((command, timeout),) = fake_run.calls
+    ((command, _),) = fake_starter.calls
     assert command == [sys.executable, "-m", "youtube_automanager", "refresh-account"]
-    assert timeout == account_refresh.REFRESH_TIMEOUT_SECONDS
 
 
-def test_the_child_runs_while_the_route_holds_the_sync_lock(settings, fake_starter, monkeypatch):
-    held = []
-
-    def run(command, env, timeout_s):
-        held.append(SYNC_LOCK.locked())
-        return subprocess.CompletedProcess(command, 0, json.dumps(COUNTS) + "\n", "")
-
-    monkeypatch.setattr(account_refresh, "run_child", run)
-
-    with service(settings, fake_starter) as client:
+def test_the_child_runs_while_the_sync_lock_is_held_and_the_lock_is_free_after_it(settings, starter):
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
-    assert (answer.status_code, held, SYNC_LOCK.locked()) == (200, [True], False)
+    assert (answer.status_code, starter.lock_held, SYNC_LOCK.locked()) == (200, [True], False)
 
 
-def test_the_route_waits_for_the_child_in_a_thread_and_not_in_the_event_loop(settings, fake_starter, fake_run):
-    with service(settings, fake_starter) as client:
+def test_the_route_waits_for_the_child_in_a_thread_and_not_in_the_event_loop(settings, starter):
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
     assert answer.status_code == 200
-    assert fake_run.in_event_loop is False
+    assert starter.in_event_loop == [False]
 
 
-def test_an_account_that_is_not_available_answers_409_with_the_cause_of_the_child(settings, fake_starter, fake_run):
-    fake_run.code = EXIT_UNAVAILABLE
-    fake_run.stdout = ""
-    fake_run.stderr = "The run needs the YouTube account, but COOKIES_KEY is not set. Set COOKIES_KEY.\n"
+def test_an_account_that_is_not_available_answers_409_with_the_cause_of_the_child(settings, starter, fake_starter):
+    fake_starter.plan[:] = [
+        {
+            "exit_code": EXIT_UNAVAILABLE,
+            "stderr": "The service needs the YouTube account, but COOKIES_KEY is not set. Set COOKIES_KEY.\n",
+        }
+    ]
 
-    with service(settings, fake_starter) as client:
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
     assert answer.status_code == 409
     assert answer.json() == {
-        "detail": "The run needs the YouTube account, but COOKIES_KEY is not set. Set COOKIES_KEY."
+        "detail": "The service needs the YouTube account, but COOKIES_KEY is not set. Set COOKIES_KEY."
     }
 
 
 def test_a_logged_out_answer_of_youtube_answers_409_with_the_advice_to_upload_new_cookies(
-    settings, fake_starter, fake_run
+    settings, starter, fake_starter
 ):
-    fake_run.code = EXIT_LOGGED_OUT
-    fake_run.stdout = ""
-    fake_run.stderr = "YouTube answered https://www.youtube.com/feed/channels as to an anonymous user\n"
+    fake_starter.plan[:] = [
+        {
+            "exit_code": EXIT_LOGGED_OUT,
+            "stderr": "YouTube answered https://www.youtube.com/feed/channels as to an anonymous user\n",
+        }
+    ]
 
-    with service(settings, fake_starter) as client:
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
     assert answer.status_code == 409
@@ -146,12 +146,12 @@ def test_a_logged_out_answer_of_youtube_answers_409_with_the_advice_to_upload_ne
     )
 
 
-def test_another_failure_of_the_read_answers_502_with_the_cause_of_the_child(settings, fake_starter, fake_run):
-    fake_run.code = EXIT_ACCOUNT_ERROR
-    fake_run.stdout = ""
-    fake_run.stderr = "yt-dlp failed to read the channels: HTTP Error 429\n"
+def test_another_failure_of_the_read_answers_502_with_the_cause_of_the_child(settings, starter, fake_starter):
+    fake_starter.plan[:] = [
+        {"exit_code": EXIT_ACCOUNT_ERROR, "stderr": "yt-dlp failed to read the channels: HTTP Error 429\n"}
+    ]
 
-    with service(settings, fake_starter) as client:
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
     assert answer.status_code == 502
@@ -160,12 +160,12 @@ def test_another_failure_of_the_read_answers_502_with_the_cause_of_the_child(set
     }
 
 
-def test_a_crash_of_the_child_answers_502_without_its_stderr(settings, fake_starter, fake_run):
-    fake_run.code = 1
-    fake_run.stdout = ""
-    fake_run.stderr = f"Traceback (most recent call last):\nValueError: {COOKIE_VALUE}\n"
+def test_a_crash_of_the_child_answers_502_without_its_stderr(settings, starter, fake_starter):
+    fake_starter.plan[:] = [
+        {"exit_code": 1, "stderr": f"Traceback (most recent call last):\nValueError: {COOKIE_VALUE}\n"}
+    ]
 
-    with service(settings, fake_starter) as client:
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
     assert answer.status_code == 502
@@ -173,49 +173,78 @@ def test_a_crash_of_the_child_answers_502_without_its_stderr(settings, fake_star
     assert COOKIE_VALUE not in answer.text
 
 
-def test_a_child_that_does_not_end_in_time_answers_502(settings, fake_starter, fake_run):
-    fake_run.error = subprocess.TimeoutExpired(["refresh-account"], 300)
+def test_a_child_that_does_not_end_in_time_answers_502_and_frees_the_lock(settings, starter, fake_starter, monkeypatch):
+    monkeypatch.setattr(account_refresh, "REFRESH_TIMEOUT_SECONDS", 0.05)
+    fake_starter.plan[:] = [{"blocking": True}]
 
-    with service(settings, fake_starter) as client:
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
     assert answer.status_code == 502
-    assert answer.json() == {"detail": "The refresh did not end within 300 s, so the service stopped it."}
+    assert answer.json() == {"detail": "The refresh did not end within 0.05 s, so the service stopped it."}
+    assert fake_starter.children[0].killed
     assert SYNC_LOCK.locked() is False
 
 
-def test_a_child_without_the_counts_answers_502(settings, fake_starter, fake_run):
-    fake_run.stdout = "INFO a log line only\n"
+def test_a_child_without_the_counts_answers_502(settings, starter, fake_starter):
+    fake_starter.plan[:] = [{"stderr": "a warning only\n"}]
 
-    with service(settings, fake_starter) as client:
+    with service(settings, starter) as client:
         answer = client.post(URL)
 
     assert answer.status_code == 502
     assert "without the counts" in answer.json()["detail"]
 
 
+def test_a_child_that_cannot_start_answers_502(settings, starter, fake_starter):
+    fake_starter.error = OSError("no such program")
+
+    with service(settings, starter) as client:
+        answer = client.post(URL)
+
+    assert answer.status_code == 502
+    assert answer.json() == {"detail": "The service cannot start the refresh process: no such program"}
+
+
 def test_an_active_run_answers_409_without_a_child_and_the_lock_is_free_after_each_refresh(
-    settings, fake_starter, fake_run
+    settings, starter, fake_starter
 ):
-    with service(settings, fake_starter) as client:
+    with service(settings, starter) as client:
         with sync_lock_held():
             busy = client.post(URL)
             held_after_busy = SYNC_LOCK.locked()
-        assert (busy.status_code, fake_run.calls) == (409, [])
-        assert "sync run or a yt-dlp update is active" in busy.json()["detail"]
+        assert (busy.status_code, busy.json()) == (409, {"detail": BUSY_TEXT})
+        assert fake_starter.calls == []
         assert held_after_busy is True
 
         # A failed refresh and a successful one each give the lock back.
-        fake_run.code = EXIT_ACCOUNT_ERROR
+        fake_starter.plan[:] = [{"exit_code": EXIT_ACCOUNT_ERROR, "stderr": "failed\n"}, {"stderr": COUNTS_LINE}]
         failed = client.post(URL)
         assert (failed.status_code, SYNC_LOCK.locked()) == (502, False)
-        fake_run.code = 0
         succeeded = client.post(URL)
         assert (succeeded.status_code, SYNC_LOCK.locked()) == (200, False)
 
 
-def test_the_route_is_not_taken_by_the_json_404_of_unknown_api_paths(settings, fake_starter, fake_run):
-    with service(settings, fake_starter) as client:
+def test_a_stop_of_the_service_stops_a_refresh_child_and_the_route_answers_502(settings, starter, fake_starter):
+    fake_starter.plan[:] = [{"blocking": True}]
+    answers = []
+
+    with service(settings, starter) as client:
+        worker = threading.Thread(target=lambda: answers.append(client.post(URL)), daemon=True)
+        worker.start()
+        assert fake_starter.child_started.wait(10)
+
+        assert client.app.state.services.runner.stop(timeout=10) is True
+
+        worker.join(10)
+
+    assert fake_starter.children[0].terminated
+    (answer,) = answers
+    assert (answer.status_code, answer.json()) == (502, {"detail": "The service stopped during the account refresh."})
+
+
+def test_the_route_is_not_taken_by_the_json_404_of_unknown_api_paths(settings, starter):
+    with service(settings, starter) as client:
         refresh = client.post(URL)
         unknown = client.post("/api/account/unknown")
 
@@ -228,7 +257,7 @@ def test_the_route_is_not_taken_by_the_json_404_of_unknown_api_paths(settings, f
     [("no key", "COOKIES_KEY is not set"), ("invalid cookies", "stored cookies are not valid")],
 )
 def test_a_real_child_that_cannot_open_the_account_answers_409_without_a_cookie_value(
-    settings, sessions, fake_starter, monkeypatch, capsys, case, expected
+    settings, sessions, monkeypatch, capfd, case, expected
 ):
     """Starts the real `refresh-account` child. It fails before any request to YouTube."""
     if case == "no key":
@@ -239,33 +268,39 @@ def test_a_real_child_that_cannot_open_the_account_answers_409_without_a_cookie_
         with sessions.begin() as session:
             save_cookies(session, CookieCipher(key), f"SID={COOKIE_VALUE}")
 
-    with service(settings, fake_starter) as client:
+    with service(settings) as client:
         answer = client.post(URL)
 
     assert answer.status_code == 409
     assert expected in answer.json()["detail"]
     assert COOKIE_VALUE not in answer.text
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert COOKIE_VALUE not in captured.out + captured.err
-    with sessions() as session:
-        assert session.scalars(select(Channel)).all() == []
-        assert session.scalars(select(Playlist)).all() == []
+    assert stored_rows(sessions) == ([], [])
 
 
 def test_the_web_process_does_not_import_yt_dlp_for_a_refresh():
     """The refresh runs in a child process, so a yt-dlp update takes effect at the next refresh."""
     code = (
-        "import pathlib, subprocess, sys, tempfile\n"
+        "import io, pathlib, sys, tempfile\n"
         "from fastapi.testclient import TestClient\n"
-        "import youtube_automanager.account_refresh as account_refresh\n"
         "from youtube_automanager.settings import Settings\n"
         "from youtube_automanager.web.app import create_app\n"
-        f"counts = {json.dumps(COUNTS)!r}\n"
-        "account_refresh.run_child = lambda command, env, timeout_s: "
-        "subprocess.CompletedProcess(command, 0, counts + '\\n', '')\n"
+        "\n"
+        "class Child:\n"
+        "    returncode = 0\n"
+        f"    stderr = io.StringIO({COUNTS_LINE!r})\n"
+        "    def wait(self, timeout=None):\n"
+        "        return 0\n"
+        "    def poll(self):\n"
+        "        return 0\n"
+        "    def terminate(self):\n"
+        "        pass\n"
+        "    kill = terminate\n"
+        "\n"
         "home = pathlib.Path(tempfile.mkdtemp())\n"
         "settings = Settings(home=home, database_url=f'sqlite:///{home / \"service.sqlite\"}', tz='UTC')\n"
-        "with TestClient(create_app(settings)) as client:\n"
+        "with TestClient(create_app(settings, start=lambda command, env: Child())) as client:\n"
         "    answer = client.post('/api/account/refresh')\n"
         "assert answer.status_code == 200, answer.text\n"
         "assert answer.json()['channels_new'] == 1, answer.text\n"
