@@ -48,6 +48,7 @@ LABEL maintainer="ALERT <alexey.rubasheff@gmail.com>"
 LABEL org.opencontainers.image.description="Adds YouTube videos to your playlists by rules, with a web UI"
 
 # HOME is the data folder of the service: the database and the yt-dlp releases of the updater live there.
+# The pages store their values in the data folder too, because the service user cannot write to the code folder.
 # The updater runs uv rarely, so uv keeps no cache.
 ENV \
     PATH=$APP_DIR/.venv/bin:$PATH \
@@ -56,6 +57,7 @@ ENV \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     HOME=/data \
+    NICEGUI_STORAGE_PATH=/data/.nicegui \
     PORT=8080 \
     UV_NO_CACHE=1 \
     UV_PYTHON_DOWNLOADS=never \

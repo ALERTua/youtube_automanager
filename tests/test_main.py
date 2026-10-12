@@ -1,5 +1,6 @@
 import pytest
 from fastapi import FastAPI
+from nicegui import app as nicegui_app
 
 from youtube_automanager import __main__ as cli
 from youtube_automanager.settings import Settings
@@ -29,7 +30,9 @@ def test_run_once_runs_the_sync_body_with_the_run_id(settings, logging_setups, m
     assert logging_setups == [True]
 
 
-def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(settings, logging_setups, monkeypatch):
+def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(
+    settings, logging_setups, monkeypatch, nicegui_globals
+):
     calls = []
     monkeypatch.setattr("uvicorn.run", lambda app, **options: calls.append((app, options)))
 
@@ -39,6 +42,9 @@ def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(setti
     assert isinstance(app, FastAPI)
     assert options == {"host": "127.0.0.1", "port": 8123, "log_config": None}
     assert logging_setups == [True]
+    # The pages of NiceGUI answer at the root, after the routes of the service.
+    assert app.routes[-1].path == "" and app.routes[-1].app is nicegui_app
+    assert "/" in {route.path for route in nicegui_app.routes}
 
 
 @pytest.mark.parametrize("argv", [[], ["run-once"], ["run-once", "--run-id", "x"], ["unknown"]])
