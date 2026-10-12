@@ -27,7 +27,7 @@ LOG = logging.getLogger(__name__)
 # The key of the ``setting`` table that holds the time of the last refresh, as ISO text in UTC.
 REFRESHED_AT_KEY = "account_cache_refreshed_at"
 # A copy that is older than this is stale. A daily run starts at about the same time each day, and a scheduled run can
-# wait up to 10 minutes for the sync lock. The limit thus stays well under one day, so each daily run refreshes the copy.
+# wait up to 30 minutes for the sync lock. The limit thus stays well under one day, so each daily run refreshes the copy.
 MAX_AGE = timedelta(hours=20)
 
 

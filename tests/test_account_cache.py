@@ -16,6 +16,7 @@ from youtube_automanager.account_cache import (
     refresh_if_stale,
 )
 from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, Setting
+from youtube_automanager.runner import SCHEDULED_WAIT_S
 from youtube_automanager.youtube.account import AccountError, AccountPlaylist, SubscribedChannel
 
 A = "UCaaaaaaaaaaaaaaaaaaaaaa"
@@ -444,8 +445,8 @@ def test_the_default_max_age_is_20_hours(db_sessions):
 
 
 def test_each_daily_run_finds_the_copy_of_the_run_before_stale(db_sessions):
-    # Yesterday the scheduled run waited 10 minutes for the sync lock, and today it starts on time.
-    refresh_account_cache(db_sessions, FakeClient(), NOW + datetime.timedelta(minutes=10))
+    # Yesterday the scheduled run waited the longest time for the sync lock, and today it starts on time.
+    refresh_account_cache(db_sessions, FakeClient(), NOW + datetime.timedelta(seconds=SCHEDULED_WAIT_S))
 
     assert is_cache_stale(db_sessions, now=NOW + datetime.timedelta(days=1)) is True
 

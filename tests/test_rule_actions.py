@@ -31,7 +31,7 @@ from youtube_automanager.db.models import (
     SessionState,
 )
 from youtube_automanager.engine import account_session
-from youtube_automanager.engine.rule_preview import DraftRule, Mark, Preview, PreviewVideo
+from youtube_automanager.engine.rule_preview import APPLY_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.rule_actions import (
     PREVIEW_TIMEOUT_SECONDS,
     AppliedRun,
@@ -55,7 +55,7 @@ from youtube_automanager.short_child import (
     ChildYouTubeError,
 )
 from youtube_automanager.youtube import public
-from youtube_automanager.youtube.account import AccountError, NotLoggedInError
+from youtube_automanager.youtube.account import PAUSE_S, AccountError, NotLoggedInError
 from youtube_automanager.youtube.public import PublicSourceError
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -252,6 +252,11 @@ def test_a_text_that_is_not_a_draft_is_refused(text):
 
 def test_the_timeout_of_a_preview_is_shorter_than_the_wait_of_a_scheduled_run():
     assert PREVIEW_TIMEOUT_SECONDS < SCHEDULED_WAIT_S
+
+
+def test_a_scheduled_run_waits_longer_than_the_adds_of_a_full_apply():
+    # Each add sends two requests with the cookies, at least the pause of the account client apart.
+    assert APPLY_LIMIT * 2 * PAUSE_S < SCHEDULED_WAIT_S
 
 
 # The body of the preview child.
