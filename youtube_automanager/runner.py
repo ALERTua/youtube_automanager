@@ -49,9 +49,11 @@ CHECK_TIMEOUT_S = 120
 # The exit code of a session check child that cannot use the stored cookies, or finds none.
 UNAVAILABLE_EXIT_CODE = 3
 BUSY_TEXT = "A sync run, a session check or a yt-dlp update is active. Try again when it ends."
-# How long a scheduled run waits for the sync lock. A cookie rotation or a session check keeps it for seconds, and a
-# refresh of the account lists or a yt-dlp update for a few minutes, so a scheduled run that comes at that time waits.
-SCHEDULED_WAIT_S = 600
+# How long a scheduled run waits for the sync lock. A cookie rotation or a session check keeps it for seconds, a
+# refresh of the account lists or a yt-dlp update for a few minutes, and an apply of a rule for up to about 20 minutes,
+# because each add sends two requests 5 s or more apart. A scheduled run that comes at that time starts late, but it
+# is not lost.
+SCHEDULED_WAIT_S = 1800
 # The longest single wait for the sync lock, so a stop of the service ends a wait soon.
 LOCK_POLL_S = 0.5
 
