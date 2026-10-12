@@ -6,12 +6,22 @@ from zoneinfo import ZoneInfo
 import pytest
 from nicegui import ui
 from nicegui.elements.mixins.text_element import TextElement
-from ui_support import running_service, store, text_of
+from ui_support import element_of, eventually, running_service, store, text_of
 
 from youtube_automanager import i18n
-from youtube_automanager.db.models import Account, Run, RunStatus, RunTrigger, Schedule, ScheduleKind, SessionState
+from youtube_automanager.db.models import (
+    Account,
+    Run,
+    RunStatus,
+    RunTrigger,
+    Schedule,
+    ScheduleKind,
+    SessionState,
+    Setting,
+)
 from youtube_automanager.i18n import N_
 from youtube_automanager.web.ui import dashboard, layout
+from youtube_automanager.web.ui.theme import THEME_KEY, Theme, read_theme
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -217,3 +227,38 @@ async def test_each_text_of_the_dashboard_goes_through_the_translation(
         if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not TIME.fullmatch(text)
     ]
     assert untranslated == []
+
+
+# The color theme.
+
+
+def theme_of(user):
+    return element_of(user, "dark-mode").value, element_of(user, "theme").props["icon"]
+
+
+async def test_the_theme_follows_the_system_of_the_device_by_default(user):
+    await user.open("/")
+
+    assert theme_of(user) == (None, "brightness_auto")
+
+
+async def test_the_theme_button_goes_through_dark_light_and_auto_and_stores_each_choice(user, sessions):
+    await user.open("/")
+
+    for value, icon, stored in [
+        (True, "dark_mode", "dark"),
+        (False, "light_mode", "light"),
+        (None, "brightness_auto", "auto"),
+    ]:
+        user.find(marker="theme").click()
+        await eventually(lambda stored=stored: read_theme(sessions) == Theme(stored), f"The stored theme {stored}")
+        assert theme_of(user) == (value, icon)
+
+
+@pytest.mark.parametrize(("stored", "value"), [("dark", True), ("light", False), ("auto", None), ("purple", None)])
+async def test_each_page_shows_the_stored_theme(user, sessions, stored, value):
+    store(sessions, Setting(key=THEME_KEY, value=stored))
+
+    await user.open("/settings")
+
+    assert element_of(user, "dark-mode").value is value

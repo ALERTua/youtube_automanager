@@ -4,6 +4,7 @@ Each page module registers its page with ``layout.register_page`` when it is imp
 in the order of the navigation drawer.
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI
@@ -23,13 +24,15 @@ from youtube_automanager.web.ui import settings_page  # noqa: F401
 
 # isort: on
 from youtube_automanager.web.ui.layout import Page, frame, pages
+from youtube_automanager.web.ui.theme import read_theme
 
 
 def _page_function(page: Page, app: FastAPI) -> Callable[[], Awaitable[None]]:
     async def show_page() -> None:
         # A page request reaches the NiceGUI application, not ``app``, so the services come from ``app`` itself.
         services: Services = app.state.services
-        with frame(page):
+        theme = await asyncio.to_thread(read_theme, services.sessions)
+        with frame(page, services, theme):
             await page.build(services)
 
     return show_page
@@ -44,4 +47,5 @@ def mount_ui(app: FastAPI) -> None:
     """
     for page in pages():
         ui.page(page.path)(_page_function(page, app))
-    ui.run_with(app, title=_("YouTube AutoManager"), show_welcome_message=False)
+    # None is the auto mode of Quasar, which follows the system of the device until a page sets the stored theme.
+    ui.run_with(app, title=_("YouTube AutoManager"), show_welcome_message=False, dark=None)
