@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager import notify
+from youtube_automanager.account_cache import ChannelLike, PlaylistLike
 from youtube_automanager.db.models import CookieOrigin, SessionState, utc_now
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube import session as cookie_store
@@ -45,13 +46,17 @@ class SessionDead(AccountUnavailable):
 
 
 class ClientLike(Protocol):
-    """The part of ``AccountClient`` that a run and a check use."""
+    """The part of ``AccountClient`` that a run, a check and a refresh of the account data use."""
 
     def check_session(self) -> None: ...
 
     def use_cookies(self, cookies: str) -> None: ...
 
     def cookies_text(self) -> str: ...
+
+    def subscribed_channels(self) -> Iterable[ChannelLike]: ...
+
+    def playlists(self) -> Iterable[PlaylistLike]: ...
 
     def iter_subscription_feed(self) -> Iterable[Any]: ...
 

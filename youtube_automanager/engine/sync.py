@@ -29,7 +29,7 @@ from typing import Any, Protocol
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from youtube_automanager import notify
+from youtube_automanager import account_cache, notify
 from youtube_automanager.db.models import (
     AddedVideo,
     Channel,
@@ -44,7 +44,12 @@ from youtube_automanager.db.models import (
     Setting,
     utc_now,
 )
-from youtube_automanager.engine.account_session import DEAD_SESSION_TEXT, AccountSession, AccountUnavailable
+from youtube_automanager.engine.account_session import (
+    DEAD_SESSION_TEXT,
+    AccountSession,
+    AccountUnavailable,
+    CheckOutcome,
+)
 from youtube_automanager.engine.modes import (
     Collected,
     Known,
@@ -691,7 +696,8 @@ class SyncRun:
 def run_with_youtube(sessions: sessionmaker[Session], run_id: int, settings: Settings) -> RunReport:
     """Do the run ``run_id`` with the real YouTube sources and the notification targets of the database.
 
-    The run first checks the session of the stored cookies, and at its end it saves the updated cookies.
+    The run first checks the session of the stored cookies. With a live session, it then refreshes the stored copy of
+    the subscriptions and the playlists when that copy is stale. At its end, the run saves the updated cookies.
     """
 
     def send(notification: notify.Notification) -> object:
@@ -701,6 +707,8 @@ def run_with_youtube(sessions: sessionmaker[Session], run_id: int, settings: Set
     result = account.check()
     LOG.info("Run %s: the session check gave %s", run_id, result.outcome.value)
     try:
+        if result.outcome is CheckOutcome.ALIVE:
+            _refresh_account_data(sessions, account, run_id)
         return SyncRun(
             sessions,
             run_id,
@@ -712,3 +720,20 @@ def run_with_youtube(sessions: sessionmaker[Session], run_id: int, settings: Set
         ).run()
     finally:
         account.write_back()
+
+
+def _refresh_account_data(sessions: sessionmaker[Session], account: AccountSession, run_id: int) -> None:
+    """Refresh the stored copy of the account data when it is stale. A failed refresh does not stop the run.
+
+    A refresh that YouTube refuses as logged out marks the session dead, so the run goes on without the account.
+    """
+    try:
+        refreshed = account_cache.refresh_if_stale(sessions, account.open)
+    except NotLoggedInError as error:
+        account.died(error)
+        return
+    except AccountError as error:
+        LOG.warning("Run %s: the account data did not refresh: %s", run_id, error)
+        return
+    if refreshed is not None:
+        LOG.info("Run %s: refreshed the stored subscriptions and playlists of the account", run_id)

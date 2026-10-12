@@ -9,15 +9,19 @@ import datetime
 import pytest
 from sqlalchemy import select
 
+from youtube_automanager.account_cache import REFRESHED_AT_KEY, refresh_account_cache
 from youtube_automanager.db.models import (
     Account,
+    Channel,
     CookieOrigin,
     CookieVersion,
     CookieVersionState,
+    Playlist,
     Run,
     RunStatus,
     RunTrigger,
     SessionState,
+    Setting,
 )
 from youtube_automanager.engine import sync as sync_module
 from youtube_automanager.engine.account_session import (
@@ -29,7 +33,7 @@ from youtube_automanager.engine.account_session import (
 )
 from youtube_automanager.notify import Event
 from youtube_automanager.settings import Settings
-from youtube_automanager.youtube.account import AccountError, NotLoggedInError
+from youtube_automanager.youtube.account import AccountError, AccountPlaylist, NotLoggedInError, SubscribedChannel
 from youtube_automanager.youtube.cookie_text import cookies
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -59,6 +63,11 @@ class FakeYouTube:
         self.failing = False
         self.checks = []
         self.clients = []
+        # The account lists of the fake account, and the error of a list read.
+        self.channels = [SubscribedChannel("UCaaaaaaaaaaaaaaaaaaaaaa", "Alpha", "@alpha", None)]
+        self.playlists = [AccountPlaylist("WL", "Watch later", True)]
+        self.list_error = None
+        self.list_reads = []
 
     def client(self, text):
         client = FakeClient(self, text)
@@ -91,6 +100,18 @@ class FakeClient:
         text = self.text.replace("f6=1", "hl=en&tz=UTC")
         text = "".join(line + "\n" for line in text.splitlines() if "ST-fake" not in line)
         return text.replace(sidcc(self.text), sidcc(self.text) + "+1") if self.renewed else text
+
+    def subscribed_channels(self):
+        return self._list("channels")
+
+    def playlists(self):
+        return self._list("playlists")
+
+    def _list(self, name):
+        self.youtube.list_reads.append(name)
+        if self.youtube.list_error is not None:
+            raise self.youtube.list_error
+        return list(getattr(self.youtube, name))
 
     def iter_subscription_feed(self):
         return iter(())
@@ -467,14 +488,11 @@ def test_the_warning_days_count_in_the_time_zone_of_the_service(harness):
 # The run with the real wiring
 
 
-def test_a_run_checks_the_session_first_uses_the_checked_client_and_saves_the_updated_cookies(harness, monkeypatch):
-    harness.upload()
-    created = []
+def run_with_the_fake_youtube(harness, monkeypatch):
+    """Do one run through ``run_with_youtube``, with the fake YouTube behind the account session."""
 
     def account_session(sessions, settings, *, send):
-        account = AccountSession(sessions, settings, send=send, make_client=harness.youtube.client)
-        created.append(account)
-        return account
+        return AccountSession(sessions, settings, send=send, make_client=harness.youtube.client)
 
     monkeypatch.setattr(sync_module, "AccountSession", account_session)
     with harness.sessions.begin() as session:
@@ -482,9 +500,82 @@ def test_a_run_checks_the_session_first_uses_the_checked_client_and_saves_the_up
         session.add(run)
         session.flush()
         run_id = run.id
+    return sync_module.run_with_youtube(harness.sessions, run_id, harness.settings)
 
-    sync_module.run_with_youtube(harness.sessions, run_id, harness.settings)
+
+def stored_account_data(harness):
+    with harness.sessions() as session:
+        channels = set(session.scalars(select(Channel.channel_id)))
+        playlists = set(session.scalars(select(Playlist.playlist_id)))
+        refreshed = session.get(Setting, REFRESHED_AT_KEY)
+        return channels, playlists, refreshed is not None
+
+
+def test_a_run_checks_the_session_first_uses_the_checked_client_and_saves_the_updated_cookies(harness, monkeypatch):
+    harness.upload()
+
+    run_with_the_fake_youtube(harness, monkeypatch)
 
     assert harness.youtube.checks == ["fake-sidcc-0"]
     assert harness.account().session_state is SessionState.OK
     assert harness.versions()[-1] == ("fake-sidcc-0+1", CookieOrigin.WRITE_BACK, CookieVersionState.UNCHECKED)
+
+
+def test_a_run_with_a_live_session_refreshes_a_stale_copy_of_the_account_data_with_the_checked_client(
+    harness, monkeypatch
+):
+    harness.upload()
+
+    run_with_the_fake_youtube(harness, monkeypatch)
+
+    assert len(harness.youtube.clients) == 1
+    assert harness.youtube.list_reads == ["channels", "playlists"]
+    assert stored_account_data(harness) == ({"UCaaaaaaaaaaaaaaaaaaaaaa"}, {"WL"}, True)
+
+
+def test_a_run_with_a_fresh_copy_of_the_account_data_reads_no_list(harness, monkeypatch):
+    harness.upload()
+    # The copy of a refresh a moment ago is fresh.
+    harness.youtube.channels = []
+    harness.youtube.playlists = []
+    refresh_account_cache(harness.sessions, harness.youtube.client(cookie_text()))
+    harness.youtube.list_reads.clear()
+
+    run_with_the_fake_youtube(harness, monkeypatch)
+
+    assert harness.youtube.list_reads == []
+
+
+def test_a_run_without_a_live_session_does_not_refresh_the_account_data(harness, monkeypatch):
+    harness.upload()
+    harness.youtube.refused.add("fake-sidcc-0")
+
+    run_with_the_fake_youtube(harness, monkeypatch)
+
+    assert harness.account().session_state is SessionState.DEAD
+    assert harness.youtube.list_reads == []
+    assert stored_account_data(harness) == (set(), set(), False)
+
+
+def test_a_refresh_that_youtube_refuses_marks_the_session_dead_and_the_run_goes_on(harness, monkeypatch):
+    harness.upload()
+    harness.youtube.list_error = NotLoggedInError("YouTube answered https://www.youtube.com as to an anonymous user")
+
+    report = run_with_the_fake_youtube(harness, monkeypatch)
+
+    assert report.errors == []
+    assert harness.account().session_state is SessionState.DEAD
+    assert harness.versions() == [("fake-sidcc-0", CookieOrigin.UPLOAD, CookieVersionState.DEAD)]
+    assert stored_account_data(harness) == (set(), set(), False)
+
+
+def test_a_refresh_that_fails_leaves_the_session_live_and_the_run_goes_on(harness, monkeypatch):
+    harness.upload()
+    harness.youtube.list_error = AccountError("yt-dlp failed to read the subscriptions: HTTP Error 503")
+
+    report = run_with_the_fake_youtube(harness, monkeypatch)
+
+    assert report.errors == []
+    assert harness.account().session_state is SessionState.OK
+    assert harness.versions()[-1] == ("fake-sidcc-0+1", CookieOrigin.WRITE_BACK, CookieVersionState.UNCHECKED)
+    assert stored_account_data(harness) == (set(), set(), False)
