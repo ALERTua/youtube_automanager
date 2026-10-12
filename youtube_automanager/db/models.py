@@ -97,6 +97,8 @@ class RunStatus(enum.StrEnum):
 class RunTrigger(enum.StrEnum):
     SCHEDULE = "schedule"
     MANUAL = "manual"
+    # The user added the matching videos of one rule since a date, from the rules page.
+    RULE_APPLY = "rule_apply"
 
 
 class RunActionKind(enum.StrEnum):

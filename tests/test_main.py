@@ -1,8 +1,11 @@
+import datetime
+
 import pytest
 from fastapi import FastAPI
 from nicegui import app as nicegui_app
 
 from youtube_automanager import __main__ as cli
+from youtube_automanager.engine.rule_preview import DraftRule
 from youtube_automanager.settings import Settings
 
 
@@ -97,6 +100,39 @@ def test_subscribe_and_unsubscribe_run_the_subscription_body_and_give_its_exit_c
     assert logging_setups == [True]
 
 
+DRAFT = DraftRule({"regex": [{"var": "title"}, "-x", "i"]}, ("UCx",), True)
+
+
+@pytest.mark.parametrize(
+    ("argv", "rule_id", "draft"),
+    [
+        (["preview-rule", "--since=2026-10-05", "--rule-id=3"], 3, None),
+        (["preview-rule", "--since", "2026-10-05", f"--draft={DRAFT.to_json()}"], None, DRAFT),
+        (["preview-rule", "--since=2026-10-05", "--rule-id", "3", f"--draft={DRAFT.to_json()}"], 3, DRAFT),
+    ],
+)
+def test_preview_rule_runs_the_preview_body_and_gives_its_exit_code(
+    settings, logging_setups, monkeypatch, argv, rule_id, draft
+):
+    calls = []
+    monkeypatch.setattr(cli, "preview_once", lambda *given: calls.append(given) or 5)
+
+    assert cli.main(argv) == 5
+
+    assert calls == [(settings, datetime.date(2026, 10, 5), rule_id, draft)]
+    assert logging_setups == [True]
+
+
+def test_apply_rule_runs_the_apply_body_and_gives_its_exit_code(settings, logging_setups, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "apply_once", lambda *given: calls.append(given) or 1)
+
+    assert cli.main(["apply-rule", "--run-id=7", "--rule-id=3", "--since=2026-10-05"]) == 1
+
+    assert calls == [(7, 3, datetime.date(2026, 10, 5), settings)]
+    assert logging_setups == [True]
+
+
 def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(
     settings, logging_setups, monkeypatch, nicegui_globals
 ):
@@ -126,6 +162,13 @@ def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(
         ["subscribe"],
         ["unsubscribe", "--title=x"],
         ["unsubscribe", "--channel-id=UCx", "--title=x"],
+        ["preview-rule", "--since=2026-10-05"],
+        ["preview-rule", "--rule-id=3"],
+        ["preview-rule", "--since=yesterday", "--rule-id=3"],
+        ["preview-rule", "--since=2026-10-05", "--rule-id=x"],
+        ["preview-rule", "--since=2026-10-05", "--draft=[]"],
+        ["apply-rule", "--run-id=7", "--rule-id=3"],
+        ["apply-rule", "--run-id=7", "--since=2026-10-05"],
     ],
 )
 def test_wrong_command_line_exits_with_code_2(argv, capsys):

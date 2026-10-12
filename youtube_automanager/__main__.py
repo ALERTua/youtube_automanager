@@ -1,16 +1,19 @@
 """The command line of the service: ``serve`` starts the web service. ``run-once`` is one sync, ``check-session`` is one
 session check, ``refresh-account`` is one refresh of the account data, ``find-channels`` is one channel search, and
-``subscribe`` and ``unsubscribe`` change one subscription. The service starts each command except ``serve`` in a child
-process.
+``subscribe`` and ``unsubscribe`` change one subscription, ``preview-rule`` is one preview of a rule, and
+``apply-rule`` is one apply of a rule. The service starts each command except ``serve`` in a child process.
 """
 
 import argparse
+import datetime
 import sys
 from collections.abc import Sequence
 
 from youtube_automanager.account_refresh import refresh_once
 from youtube_automanager.channel_actions import change_subscription_once, find_channels_once
+from youtube_automanager.engine.rule_preview import DraftRule
 from youtube_automanager.log_setup import setup_logging
+from youtube_automanager.rule_actions import apply_once, preview_once
 from youtube_automanager.runner import check_session_once, run_once
 from youtube_automanager.settings import get_settings
 
@@ -53,6 +56,29 @@ def _parser() -> argparse.ArgumentParser:
         help="unsubscribe the account from a channel; the service starts this command in a child process",
     )
     unsubscribe_parser.add_argument("--channel-id", required=True, help="the UC... id of the channel")
+    preview_parser = commands.add_parser(
+        "preview-rule",
+        help="list the videos since a day that a rule matches, without a change; the service starts this command in a "
+        "child process",
+    )
+    preview_parser.add_argument(
+        "--since", type=datetime.date.fromisoformat, required=True, help="the first day of the videos, YYYY-MM-DD"
+    )
+    preview_parser.add_argument("--rule-id", type=int, help="the id of the saved rule")
+    preview_parser.add_argument(
+        "--draft",
+        type=DraftRule.from_json,
+        help="the condition, the channels and no Shorts of a rule from the editor as JSON; give it as --draft=JSON",
+    )
+    apply_parser = commands.add_parser(
+        "apply-rule",
+        help="add the videos since a day that a saved rule matches; the service starts this command in a child process",
+    )
+    apply_parser.add_argument("--run-id", type=int, required=True, help="the id of the run row of this apply")
+    apply_parser.add_argument("--rule-id", type=int, required=True, help="the id of the saved rule")
+    apply_parser.add_argument(
+        "--since", type=datetime.date.fromisoformat, required=True, help="the first day of the videos, YYYY-MM-DD"
+    )
     return parser
 
 
@@ -103,6 +129,18 @@ def _change_subscription(channel_id: str, *, subscribe: bool, title: str | None 
     return change_subscription_once(settings, channel_id, subscribe=subscribe, title=title)
 
 
+def _preview_rule(since: datetime.date, rule_id: int | None, draft: DraftRule | None) -> int:
+    settings = get_settings()
+    setup_logging(settings.verbose)
+    return preview_once(settings, since, rule_id, draft)
+
+
+def _apply_rule(run_id: int, rule_id: int, since: datetime.date) -> int:
+    settings = get_settings()
+    setup_logging(settings.verbose)
+    return apply_once(run_id, rule_id, since, settings)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "serve":
@@ -117,6 +155,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _change_subscription(args.channel_id, subscribe=True, title=args.title)
     if args.command == "unsubscribe":
         return _change_subscription(args.channel_id, subscribe=False)
+    if args.command == "preview-rule":
+        if args.rule_id is None and args.draft is None:
+            _parser().error("preview-rule needs --rule-id, --draft or both")
+        return _preview_rule(args.since, args.rule_id, args.draft)
+    if args.command == "apply-rule":
+        return _apply_rule(args.run_id, args.rule_id, args.since)
     return _run_once(args.run_id)
 
 

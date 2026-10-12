@@ -9,6 +9,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from youtube_automanager.db import alembic_config, upgrade_to_head
 from youtube_automanager.db.models import Base
@@ -194,6 +195,60 @@ def test_upgrade_keeps_stored_cookies_as_the_first_cookie_version_and_downgrade_
     finally:
         engine.dispose()
     assert "cookie_version" not in table_names(database_url)
+
+
+def test_the_rule_apply_trigger_keeps_the_runs_and_their_actions_and_downgrade_makes_an_apply_a_manual_run(
+    database_url,
+):
+    config = alembic_config(database_url)
+    command.upgrade(config, "5f2c9a7d1e43")
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    'INSERT INTO run (id, started_at, status, "trigger", added_count, seen_count) '
+                    "VALUES (1, CURRENT_TIMESTAMP, 'succeeded', 'schedule', 2, 3)"
+                )
+            )
+            connection.execute(
+                text("INSERT INTO run_action (run_id, at, action) VALUES (1, CURRENT_TIMESTAMP, 'added')")
+            )
+
+        command.upgrade(config, "head")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    'INSERT INTO run (id, started_at, status, "trigger", added_count, seen_count) '
+                    "VALUES (2, CURRENT_TIMESTAMP, 'running', 'rule_apply', 0, 0)"
+                )
+            )
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                text(
+                    'INSERT INTO run (id, started_at, status, "trigger", added_count, seen_count) '
+                    "VALUES (3, CURRENT_TIMESTAMP, 'running', 'another', 0, 0)"
+                )
+            )
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT run_id, action FROM run_action")).all() == [(1, "added")]
+
+        command.downgrade(config, "5f2c9a7d1e43")
+
+        with engine.connect() as connection:
+            runs = connection.execute(text('SELECT id, "trigger", added_count FROM run ORDER BY id')).all()
+            assert runs == [(1, "schedule", 2), (2, "manual", 0)]
+            assert connection.execute(text("SELECT run_id FROM run_action")).scalars().all() == [1]
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                text(
+                    'INSERT INTO run (id, started_at, status, "trigger", added_count, seen_count) '
+                    "VALUES (3, CURRENT_TIMESTAMP, 'running', 'rule_apply', 0, 0)"
+                )
+            )
+    finally:
+        engine.dispose()
 
 
 def test_comparison_finds_a_column_that_the_migrations_lack(sqlite_url):

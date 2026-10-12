@@ -317,6 +317,21 @@ async def test_the_trigger_filter(user, sessions):
     await runs_are(user, [3, 2, 1])
 
 
+async def test_an_apply_of_a_rule_shows_with_its_own_trigger_and_the_filter_selects_it(user, sessions):
+    store(sessions, run(1, trigger=RunTrigger.SCHEDULE), run(2, trigger=RunTrigger.RULE_APPLY, added_count=4))
+    await user.open("/history")
+
+    assert [row["trigger"] for row in rows_of(user, "runs-table")] == ["Rule apply", "Schedule"]
+    assert element_of(user, "filter-trigger").options == {
+        "any": "All",
+        "schedule": "Schedule",
+        "manual": "Manual",
+        "rule_apply": "Rule apply",
+    }
+    set_value(user, "filter-trigger", "rule_apply")
+    await runs_are(user, [2])
+
+
 async def test_the_filters_work_together(user, sessions):
     store(
         sessions,
