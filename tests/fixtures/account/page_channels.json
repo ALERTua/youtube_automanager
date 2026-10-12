@@ -1,0 +1,79 @@
+{
+ "url": "https://www.youtube.com/feed/channels",
+ "initial_data": {
+  "contents": {
+   "twoColumnBrowseResultsRenderer": {
+    "tabs": [
+     {
+      "tabRenderer": {
+       "selected": true,
+       "tabIdentifier": "FEchannels",
+       "content": {
+        "sectionListRenderer": {
+         "contents": [
+          {
+           "itemSectionRenderer": {
+            "contents": [
+             {
+              "shelfRenderer": {
+               "content": {
+                "expandedShelfContentsRenderer": {
+                 "items": [
+                  {
+                   "channelRenderer": {
+                    "channelId": "UCfakeChannel00000000001",
+                    "title": {
+                     "simpleText": "Fake channel 1"
+                    },
+                    "navigationEndpoint": {
+                     "commandMetadata": {
+                      "webCommandMetadata": {
+                       "url": "/@fakehandle1",
+                       "webPageType": "WEB_PAGE_TYPE_CHANNEL"
+                      }
+                     },
+                     "browseEndpoint": {
+                      "browseId": "UCfakeChannel00000000001",
+                      "canonicalBaseUrl": "/@fakehandle1"
+                     }
+                    },
+                    "thumbnail": {
+                     "thumbnails": [
+                      {
+                       "url": "//yt3.ggpht.com/fake-avatar-1=s88-c-k-c0x00ffffff-no-rj",
+                       "width": 88,
+                       "height": 88
+                      },
+                      {
+                       "url": "//yt3.ggpht.com/fake-avatar-1=s176-c-k-c0x00ffffff-no-rj",
+                       "width": 176,
+                       "height": 176
+                      }
+                     ]
+                    },
+                    "videoCountText": {
+                     "simpleText": "1K subscribers"
+                    },
+                    "subscriberCountText": {
+                     "simpleText": "@fakehandle1"
+                    }
+                   }
+                  }
+                 ]
+                }
+               }
+              }
+             }
+            ]
+           }
+          }
+         ]
+        }
+       }
+      }
+     }
+    ]
+   }
+  }
+ }
+}

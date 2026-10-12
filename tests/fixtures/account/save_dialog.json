@@ -1,0 +1,233 @@
+{
+ "ep": "playlist/get_add_to_playlist",
+ "query": {
+  "videoIds": [
+   "jNQXAC9IVRw"
+  ],
+  "excludeWatchLater": false
+ },
+ "response": {
+  "responseContext": {},
+  "contents": [
+   {
+    "addToPlaylistRenderer": {
+     "playlists": [
+      {
+       "playlistAddToOptionRenderer": {
+        "playlistId": "WL",
+        "title": {
+         "simpleText": "Watch later",
+         "accessibility": {
+          "accessibilityData": {
+           "label": "Watch later Private"
+          }
+         }
+        },
+        "privacy": "PRIVATE",
+        "privacyIcon": {
+         "iconType": "PRIVACY_PRIVATE"
+        },
+        "containsSelectedVideos": "NONE",
+        "addToPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "WL",
+          "actions": [
+           {
+            "addedVideoId": "jNQXAC9IVRw",
+            "action": "ACTION_ADD_VIDEO"
+           }
+          ]
+         }
+        },
+        "removeFromPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "WL",
+          "actions": [
+           {
+            "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID",
+            "removedVideoId": "jNQXAC9IVRw"
+           }
+          ]
+         }
+        }
+       }
+      },
+      {
+       "playlistAddToOptionRenderer": {
+        "playlistId": "PLfakeOwn0000000000000000000000001",
+        "title": {
+         "simpleText": "Fake playlist 3",
+         "accessibility": {
+          "accessibilityData": {
+           "label": "Fake playlist 3 Unlisted"
+          }
+         }
+        },
+        "privacy": "UNLISTED",
+        "privacyIcon": {
+         "iconType": "PRIVACY_UNLISTED"
+        },
+        "containsSelectedVideos": "NONE",
+        "addToPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "PLfakeOwn0000000000000000000000001",
+          "actions": [
+           {
+            "addedVideoId": "jNQXAC9IVRw",
+            "action": "ACTION_ADD_VIDEO"
+           }
+          ]
+         }
+        },
+        "removeFromPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "PLfakeOwn0000000000000000000000001",
+          "actions": [
+           {
+            "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID",
+            "removedVideoId": "jNQXAC9IVRw"
+           }
+          ]
+         }
+        }
+       }
+      },
+      {
+       "playlistAddToOptionRenderer": {
+        "playlistId": "PLfakeOwn0000000000000000000000002",
+        "title": {
+         "simpleText": "Fake playlist 5",
+         "accessibility": {
+          "accessibilityData": {
+           "label": "Fake playlist 5 Private"
+          }
+         }
+        },
+        "privacy": "PRIVATE",
+        "privacyIcon": {
+         "iconType": "PRIVACY_PRIVATE"
+        },
+        "containsSelectedVideos": "NONE",
+        "addToPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "PLfakeOwn0000000000000000000000002",
+          "actions": [
+           {
+            "addedVideoId": "jNQXAC9IVRw",
+            "action": "ACTION_ADD_VIDEO"
+           }
+          ]
+         }
+        },
+        "removeFromPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "PLfakeOwn0000000000000000000000002",
+          "actions": [
+           {
+            "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID",
+            "removedVideoId": "jNQXAC9IVRw"
+           }
+          ]
+         }
+        }
+       }
+      },
+      {
+       "playlistAddToOptionRenderer": {
+        "playlistId": "FLfakeFavorites000000003",
+        "title": {
+         "simpleText": "Favorites",
+         "accessibility": {
+          "accessibilityData": {
+           "label": "Favorites Public"
+          }
+         }
+        },
+        "privacy": "PUBLIC",
+        "privacyIcon": {
+         "iconType": "PRIVACY_PUBLIC"
+        },
+        "containsSelectedVideos": "NONE",
+        "addToPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "FLfakeFavorites000000003",
+          "actions": [
+           {
+            "addedVideoId": "jNQXAC9IVRw",
+            "action": "ACTION_ADD_VIDEO"
+           }
+          ]
+         }
+        },
+        "removeFromPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "FLfakeFavorites000000003",
+          "actions": [
+           {
+            "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID",
+            "removedVideoId": "jNQXAC9IVRw"
+           }
+          ]
+         }
+        }
+       }
+      },
+      {
+       "playlistAddToOptionRenderer": {
+        "playlistId": "PLfakeOwn0000000000000000000000999",
+        "title": {
+         "simpleText": "Fake playlist only in the dialog",
+         "accessibility": {
+          "accessibilityData": {
+           "label": "Fake playlist only in the dialog Private"
+          }
+         }
+        },
+        "privacy": "PRIVATE",
+        "privacyIcon": {
+         "iconType": "PRIVACY_PRIVATE"
+        },
+        "containsSelectedVideos": "NONE",
+        "addToPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "PLfakeOwn0000000000000000000000999",
+          "actions": [
+           {
+            "addedVideoId": "jNQXAC9IVRw",
+            "action": "ACTION_ADD_VIDEO"
+           }
+          ]
+         }
+        },
+        "removeFromPlaylistServiceEndpoint": {
+         "playlistEditEndpoint": {
+          "playlistId": "PLfakeOwn0000000000000000000000999",
+          "actions": [
+           {
+            "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID",
+            "removedVideoId": "jNQXAC9IVRw"
+           }
+          ]
+         }
+        }
+       }
+      }
+     ],
+     "actions": [
+      {
+       "menuTitleRenderer": {
+        "title": {
+         "runs": [
+          {
+           "text": "Save video to..."
+          }
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  ]
+ }
+}

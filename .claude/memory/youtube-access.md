@@ -28,11 +28,32 @@ metadata:
 - A yt-dlp that pip or uv installed cannot update itself. Its self-updater operates only on release builds, for example the standalone executable. A new version of an imported module takes effect only in a new process.
 - The extraction functions are synchronous. A direct call blocks the event loop for the whole call.
 - A PO Token is necessary only for video streams, player requests and subtitles of some clients. Flat extraction and search do not start the PO Token code.
+- `YoutubeDLCookieJar.load` and `YoutubeDLCookieJar.save` accept a text stream, because their `open` helper gives a file object back as it is. Load the cookie text through `io.StringIO`.
+- A cookie text with CRLF line ends in `io.StringIO` gives each cookie value a trailing CR. Split the text into lines before the load.
+- yt-dlp writes each cookie line that it skips to stderr, with the cookie value. Python `MozillaCookieJar` puts a line that it refuses into the text of its `LoadError`. Check the lines before the load, and name only the line number in the error.
+- `YoutubeDLCookieJar.save` sets `expires` of each session cookie to 0 in the jar itself. A cookie with `expires` 0 counts as expired, so the jar stops to send it, for example `YSC`. Save a copy of the jar.
+- `http.cookiejar` removes each expired cookie from the jar when it builds the `Cookie` header of a request. The `ST-*` cookies and `CONSISTENCY` of an export are often expired already.
+- The YouTube extractors set `hl=en` and `tz=UTC` in the `PREF` cookie of the jar when they start.
+- A subclass of `YoutubeDL` can give its own `cookiejar` property. Each request handler and each extractor takes the jar from that property.
+- Each HTTP request of yt-dlp goes through `YoutubeDL.urlopen`. An override of that method can pace the requests and see the final URL after a redirect.
+- `_extract_response` sends a failed API call again up to `extractor_retries` times, also a call that changes data and a call that gets HTTP 401. With `extractor_retries` 0, it sends the call once.
+- When `ytInitialData` of a page is incomplete, the `YoutubeTab` extractor downloads the page again up to three times before it reads `ytcfg`. A check of `LOGGED_IN` right after each page download stops at the first page.
+- A flat entry of a video of two or more channels together has no `channel_id`. Its `creators` field has the names of the channels.
+- A flat read of a playlist makes one more request, because yt-dlp reads the playlist again with its unavailable videos.
 
 ## YouTube with cookies
 
 - With browser cookies, yt-dlp reads the subscribed channels (`/feed/channels`), the playlists of the user with `WL` (`/feed/playlists`), Watch Later (`:ytwatchlater`) and the subscriptions feed (`:ytsubs`).
 - In `/feed/playlists`, the owner field of most flat entries is the text "View full playlist". It does not tell an own playlist from a saved one.
+- In `/feed/playlists`, only the flat entry of a saved playlist of another channel has `channel_id` and `channel_url` of the owner. An own playlist, Watch Later (`WL`), Liked videos (`LL`) and Saved Shorts (`YS`) have none.
+- `playlist/get_add_to_playlist` with `{"videoIds": [<video id>], "excludeWatchLater": false}` lists Watch Later and each playlist that the account can add videos to. Each `playlistAddToOptionRenderer` has `playlistId`, `title.simpleText`, `privacy` and `containsSelectedVideos`. In a sample, it listed exactly the entries of `/feed/playlists` without an owner channel, except `LL` and `YS`.
+- `account/account_menu` with an empty body gives `activeAccountHeaderRenderer`. Its `accountName.simpleText` is the channel title, `channelHandle.simpleText` is the handle, and `manageAccountTitle.runs[0].navigationEndpoint.browseEndpoint.browseId` is the channel id. The `ytcfg` has no channel id, and its `USER_ACCOUNT_NAME` is not the channel title.
+- The `ytcfg` of a logged-in page holds the values of the cookies `LOGIN_INFO` and `__Secure-ROLLOUT_TOKEN`, and `INNERTUBE_CONTEXT.client.remoteHost` holds the IP address. Never log or store a `ytcfg` or a raw page.
+- An anonymous request to `/feed/subscriptions` gives `LOGGED_IN` false and an empty list without an error. Each account read must check `LOGGED_IN`.
+- An anonymous request to `/feed/channels` goes to the Google sign-in page on `accounts.google.com`. `/feed/playlists` and `WL` answer with `LOGGED_IN` false.
+- `/feed/channels` gives all subscribed channels in one request, also for 554 channels. `/feed/playlists` gives all playlists in one request.
+- `browse/edit_playlist` with `ACTION_ADD_VIDEO` puts the video at the top of Watch Later. Its answer has `status` `STATUS_SUCCEEDED` and `playlistEditResults[0].playlistEditVideoAddedResultData.videoId`. The answer of `ACTION_REMOVE_VIDEO_BY_VIDEO_ID` has `status` and no `playlistEditResults`.
+- In `/feed/channels`, the `subscribeEndpoint` of a channel has `channelIds` and `params` `EgIIARgAUAE%3D`, and its `unsubscribeEndpoint` has `params` `CgIIARgA`.
 - The subscriptions feed does not have most videos of 180 s or shorter. In a sample, it had 5 of 82 such videos and all 82 longer videos.
 - A session from a browser tab that stays open can end about 20 minutes after the export of its cookies. The yt-dlp wiki gives the export method: a private window with only `https://www.youtube.com/robots.txt` open, which you close after the export. All private windows of Firefox share one session, so a second independent session needs a new private window after all private windows are closed.
 - Chromium with Device Bound Session Credentials gives cookies that live a few hours after export. Export from Firefox.
