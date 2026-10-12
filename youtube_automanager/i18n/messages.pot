@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-12 15:54+0300\n"
+"POT-Creation-Date: 2026-10-12 16:24+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -38,7 +38,7 @@ msgid ""
 "when it ends."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid ""
 "A target gets an event when the target is on, the event is checked, and "
 "the level of the event is at least the lowest level of the target. The "
@@ -67,7 +67,7 @@ msgstr ""
 msgid "Add a group"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Add a target"
 msgstr ""
 
@@ -97,7 +97,7 @@ msgstr ""
 msgid "All playlists"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Another target has this name."
 msgstr ""
 
@@ -112,11 +112,11 @@ msgstr ""
 msgid "Any of these conditions"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Apprise URL"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid ""
 "Apprise does not accept this URL. The link below lists the URL of each "
 "service."
@@ -126,6 +126,7 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
+#: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/settings_page.py
 msgid "Cancel"
@@ -139,7 +140,7 @@ msgstr ""
 msgid "Change the mode"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Change the name or the URL"
 msgstr ""
 
@@ -151,7 +152,7 @@ msgstr ""
 msgid "Change the rule"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Change the target"
 msgstr ""
 
@@ -278,8 +279,8 @@ msgstr ""
 msgid "Deferred"
 msgstr ""
 
+#: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
-#: youtube_automanager/web/ui/settings_page.py
 msgid "Delete"
 msgstr ""
 
@@ -288,11 +289,11 @@ msgstr ""
 msgid "Delete the rule \"{name}\"?"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Delete the target"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 #, python-brace-format
 msgid "Delete the target \"{name}\"?"
 msgstr ""
@@ -346,9 +347,9 @@ msgstr ""
 msgid "Earliest cookie expiry"
 msgstr ""
 
+#: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
-#: youtube_automanager/web/ui/settings_page.py
 msgid "Enabled"
 msgstr ""
 
@@ -360,8 +361,8 @@ msgstr ""
 msgid "Enter a name, an @handle, a channel ID or a channel URL."
 msgstr ""
 
+#: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
-#: youtube_automanager/web/ui/settings_page.py
 msgid "Enter a name."
 msgstr ""
 
@@ -385,7 +386,7 @@ msgstr ""
 msgid "Enter a whole number of videos, 1 or more."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Enter the Apprise URL of the target."
 msgstr ""
 
@@ -490,7 +491,7 @@ msgstr ""
 msgid "Live status"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Lowest level"
 msgstr ""
 
@@ -504,8 +505,8 @@ msgstr ""
 msgid "Manual"
 msgstr ""
 
+#: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
-#: youtube_automanager/web/ui/settings_page.py
 msgid "Name"
 msgstr ""
 
@@ -526,7 +527,7 @@ msgstr ""
 msgid "New rule"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "New target"
 msgstr ""
 
@@ -569,7 +570,7 @@ msgstr ""
 msgid "No handle"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "No notification target yet. The button Add a target creates one."
 msgstr ""
 
@@ -616,7 +617,7 @@ msgstr ""
 msgid "Not subscribed"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Notifications"
 msgstr ""
 
@@ -751,6 +752,7 @@ msgid "Runs {first}-{last} of {total}"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
 #: youtube_automanager/web/ui/settings_page.py
@@ -781,7 +783,7 @@ msgstr ""
 msgid "Seconds"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "Send a test"
 msgstr ""
 
@@ -879,7 +881,7 @@ msgstr ""
 msgid "Text"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid ""
 "The URL names the service and its token, for example "
 "tgram://bottoken/ChatID for Telegram."
@@ -1058,7 +1060,7 @@ msgstr ""
 msgid "The service works with YouTube. This takes up to a minute."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "The services of Apprise and their URLs"
 msgstr ""
 
@@ -1074,7 +1076,7 @@ msgstr ""
 msgid "The session check failed: {cause}"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 #, python-brace-format
 msgid ""
 "The stored URL stays when this field is empty. It starts with {scheme}. A"
@@ -1100,28 +1102,28 @@ msgid ""
 "that a rule reads. Click a channel to see its actions."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "The target does not exist any more."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 #, python-brace-format
 msgid "The target {name} is deleted."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 #, python-brace-format
 msgid "The target {name} is saved."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 #, python-brace-format
 msgid ""
 "The test notification to {name} failed. The log of the service names the "
 "cause."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 #, python-brace-format
 msgid "The test notification went to {name}."
 msgstr ""
@@ -1195,7 +1197,7 @@ msgstr ""
 msgid "Trigger"
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/notifications_section.py
 msgid "URL"
 msgstr ""
 
