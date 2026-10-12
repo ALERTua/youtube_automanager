@@ -1,8 +1,12 @@
 """Acceptance tests with the live rules of the user."""
 
+import datetime
+
 import pytest
 
+from youtube_automanager.db.models import SeenVideoState
 from youtube_automanager.engine.rules import Verdict, evaluate, validate
+from youtube_automanager.youtube.public import VideoEntry
 
 # Target playlist "@Home". Each id comes from the subscriptions of the user. The channel names "GreenGrass" and
 # "The Jungle Diaries" are not in the subscriptions, so they are not in the list. The handle @yevgensynelnykovv
@@ -152,3 +156,47 @@ class TestEpicuriousLevelsRule:
     def test_title_without_levels_of_does_not_match_without_a_duration(self):
         data = video(EPICURIOUS, "Pastry Chef Answers Baking Questions", duration_s=None)
         assert evaluate(EPICURIOUS_LEVELS_RULE, data) is Verdict.NO_MATCH
+
+
+def upload(video_id, channel_id, title="A video", duration_s=600, live_status=None):
+    upcoming = live_status == "is_upcoming"
+    return VideoEntry(
+        video_id=video_id,
+        title=title,
+        channel_id=channel_id,
+        channel_title=None,
+        duration_s=None if upcoming else duration_s,
+        upload_date=None if upcoming else datetime.date(2026, 10, 12),
+        live_status=live_status,
+    )
+
+
+def test_the_live_rules_through_the_sync_engine(sync):
+    home = sync.rule("@Home", HOME_RULE, channels=HOME_CHANNELS, target="PLhome")
+    levels = sync.rule("Epicurious levels", EPICURIOUS_LEVELS_RULE, channels=[EPICURIOUS], target="PLhome")
+    later = sync.rule("Watch later", WATCH_LATER_RULE, channels=WATCH_LATER_CHANNELS, target="WL")
+    channels = [*HOME_CHANNELS, EPICURIOUS, *WATCH_LATER_CHANNELS]
+    old = {channel_id: [upload(f"old{index:02}", channel_id)] for index, channel_id in enumerate(channels)}
+    sync.sources.uploads.update(old)
+    sync.run()
+    assert sync.account.added == []
+
+    new = {
+        HOME_CHANNELS[0]: [upload("homeLong", HOME_CHANNELS[0])],
+        HOME_CHANNELS[1]: [upload("homeShort", HOME_CHANNELS[1], duration_s=119)],
+        EPICURIOUS: [
+            upload("levels", EPICURIOUS, LEVELS_TITLE),
+            upload("pastry", EPICURIOUS, "Pastry Chef Answers Baking Questions From Twitter"),
+            upload("pizza", EPICURIOUS, "4 Levels of Pizza", duration_s=100),
+        ],
+        WATCH_LATER_CHANNELS[0]: [upload("jared", WATCH_LATER_CHANNELS[0])],
+        WATCH_LATER_CHANNELS[1]: [upload("stream", WATCH_LATER_CHANNELS[1], live_status="is_upcoming")],
+    }
+    for channel_id, videos in new.items():
+        sync.sources.uploads[channel_id] = [*videos, *old[channel_id]]
+    sync.run()
+
+    assert sorted(sync.account.added) == [("PLhome", "homeLong"), ("PLhome", "levels"), ("WL", "jared")]
+    assert sync.added_rows() == {("PLhome", "homeLong"): home, ("PLhome", "levels"): levels, ("WL", "jared"): later}
+    assert sync.seen(WATCH_LATER_CHANNELS[1])["stream"] is SeenVideoState.DEFERRED
+    assert sync.seen(EPICURIOUS)["pastry"] is SeenVideoState.SEEN

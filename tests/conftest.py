@@ -1,15 +1,26 @@
+import datetime
 import io
 import subprocess
 import threading
-from datetime import UTC, datetime
-from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
-from youtube_automanager.runners.automanage import YoutubeAutoManager
-
-IN_WINDOW = "2026-01-02T00:00:00+00:00"
+from youtube_automanager.db.models import (
+    AddedVideo,
+    Channel,
+    Playlist,
+    Rule,
+    RuleChannel,
+    Run,
+    RunAction,
+    RunStatus,
+    RunTrigger,
+    SeenVideo,
+    Setting,
+)
+from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, SyncRun
 
 
 class FakeChild:
@@ -98,117 +109,214 @@ def db_sessions(db_url):
     engine.dispose()
 
 
-class FakeYoutubeAPI:
-    """Replaces the YouTube source of the manager: serves canned data and records each call that writes or fetches."""
+class FakeSources:
+    """Replaces the anonymous reads of yt-dlp: the uploads and the Shorts of each channel.
+
+    ``uploads`` holds the entries of each channel, newest first. ``consumed`` counts the entries that the last read of
+    a channel took, so a test sees where the read stopped.
+    """
 
     def __init__(self):
-        self.playlists = []
-        self.subscriptions = []
-        self.activities_by_channel = {}
-        self.durations = {}
-        self.videos_in_playlist = set()
+        self.uploads = {}
+        self.shorts = {}
+        self.errors = {}
+        self.page_errors = {}
+        self.shorts_errors = {}
+        self.consumed = {}
+        self.upload_reads = []
+        self.shorts_reads = []
+
+    def read_uploads(self, channel_id):
+        self.upload_reads.append(channel_id)
+        if channel_id in self.errors:
+            raise self.errors[channel_id]
+        self.consumed[channel_id] = 0
+        return self._iterate(channel_id)
+
+    def _iterate(self, channel_id):
+        failure = self.page_errors.get(channel_id)
+        for index, entry in enumerate(self.uploads.get(channel_id, ())):
+            if failure is not None and index == failure[0]:
+                raise failure[1]
+            self.consumed[channel_id] = index + 1
+            yield entry
+
+    def read_shorts(self, channel_id, limit):
+        self.shorts_reads.append((channel_id, limit))
+        if channel_id in self.shorts_errors:
+            raise self.shorts_errors[channel_id]
+        return set(self.shorts.get(channel_id, ()))
+
+
+class FakeAccount:
+    """Replaces the account client: serves the subscriptions feed and records each add."""
+
+    def __init__(self):
+        self.feed = []
+        self.feed_error = None
         self.added = []
-        self.activities_requests = []
-        self.durations_requests = []
+        self.add_errors = {}
 
-    def get_playlist_by_id(self, playlist_id):
-        return next((p for p in self.playlists if p.id == playlist_id), None)
+    def iter_subscription_feed(self):
+        if self.feed_error is not None:
+            raise self.feed_error
+        return iter(list(self.feed))
 
-    def get_playlists(self):
-        return self.playlists
-
-    def video_in_playlist(self, playlist_id, video_id):
-        return (playlist_id, video_id) in self.videos_in_playlist
-
-    def add_video_to_playlist(self, video_id, playlist_id):
-        self.added.append((video_id, playlist_id))
-
-    def get_subscriptions(self):
-        return self.subscriptions
-
-    def get_channel_activities(self, channel_id, **kwargs):
-        self.activities_requests.append(channel_id)
-        return SimpleNamespace(items=self.activities_by_channel.get(channel_id, []))
-
-    def get_videos_durations(self, video_ids):
-        self.durations_requests.append(list(video_ids))
-        return {video_id: self.durations[video_id] for video_id in video_ids if video_id in self.durations}
+    def add_video(self, playlist_id, video_id):
+        error = self.add_errors.get((playlist_id, video_id))
+        if error is not None:
+            raise error
+        self.added.append((playlist_id, video_id))
 
 
-class FakeDatabase:
-    """Replaces DatabaseController: keeps the config row in memory and counts the saves."""
+class SyncHarness:
+    """Runs the sync engine on the test database with fake sources, a fake account and a fake clock."""
 
-    def __init__(self):
-        self.config = SimpleNamespace(last_update=None, refresh_token=None)
-        self.save_config_calls = 0
-        self.commit_calls = 0
+    def __init__(self, sessions):
+        self.sessions = sessions
+        self.sources = FakeSources()
+        self.account = FakeAccount()
+        self.account_error = None
+        self.account_opens = 0
+        self.sent = []
+        self.send_error = None
+        self.now = datetime.datetime(2026, 10, 12, 18, 0, tzinfo=datetime.UTC)
+        self.run_id = None
+        self._position = 0
 
-    def save_config(self):
-        self.save_config_calls += 1
+    def open_account(self):
+        self.account_opens += 1
+        if self.account_error is not None:
+            raise self.account_error
+        return self.account
 
-    def commit(self):
-        self.commit_calls += 1
+    def send(self, notification):
+        self.sent.append(notification)
+        if self.send_error is not None:
+            raise self.send_error
 
-
-@pytest.fixture
-def start_date():
-    return datetime(2026, 1, 1, tzinfo=UTC)
-
-
-@pytest.fixture
-def fake_api():
-    return FakeYoutubeAPI()
-
-
-@pytest.fixture
-def fake_db():
-    return FakeDatabase()
-
-
-@pytest.fixture
-def make_manager(fake_api, fake_db):
-    def factory(rules, start_date=None):
-        config = SimpleNamespace(config={"rules": rules}, start_date=start_date)
-        return YoutubeAutoManager(db=fake_db, config=config, yt_api=fake_api)
-
-    return factory
-
-
-@pytest.fixture
-def make_activity():
-    def factory(
-        video_id="vid1",
-        channel_id="UC1",
-        channel_name="Chan",
-        title="Title",
-        published_at=IN_WINDOW,
-        activity_type="upload",
-    ):
-        return SimpleNamespace(
-            contentDetails=SimpleNamespace(upload=SimpleNamespace(videoId=video_id)),
-            snippet=SimpleNamespace(
-                channelId=channel_id,
-                channelTitle=channel_name,
-                title=title,
-                publishedAt=published_at,
-                type=activity_type,
-            ),
+    def run(self):
+        with self.sessions.begin() as session:
+            run = Run(status=RunStatus.RUNNING, trigger=RunTrigger.MANUAL)
+            session.add(run)
+            session.flush()
+            self.run_id = run.id
+        self.sent.clear()
+        sync = SyncRun(
+            self.sessions,
+            self.run_id,
+            read_uploads=self.sources.read_uploads,
+            read_shorts=self.sources.read_shorts,
+            open_account=self.open_account,
+            send=self.send,
+            clock=lambda: self.now,
         )
+        try:
+            return sync.run()
+        finally:
+            self.now += datetime.timedelta(hours=1)
 
-    return factory
+    # The setup.
+
+    def playlist(self, playlist_id="WL", title=None):
+        with self.sessions.begin() as session:
+            if session.get(Playlist, playlist_id) is None:
+                session.add(Playlist(playlist_id=playlist_id, title=title or f"Playlist {playlist_id}", is_own=True))
+
+    def channel(self, channel_id, title=None):
+        with self.sessions.begin() as session:
+            if session.get(Channel, channel_id) is None:
+                session.add(Channel(channel_id=channel_id, title=title or f"Channel {channel_id}", is_subscribed=True))
+
+    def rule(self, name, condition, *, channels=(), target="WL", no_shorts=False, enabled=True):
+        self.playlist(target)
+        for channel_id in channels:
+            self.channel(channel_id)
+        self._position += 1
+        with self.sessions.begin() as session:
+            rule = Rule(
+                name=name,
+                enabled=enabled,
+                position=self._position,
+                condition=condition,
+                target_playlist_id=target,
+                no_shorts=no_shorts,
+            )
+            session.add(rule)
+            session.flush()
+            session.add_all(RuleChannel(rule_id=rule.id, channel_id=channel_id) for channel_id in channels)
+            return rule.id
+
+    def unlink(self, rule_id, channel_id):
+        with self.sessions.begin() as session:
+            session.delete(session.get(RuleChannel, (rule_id, channel_id)))
+
+    def disable(self, rule_id):
+        with self.sessions.begin() as session:
+            session.get(Rule, rule_id).enabled = False
+
+    def link(self, rule_id, channel_id):
+        self.channel(channel_id)
+        with self.sessions.begin() as session:
+            session.add(RuleChannel(rule_id=rule_id, channel_id=channel_id))
+
+    def mode(self, mode, count=None):
+        value = {"mode": mode} if count is None else {"mode": mode, "count": count}
+        self.setting(PROCESSING_MODE_KEY, value)
+
+    def setting(self, key, value):
+        with self.sessions.begin() as session:
+            row = session.get(Setting, key)
+            if row is None:
+                session.add(Setting(key=key, value=value))
+            else:
+                row.value = value
+
+    # The reads.
+
+    def seen(self, source):
+        """The stored videos of a source as ``{video_id: state}``."""
+        with self.sessions() as session:
+            rows = session.scalars(select(SeenVideo).where(SeenVideo.channel_id == source))
+            return {row.video_id: row.state for row in rows}
+
+    def seen_rows(self, source):
+        with self.sessions() as session:
+            return {
+                row.video_id: row for row in session.scalars(select(SeenVideo).where(SeenVideo.channel_id == source))
+            }
+
+    def added_rows(self):
+        """The ``added_video`` rows as ``{(playlist_id, video_id): rule_id}``."""
+        with self.sessions() as session:
+            return {(row.playlist_id, row.video_id): row.rule_id for row in session.scalars(select(AddedVideo))}
+
+    def actions(self, run_id=None):
+        """The actions of a run, the last run by default, as tuples of the kind, the video, the rule and the playlist."""
+        with self.sessions() as session:
+            rows = session.scalars(
+                select(RunAction).where(RunAction.run_id == (run_id or self.run_id)).order_by(RunAction.id)
+            )
+            return [(row.action, row.video_id, row.rule_id, row.playlist_id) for row in rows]
+
+    def action_rows(self, run_id=None):
+        with self.sessions() as session:
+            return session.scalars(
+                select(RunAction).where(RunAction.run_id == (run_id or self.run_id)).order_by(RunAction.id)
+            ).all()
+
+    def run_row(self):
+        with self.sessions() as session:
+            return session.get(Run, self.run_id)
+
+    def mark(self, channel_id):
+        return self.channel_row(channel_id).mark_date
+
+    def channel_row(self, channel_id):
+        with self.sessions() as session:
+            return session.get(Channel, channel_id)
 
 
 @pytest.fixture
-def make_playlist():
-    def factory(playlist_id, title):
-        return SimpleNamespace(id=playlist_id, snippet=SimpleNamespace(localized=SimpleNamespace(title=title)))
-
-    return factory
-
-
-@pytest.fixture
-def make_subscription():
-    def factory(channel_id, title="Chan"):
-        return SimpleNamespace(snippet=SimpleNamespace(resourceId=SimpleNamespace(channelId=channel_id), title=title))
-
-    return factory
+def sync(db_sessions):
+    return SyncHarness(db_sessions)

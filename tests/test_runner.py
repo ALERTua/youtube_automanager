@@ -1,11 +1,14 @@
 import os
+import subprocess
 import sys
 import threading
 
 import pytest
 from sqlalchemy import select
 
-from youtube_automanager.db.models import Run, RunStatus, RunTrigger
+from youtube_automanager import notify
+from youtube_automanager.db.models import Run, RunStatus, RunTrigger, Setting
+from youtube_automanager.notify import Event
 from youtube_automanager.runner import (
     ERROR_TAIL_LINES,
     ERROR_TEXT_MAX_CHARS,
@@ -293,10 +296,114 @@ def test_real_child_process_runs_the_sync(db_sessions, db_url, tmp_path, capfd):
         lock=threading.Lock(),
     )
 
-    status = runner.execute(runner.claim(RunTrigger.MANUAL))
+    run_id = runner.claim(RunTrigger.MANUAL)
+    status = runner.execute(run_id)
 
     captured = capfd.readouterr()
     assert status is RunStatus.SUCCEEDED, captured.err
-    assert "the sync engine is not written yet" in captured.out
+    assert f"Run {run_id} finished: 0 video(s) added" in captured.out
     (run,) = read_runs(db_sessions)
     assert (run.status, run.error_text) == (RunStatus.SUCCEEDED, None)
+
+
+def test_run_once_writes_the_cause_of_a_stopped_run_to_stderr(db_sessions, db_url, tmp_path, capsys):
+    run_id = store_run(db_sessions, status=RunStatus.RUNNING, trigger=RunTrigger.MANUAL)
+    with db_sessions.begin() as session:
+        session.add(Setting(key="processing_mode", value={"mode": "sometimes"}))
+    settings = Settings(home=tmp_path, database_url=db_url, tz="UTC")
+
+    assert run_once(run_id, settings) == 1
+
+    err = capsys.readouterr().err
+    assert (
+        err.strip().splitlines()[-1].startswith("The setting 'processing_mode' is not valid: unknown mode 'sometimes'")
+    )
+    assert error_text_from_tail(err.splitlines()).endswith("use one of 'stop_at_seen', 'newest', 'mark_date'")
+
+
+def test_the_parent_never_imports_yt_dlp():
+    """Only the child of a run imports yt-dlp, so a yt-dlp update takes effect at the next run."""
+    code = (
+        "import sys\n"
+        "import youtube_automanager.runner\n"
+        "import youtube_automanager.web.app\n"
+        "assert 'yt_dlp' not in sys.modules, sorted(name for name in sys.modules if name.startswith('yt_dlp'))\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=SOURCE_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+class TestFailureNotification:
+    @pytest.fixture
+    def sent(self):
+        return []
+
+    @pytest.fixture
+    def runner(self, make_runner, sent):
+        return make_runner(send=sent.append)
+
+    def test_a_failed_child_sends_run_failed_with_the_error_text(self, runner, fake_starter, sent):
+        fake_starter.plan.append({"exit_code": 1, "stderr": "YouTube does not accept the stored cookies\n"})
+
+        runner.execute(runner.claim(RunTrigger.MANUAL))
+
+        (notification,) = sent
+        assert notification.event is Event.RUN_FAILED
+        assert notification.body.endswith("YouTube does not accept the stored cookies")
+
+    def test_a_child_that_times_out_sends_run_failed(self, make_runner, fake_starter, sent):
+        runner = make_runner(child_timeout_s=0.05, send=sent.append)
+        fake_starter.plan.append({"blocking": True})
+
+        runner.execute(runner.claim(RunTrigger.SCHEDULE))
+
+        assert [notification.event for notification in sent] == [Event.RUN_FAILED]
+        assert "did not end within 0.05 s" in sent[0].body
+
+    def test_a_succeeded_run_sends_nothing(self, runner, sent):
+        runner.execute(runner.claim(RunTrigger.MANUAL))
+
+        assert sent == []
+
+    def test_a_run_that_the_stop_of_the_service_ended_sends_nothing(self, runner, sent):
+        run_id = runner.claim(RunTrigger.MANUAL)
+        with runner._state_lock:
+            runner._stopping = True
+
+        runner.execute(run_id)
+
+        assert sent == []
+
+    def test_a_failing_send_does_not_change_the_result(self, make_runner, fake_starter, db_sessions):
+        def broken_send(notification):
+            raise RuntimeError("the targets are broken")
+
+        runner = make_runner(send=broken_send)
+        fake_starter.plan.append({"exit_code": 2})
+
+        assert runner.execute(runner.claim(RunTrigger.MANUAL)) is RunStatus.FAILED
+
+        (run,) = read_runs(db_sessions)
+        assert (run.status, run.error_text) == (RunStatus.FAILED, "The sync process exited with code 2.")
+        assert not runner.is_active()
+
+    def test_by_default_the_parent_sends_to_the_targets_of_the_database(self, make_runner, fake_starter, monkeypatch):
+        calls = []
+        monkeypatch.setattr(notify, "send_to_stored_targets", lambda sessions, notification: calls.append(notification))
+        runner = make_runner()
+        fake_starter.plan.append({"exit_code": 1, "stderr": "boom\n"})
+
+        runner.execute(runner.claim(RunTrigger.MANUAL))
+
+        assert [notification.event for notification in calls] == [Event.RUN_FAILED]
