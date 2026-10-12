@@ -162,6 +162,7 @@ async def test_shell_shows_the_service_name_and_each_registered_page(
             "Subscriptions",
             "Scheduler",
             "History",
+            "Settings",
             "Later page",
         ]
 
