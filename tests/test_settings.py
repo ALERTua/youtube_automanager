@@ -17,6 +17,7 @@ VARIABLES = [
     "YTDLP_DIR",
     "TZ",
     "CHILD_TIMEOUT_S",
+    "COOKIES_KEY",
 ]
 
 
@@ -47,6 +48,20 @@ def test_defaults_with_an_empty_environment(env):
     assert settings.ytdlp_dir == Path("/app/config/yt-dlp")
     assert settings.tz == "UTC"
     assert settings.child_timeout_s == 3600
+    assert settings.cookies_key is None
+
+
+@pytest.mark.parametrize("value", ["", "fakekey1,fakekey2"])
+def test_cookies_key_is_secret(env, value):
+    env.setenv("COOKIES_KEY", value)
+
+    settings = Settings()
+
+    if value:
+        assert settings.cookies_key.get_secret_value() == value
+        assert value not in repr(settings)
+    else:
+        assert settings.cookies_key is None
 
 
 @pytest.mark.parametrize(
@@ -122,7 +137,7 @@ def test_database_url_and_ytdlp_dir_follow_home_given_as_an_argument(env):
     assert settings.ytdlp_dir == Path("/other/yt-dlp")
 
 
-@pytest.mark.parametrize("variable", ["DATABASE_URL", "YTDLP_DIR", "TZ"])
+@pytest.mark.parametrize("variable", ["DATABASE_URL", "YTDLP_DIR", "TZ", "COOKIES_KEY"])
 def test_empty_variable_gives_the_default(env, variable):
     env.setenv(variable, "")
 

@@ -3,7 +3,7 @@ import functools
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_core import PydanticUseDefault
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,13 +28,16 @@ class Settings(BaseSettings):
     # The field reads the variable TZ, which also sets the time zone of the C library. An unknown name stops the start.
     tz: str = "UTC"
     child_timeout_s: int = Field(default=3600, gt=0)
+    # The key of the stored cookies: one key, or several keys separated by commas with the newest first.
+    # Without it, the service cannot store or read the cookies.
+    cookies_key: SecretStr | None = None
 
     @field_validator("home", mode="before")
     @classmethod
     def _empty_home_is_default(cls, value):
         return value or HOME_DEFAULT
 
-    @field_validator("database_url", "ytdlp_dir", "tz", mode="before")
+    @field_validator("database_url", "ytdlp_dir", "tz", "cookies_key", mode="before")
     @classmethod
     def _empty_value_is_default(cls, value):
         if value == "":
