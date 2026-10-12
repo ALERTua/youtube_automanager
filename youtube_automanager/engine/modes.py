@@ -28,6 +28,8 @@ READ_BEFORE_MARGIN_DAYS = 2
 # These live states change: an upcoming or live entry gets its duration and its date only when it becomes a normal
 # video, so such an entry never becomes ``seen`` before that.
 UNFINISHED_LIVE_STATES = frozenset({"is_upcoming", "is_live", "post_live"})
+# The live status of a normal video, which a flat entry does not give.
+NOT_LIVE = "not_live"
 
 
 class ProcessingMode(enum.StrEnum):
@@ -106,14 +108,18 @@ class Video:
         return f"https://www.youtube.com/watch?v={self.video_id}"
 
     def fields(self, is_short: bool | None = None) -> dict[str, Any]:
-        """The video fields that a rule reads. A field without a value is None."""
+        """The video fields that a rule reads. A field without a value is None.
+
+        A flat entry has a live status only for a live stream: upcoming, live or past. An entry without one is a
+        normal finished video, so a rule reads ``not_live`` for it, as ``is_finished`` does.
+        """
         return {
             "video_id": self.video_id,
             "title": self.title,
             "channel_id": self.channel_id,
             "duration_s": self.duration_s,
             "upload_date": None if self.upload_date is None else self.upload_date.isoformat(),
-            "live_status": self.live_status,
+            "live_status": self.live_status or NOT_LIVE,
             "is_short": is_short,
         }
 
