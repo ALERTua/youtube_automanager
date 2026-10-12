@@ -569,6 +569,19 @@ def test_a_refresh_that_youtube_refuses_marks_the_session_dead_and_the_run_goes_
     assert stored_account_data(harness) == (set(), set(), False)
 
 
+def test_an_unexpected_refresh_error_goes_to_the_log_and_the_run_goes_on(harness, monkeypatch, caplog):
+    harness.upload()
+    harness.youtube.list_error = RuntimeError("a defect in the refresh")
+
+    report = run_with_the_fake_youtube(harness, monkeypatch)
+
+    assert report.errors == []
+    assert harness.account().session_state is SessionState.OK
+    assert harness.versions()[-1] == ("fake-sidcc-0+1", CookieOrigin.WRITE_BACK, CookieVersionState.UNCHECKED)
+    (record,) = [record for record in caplog.records if "refresh of the account data failed" in record.getMessage()]
+    assert record.exc_info[1] is harness.youtube.list_error
+
+
 def test_a_refresh_that_fails_leaves_the_session_live_and_the_run_goes_on(harness, monkeypatch):
     harness.upload()
     harness.youtube.list_error = AccountError("yt-dlp failed to read the subscriptions: HTTP Error 503")

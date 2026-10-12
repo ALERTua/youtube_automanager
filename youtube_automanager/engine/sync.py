@@ -725,7 +725,9 @@ def run_with_youtube(sessions: sessionmaker[Session], run_id: int, settings: Set
 def _refresh_account_data(sessions: sessionmaker[Session], account: AccountSession, run_id: int) -> None:
     """Refresh the stored copy of the account data when it is stale. A failed refresh does not stop the run.
 
-    A refresh that YouTube refuses as logged out marks the session dead, so the run goes on without the account.
+    A refresh that YouTube refuses as logged out marks the session dead, so the run goes on without the account. An
+    unexpected error writes its trace to the log, because the refresh is a side step and must not cost the adds of the
+    run.
     """
     try:
         refreshed = account_cache.refresh_if_stale(sessions, account.open)
@@ -734,6 +736,9 @@ def _refresh_account_data(sessions: sessionmaker[Session], account: AccountSessi
         return
     except AccountError as error:
         LOG.warning("Run %s: the account data did not refresh: %s", run_id, error)
+        return
+    except Exception:
+        LOG.exception("Run %s: the refresh of the account data failed", run_id)
         return
     if refreshed is not None:
         LOG.info("Run %s: refreshed the stored subscriptions and playlists of the account", run_id)

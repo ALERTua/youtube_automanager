@@ -27,7 +27,7 @@ metadata:
 - A `NotLoggedInError` during the run goes to `session_died`, and the run tries no more adds.
 - When the run stops, the child writes the cause as the last line of stderr. The parent stores the end of stderr as the error text of the run.
 - Each run with stored cookies first checks the session. The engine asks for the checked client only at the first need: a read of the feed or an add.
-- With a live session, `run_with_youtube` then calls `refresh_if_stale` with the same `AccountSession`, before the sources. A refresh that YouTube refuses as logged out goes to `AccountSession.died`, so the run goes on without the account. Another failed refresh writes a warning to the log and does not stop the run.
+- With a live session, `run_with_youtube` then calls `refresh_if_stale` with the same `AccountSession`, before the sources. A refresh that YouTube refuses as logged out goes to `AccountSession.died`, so the run goes on without the account. An `AccountError` of the refresh writes a warning to the log, and an unexpected error writes its trace. Neither stops the run, because the refresh is a side step.
 
 ## Processing modes
 
