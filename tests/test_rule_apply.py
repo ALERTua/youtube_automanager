@@ -8,7 +8,7 @@ import datetime
 
 import pytest
 from sqlalchemy import select
-from test_sync import ANY, DAY, LONG, A, B, C, entries, entry, feed_video, upcoming
+from test_sync import ANY, DAY, LONG, A, B, C, entries, entry, feed_video, upcoming, video_ids, wl
 
 from youtube_automanager.db.models import (
     AddedVideo,
@@ -514,6 +514,29 @@ def test_the_apply_skips_the_added_videos_and_never_adds_an_upcoming_or_undecide
 
     assert sync.account.tried == [("WL", "new")]
     assert sync.actions(rules.run_id) == [(ADDED, "new", rule_id, "WL")]
+
+
+def test_a_second_apply_adds_nothing_after_the_sync_window_moved_past_the_added_videos(sync, rules):
+    rule_id = sync.rule("long", LONG, channels=[A])
+    applied = entries("applied", 3)
+    sync.sources.uploads[A] = applied
+    rules.apply(rule_id)
+    assert sync.account.added == wl("applied02", "applied01", "applied00")
+    sync.run()
+    assert set(sync.seen(A)) == set(video_ids(applied))
+
+    # The sync reads short videos that the rule does not match, and its window moves past the applied videos.
+    later = entries("later", 25, duration_s=60)
+    sync.sources.uploads[A] = [*later, *applied]
+    sync.run()
+    assert set(sync.seen(A)) == set(video_ids([*later, applied[0]]))
+    assert sync.account.added == wl("applied02", "applied01", "applied00")
+
+    report = rules.apply(rule_id)
+
+    assert sync.account.added == wl("applied02", "applied01", "applied00")
+    assert (report.added, report.errors) == ([], [])
+    assert rules.added() == dict.fromkeys(video_ids(applied), rule_id)
 
 
 def test_one_apply_adds_at_most_its_limit_and_the_next_apply_adds_the_rest(sync, rules):

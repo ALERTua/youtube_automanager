@@ -237,7 +237,9 @@ class AddedVideo(Base):
     """A video that the service added to a playlist once.
 
     The service does not add the video to the playlist again, also after the user removed it. The row stays while a
-    source still keeps the video in ``seen_video``, because only then can a run reach the video again.
+    source still keeps the video in ``seen_video``, because a sync run can reach the video again. An apply of a rule can
+    reach the video also without such a source, so the daily cleanup in ``retention`` deletes the row only when it is
+    older than ``ADDED_VIDEO_KEEP_DAYS`` days and no source keeps its video.
     """
 
     __tablename__ = "added_video"
