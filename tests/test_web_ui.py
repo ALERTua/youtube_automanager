@@ -156,7 +156,7 @@ async def test_shell_shows_the_service_name_and_each_registered_page(
         await user.should_see("YouTube AutoManager")
         with user.scope(marker="navigation"):
             items = sorted(user.find(kind=ui.item_label).elements, key=lambda element: element.id)
-        assert [item.text for item in items] == ["Dashboard", "Scheduler", "History", "Later page"]
+        assert [item.text for item in items] == ["Dashboard", "Rules", "Scheduler", "History", "Later page"]
 
         user.find(marker="nav:/later").click()
 

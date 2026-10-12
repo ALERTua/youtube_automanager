@@ -43,6 +43,9 @@ VIDEO_FIELDS = frozenset(
 )
 ALLOWED_OPERATORS = frozenset({"and", "or", "!", "==", "!=", "<", "<=", ">", ">=", "in", "var", "regex"})
 MAX_UNKNOWN_LEAVES = 8
+# The condition of a rule that takes each video of its sources. An empty group does not do this: ``{"and": []}`` and
+# ``{"or": []}`` match no video. Copy the tree before a change, because all callers share this object.
+MATCH_ALL = {"==": [1, 1]}
 
 _GROUP_OPERATORS = frozenset({"and", "or", "!"})
 _REGEX_FLAGS = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL}
