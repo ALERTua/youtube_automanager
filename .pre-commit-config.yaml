@@ -26,3 +26,8 @@ repos:
     rev: 0.13.0
     hooks:
       - id: uv-lock
+
+  - repo: https://github.com/immanuwell/dockerfile-roast
+    rev: 1.7.0
+    hooks:
+      - id: droast
