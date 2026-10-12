@@ -343,6 +343,20 @@ class SyncRunner:
             outcome, account.session_state, account.last_checked_at, account.earliest_cookie_expiry, detail
         )
 
+    def run_short_child(self, command: Sequence[str], name: str, timeout_s: float) -> _ChildEnd | None:
+        """Run a child that works with the cookies, and tell how it ended. The call blocks until the child ends.
+
+        The child holds the sync lock, so a run never works on the cookies at the same time, and ``stop`` stops the
+        child. Return None and start nothing when a run, a session check, another child or a yt-dlp update holds the
+        lock.
+        """
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            return self._run_process(command, name, timeout_s)
+        finally:
+            self._lock.release()
+
     def _run_child(self, run_id: int) -> tuple[RunStatus, str | None]:
         end = self._run_process(child_command(run_id), f"Run {run_id}", self._child_timeout_s)
         if end.start_error is not None:

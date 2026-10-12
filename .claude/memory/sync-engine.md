@@ -44,6 +44,29 @@ metadata:
 - A rule needs `is_short` when it has `no_shorts` or its condition reads `is_short`. The engine reads the Shorts of a channel at most once in a run, and only when such a rule gives UNKNOWN.
 - A feed video without a channel id has no known `is_short`, so a rule with `no_shorts` defers it.
 
+## Account cache
+
+- `refresh_account_cache` in `account_cache.py` copies the subscriptions into `channel`. It copies the library playlists, with Watch Later as `WL`, into `playlist`.
+- The refresh reads both lists before it writes, so a failed read changes nothing.
+- The refresh writes `channel` in one transaction. It writes `playlist` and the setting `account_cache_refreshed_at` in a second transaction, so the time is stored only when both tables are written.
+- The setting `account_cache_refreshed_at` holds the time of the last refresh as ISO text in UTC. `last_refresh` reads it.
+- The refresh never deletes a row, because a rule can still point at the row by its id.
+- A channel that left the subscriptions gets `is_subscribed` false and keeps its row, its `mark_date` and its `last_checked_at`.
+- The refresh never writes `channel.mark_date` or `channel.last_checked_at`. The sync engine owns them.
+- A playlist that left the library keeps its row and its old `playlist.last_synced_at`. A `last_synced_at` before `account_cache_refreshed_at` thus shows that the library lost the playlist, so the table needs no flag column. Only the refresh writes `last_synced_at`.
+- An empty title from YouTube keeps the stored title. A new row with an empty title stores its id as the title.
+- `is_cache_stale` treats a missing, unreadable or future refresh time as stale. A copy that is exactly `max_age` old is still fresh. The default `MAX_AGE` is 24 hours.
+- `refresh_if_stale` calls `open_client` only for a stale copy, so a fresh copy needs no cookies and makes no request.
+- Two refreshes at the same time can fail on a duplicate key. The caller holds the sync lock.
+- The route `POST /api/account/refresh` calls `refresh_in_child`, which runs `python -m youtube_automanager refresh-account` through `SyncRunner.run_short_child`. This is the same child body that a run and a session check use, so the yt-dlp of the data folder applies, the web process never imports yt-dlp, and `SyncRunner.stop` stops the child.
+- `run_short_child` takes the sync lock without a wait and holds it while the child runs. The route answers 409 with `BUSY_TEXT` while a run, a session check, another refresh or a yt-dlp update holds the lock.
+- The refresh child works with the account as a run does: it checks the session, reads the lists, and saves the updated cookies with `AccountSession`. A read that YouTube refuses as logged out marks the session `dead` through `AccountSession.died`.
+- The child ends with exit code 0 and the counts as one JSON line at the end of stderr. The runner copies and keeps only the stderr of a child, so the counts come on that stream. The log of the child is on stdout.
+- A failed child writes its cause as the last line of stderr and ends with a code. `UNAVAILABLE_EXIT_CODE` (3) is for no usable cookies, and a session check child uses the same code. `EXIT_LOGGED_OUT` (4) and `EXIT_ACCOUNT_ERROR` (5) are only for the refresh. Another exit code is a crash, and the route does not show its stderr.
+- The route answers 409 for the codes 3 and 4. It answers 502 for the code 5, a crash, a stop of the service, a timeout and a child without counts.
+- The child gets `REFRESH_TIMEOUT_SECONDS`, 300 s. This is shorter than `SCHEDULED_WAIT_S`, the wait of a scheduled run for the sync lock, so a refresh never makes a scheduled run give up.
+
 ## Processes
 
 - Only the child of a run imports yt-dlp. `run_once` imports the engine inside the function, and a test makes sure that the parent never imports `yt_dlp`.
+- The refresh of the account data follows the same rule: `refresh_once` imports the engine inside the function, and the web process only starts the child. A test makes sure that a refresh through the route leaves `yt_dlp` out of `sys.modules` of the web process.
