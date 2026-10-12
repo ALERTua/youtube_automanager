@@ -266,7 +266,7 @@ def test_an_upcoming_entry_that_matches_is_added_once_and_stays_deferred_until_i
     assert sync.seen(A)["soon"] is SEEN
 
 
-def test_the_clean_up_keeps_the_window_and_drops_the_add_record_of_a_video_that_left_it(sync):
+def test_the_clean_up_keeps_the_window_and_the_add_record_of_a_video_that_left_it(sync):
     sync.rule("all", ANY, channels=[A])
     old = entries("old", 30)
     sync.sources.uploads[A] = old
@@ -283,7 +283,8 @@ def test_the_clean_up_keeps_the_window_and_drops_the_add_record_of_a_video_that_
 
     # The read went down to the first seen video, first00 at index 25.
     assert set(sync.seen(A)) == set(video_ids([*second, first[0]]))
-    assert set(sync.added_rows()) == set(wl(*video_ids(second), "first00"))
+    # An apply of the rule can still reach the videos that left the window, so their add records stay.
+    assert set(sync.added_rows()) == set(wl(*video_ids([*second, *first])))
 
 
 def test_a_removed_video_is_not_added_again_while_a_rule_waits_for_it(sync):
@@ -695,6 +696,23 @@ def test_a_new_processing_mode_clears_the_marks(sync):
     assert sync.account.added == []
 
 
+def test_a_new_processing_mode_keeps_the_add_record_of_a_video_outside_the_new_baseline(sync):
+    rule_id = sync.rule("all", ANY, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.sources.uploads[A] = [entry("new"), *old]
+    sync.run()
+    assert sync.added_rows() == {("WL", "new"): rule_id}
+
+    sync.mode("newest", 1)
+    sync.sources.uploads[A] = [entry("next"), entry("new"), *old]
+    sync.run()
+
+    assert set(sync.seen(A)) == {"next"}
+    assert sync.added_rows() == {("WL", "new"): rule_id}
+
+
 def test_an_invalid_processing_mode_stops_the_run(sync):
     sync.mode("newest")
     sync.rule("all", ANY, channels=[A])
@@ -776,7 +794,7 @@ def test_a_new_channel_of_a_rule_starts_with_a_baseline(sync):
     assert len(sync.seen(B)) == MIN_CHECKED
 
 
-def test_a_channel_that_no_rule_reads_any_more_loses_its_state_and_its_add_records(sync):
+def test_a_channel_that_no_rule_reads_any_more_loses_its_state_but_keeps_its_add_records(sync):
     rule_id = sync.rule("all", ANY, channels=[A, B])
     sync.sources.uploads[A] = entries("a", 25, A)
     old_b = entries("b", 25, B)
@@ -790,7 +808,7 @@ def test_a_channel_that_no_rule_reads_any_more_loses_its_state_and_its_add_recor
     sync.run()
 
     assert sync.seen(B) == {}
-    assert sync.added_rows() == {}
+    assert sync.added_rows() == {("WL", "bnew"): rule_id}
     assert sync.sources.upload_reads[-1] == A
 
     sync.link(rule_id, B)

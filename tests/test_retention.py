@@ -7,23 +7,38 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 
-from youtube_automanager.db.models import Run, RunAction, RunActionKind, RunStatus, RunTrigger, Setting
+from youtube_automanager.db.models import (
+    AddedVideo,
+    Run,
+    RunAction,
+    RunActionKind,
+    RunStatus,
+    RunTrigger,
+    SeenVideo,
+    SeenVideoState,
+    Setting,
+)
 from youtube_automanager.retention import (
+    ADDED_VIDEO_KEEP_DAYS,
     DEFAULT_RETENTION_DAYS,
     RETENTION_KEY,
     CleanupResult,
     clean_history,
+    delete_old_added_videos,
     delete_old_runs,
     get_retention_days,
     set_retention_days,
 )
 from youtube_automanager.web import app as web_app
 from youtube_automanager.web.app import create_app
+from youtube_automanager.web.ui.rules_page import MAX_DAYS_BACK
 
 pytestmark = pytest.mark.usefixtures("logging_setups")
 
 NOW = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
 WAIT_SECONDS = 10
+KEEP = timedelta(days=ADDED_VIDEO_KEEP_DAYS)
+CHANNEL = "UCaaaaaaaaaaaaaaaaaaaaaa"
 
 
 def make_run(run_id, age: timedelta, status=RunStatus.SUCCEEDED, actions=2, now=NOW):
@@ -59,6 +74,20 @@ def action_counts(sessions):
             select(RunAction.run_id, func.count()).group_by(RunAction.run_id).order_by(RunAction.run_id)
         )
         return dict(rows.all())
+
+
+def added_video(video_id, age: timedelta, playlist_id="WL", now=NOW):
+    """The record of an add of the video to the playlist ``age`` before ``now``."""
+    return AddedVideo(playlist_id=playlist_id, video_id=video_id, rule_id=None, added_at=now - age)
+
+
+def seen_video(video_id, source=CHANNEL, state=SeenVideoState.SEEN):
+    return SeenVideo(channel_id=source, video_id=video_id, state=state)
+
+
+def added_rows(sessions):
+    with sessions() as session:
+        return sorted((row.playlist_id, row.video_id) for row in session.scalars(select(AddedVideo)))
 
 
 def test_the_default_retention_is_90_days(db_sessions):
@@ -178,6 +207,62 @@ def test_the_cleanup_writes_a_log_line_only_when_it_deletes(db_sessions, caplog)
 
     assert [record.getMessage() for record in caplog.records] == [
         "Deleted 1 run(s) and 2 action(s) that started more than 90 day(s) ago"
+    ]
+
+
+def test_an_added_video_stays_longer_than_an_apply_reaches_back():
+    # yt-dlp dates the text "1 year ago" 364 days back, and YouTube shows that text until a video is 2 years old. An
+    # apply that reaches MAX_DAYS_BACK days back thus reaches videos up to 2 years old.
+    assert ADDED_VIDEO_KEEP_DAYS > MAX_DAYS_BACK
+    assert ADDED_VIDEO_KEEP_DAYS > 2 * 365
+
+
+def test_the_cleanup_deletes_only_an_old_added_video_that_no_source_keeps(db_sessions):
+    store(
+        db_sessions,
+        [
+            added_video("old", KEEP + timedelta(microseconds=1)),
+            added_video("old", KEEP + timedelta(days=500), playlist_id="PL2"),
+            added_video("at the limit", KEEP),
+            added_video("young", KEEP - timedelta(days=1)),
+            added_video("new", timedelta(0)),
+            added_video("in a channel", KEEP + timedelta(days=500)),
+            added_video("in the feed", KEEP + timedelta(days=500)),
+            added_video("deferred", KEEP + timedelta(days=500)),
+            seen_video("in a channel"),
+            seen_video("in the feed", source="feed"),
+            seen_video("deferred", state=SeenVideoState.DEFERRED),
+        ],
+    )
+
+    assert delete_old_added_videos(db_sessions, now=NOW) == 2
+
+    assert added_rows(db_sessions) == [
+        ("WL", "at the limit"),
+        ("WL", "deferred"),
+        ("WL", "in a channel"),
+        ("WL", "in the feed"),
+        ("WL", "new"),
+        ("WL", "young"),
+    ]
+
+
+def test_the_daily_cleanup_deletes_the_old_added_videos_with_a_log_line(db_sessions, caplog):
+    now = datetime.now(UTC)
+    store(
+        db_sessions,
+        [
+            added_video("old", KEEP + timedelta(days=1), now=now),
+            added_video("young", KEEP - timedelta(days=1), now=now),
+        ],
+    )
+
+    with caplog.at_level(logging.INFO, logger="youtube_automanager.retention"):
+        assert clean_history(db_sessions) == CleanupResult(runs=0, actions=0, added_videos=1)
+
+    assert added_rows(db_sessions) == [("WL", "young")]
+    assert [record.getMessage() for record in caplog.records] == [
+        "Deleted 1 added video record(s) that are older than 732 day(s) and whose video no source keeps"
     ]
 
 
