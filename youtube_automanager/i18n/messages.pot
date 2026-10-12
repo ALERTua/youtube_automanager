@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-12 16:34+0300\n"
+"POT-Creation-Date: 2026-10-12 17:09+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -308,6 +308,10 @@ msgstr ""
 msgid "Dashboard"
 msgstr ""
 
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Data folder"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Date"
 msgstr ""
@@ -435,6 +439,10 @@ msgstr ""
 msgid "Enter the Apprise URL of the target."
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Enter the time as HH:MM, from 00:00 to 23:59."
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/history_page.py
 msgid "Error"
@@ -496,6 +504,10 @@ msgid "How to export the cookies"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+msgid "Image of the service"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
 msgid "In progress"
 msgstr ""
 
@@ -506,8 +518,19 @@ msgid ""
 "window."
 msgstr ""
 
+#. Translators: {zone} is the name of a time zone, for example Europe/Kyiv.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "In the time zone of the schedule, {zone}."
+msgstr ""
+
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Info"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "Installed {new} into the data folder."
 msgstr ""
 
 #: youtube_automanager/web/ui/scheduler_page.py
@@ -525,6 +548,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Last run"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Last update"
 msgstr ""
 
 #: youtube_automanager/web/ui/account_lists.py
@@ -573,6 +600,7 @@ msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Never"
 msgstr ""
 
@@ -594,6 +622,14 @@ msgstr ""
 
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "Next runs of this schedule"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Next update"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Nightly"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -668,6 +704,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
 msgid "No run yet."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "No update is planned"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
@@ -757,6 +797,7 @@ msgid "Remove the group"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Result"
 msgstr ""
 
@@ -837,6 +878,7 @@ msgstr ""
 #: youtube_automanager/web/ui/scheduler_page.py
 #: youtube_automanager/web/ui/settings_page.py
 #: youtube_automanager/web/ui/subscriptions_page.py
+#: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Save"
 msgstr ""
 
@@ -877,6 +919,15 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "Skipped"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Source"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Stable"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -1071,6 +1122,12 @@ msgstr ""
 msgid "The lists were never refreshed."
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid ""
+"The nightly builds get the fixes for the changes of YouTube first, and "
+"they change more often. A new channel installs at the next update."
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 #, python-brace-format
 msgid "The pattern does not compile: {error}"
@@ -1198,6 +1255,19 @@ msgid ""
 "day at {time} ({zone})."
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid ""
+"The service installs the newest yt-dlp of the saved channel. This can "
+"take a few minutes."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid ""
+"The service reads YouTube with yt-dlp. It installs the new releases from "
+"PyPI into its data folder, and the next run uses the new version without "
+"a new image of the service."
+msgstr ""
+
 #: youtube_automanager/web/ui/settings_page.py
 msgid ""
 "The service reads the subscriptions and changes the playlists of your "
@@ -1309,8 +1379,23 @@ msgid ""
 "cookies again while you are signed in to YouTube."
 msgstr ""
 
+#. Translators: {cause} is the English cause from the service, for example the
+#. error of uv.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "The update failed: {cause}"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "The visual editor cannot show this condition. Edit it as JsonLogic."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "The yt-dlp settings are saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "The yt-dlp settings did not change."
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -1335,6 +1420,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "Time"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Time of the update"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -1365,6 +1454,7 @@ msgid "Undecided"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Unknown"
 msgstr ""
 
@@ -1381,6 +1471,19 @@ msgstr ""
 msgid "Unsubscribed from {title}."
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Update each day"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Update now"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "Updated from {old} to {new}."
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Upload date"
 msgstr ""
@@ -1393,6 +1496,11 @@ msgstr ""
 msgid ""
 "Use Firefox. Chrome and other Chromium browsers can give cookies that "
 "stop to work a few hours after the export."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Version"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -1603,6 +1711,11 @@ msgstr ""
 msgid "upcoming"
 msgstr ""
 
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "yt-dlp"
+msgstr ""
+
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "yt-dlp update"
 msgstr ""
@@ -1672,4 +1785,9 @@ msgstr ""
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "{shown} of {total} channels"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "{version} is already the newest version."
 msgstr ""

@@ -27,6 +27,7 @@ metadata:
 - `browse/edit_playlist` with `{"action": "ACTION_ADD_VIDEO", "addedVideoId": <id>}` and `playlistId` `WL` adds a video to Watch Later and returns `status` `STATUS_SUCCEEDED`. `ACTION_REMOVE_VIDEO_BY_VIDEO_ID` with `removedVideoId` removes it.
 - To read a cookie file without a change to the file, do not set `cookiefile`. Load the file with `ydl.cookiejar.load(path, ignore_discard=True, ignore_expires=True)`.
 - A yt-dlp that pip or uv installed cannot update itself. Its self-updater operates only on release builds, for example the standalone executable. A new version of an imported module takes effect only in a new process.
+- A live `ytdlp_updater.update` of the stable channel into an empty folder took about 8 s when the uv cache already held the release. A second call that finds the same version makes one request to PyPI and takes about 0.3 s. `uv pip install --target` also writes `.lock`, `bin` and `share` into the target folder, next to `yt_dlp` and its `.dist-info`.
 - The extraction functions are synchronous. A direct call blocks the event loop for the whole call.
 - A PO Token is necessary only for video streams, player requests and subtitles of some clients. Flat extraction and search do not start the PO Token code.
 - `YoutubeDLCookieJar.load` and `YoutubeDLCookieJar.save` accept a text stream, because their `open` helper gives a file object back as it is. Load the cookie text through `io.StringIO`.

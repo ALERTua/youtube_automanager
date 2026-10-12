@@ -10,6 +10,7 @@ import collections
 import enum
 import functools
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -299,10 +300,20 @@ class SyncRunner:
     def lock_held(self, timeout: float | None = None) -> Iterator[None]:
         """Hold the sync lock of this runner for the body of the ``with`` block, so no run and no child starts.
 
-        Raise ``RunAlreadyActive`` when the lock stays taken for ``timeout`` seconds. 0 does not wait.
+        Wait up to ``timeout`` seconds for the lock: 0 does not wait, and None waits until the lock is free. A stop of the
+        service ends the wait. Raise ``RunAlreadyActive`` when the lock stays taken for ``timeout`` seconds, or when the
+        service stops.
         """
-        with sync_lock_held(timeout, self._lock):
+        if not self._acquire(math.inf if timeout is None else timeout):
+            raise RunAlreadyActive("A sync run or a yt-dlp update holds the sync lock")
+        try:
+            with self._state_lock:
+                stopping = self._stopping
+            if stopping:
+                raise RunAlreadyActive("The service stops")
             yield
+        finally:
+            self._lock.release()
 
     def stop(self, timeout: float) -> bool:
         """Start no more runs, stop the active child, and wait up to ``timeout`` s until the active run ends.

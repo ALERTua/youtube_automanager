@@ -276,6 +276,67 @@ def test_sync_lock_held_raises_while_a_run_is_active(make_runner):
         pass
 
 
+def test_lock_held_waits_for_the_lock_of_the_runner(runner):
+    released = threading.Event()
+    started = threading.Event()
+
+    def hold_briefly():
+        with runner.lock_held(timeout=0):
+            started.set()
+            released.wait(WAIT_SECONDS)
+
+    holder = threading.Thread(target=hold_briefly)
+    holder.start()
+    assert started.wait(WAIT_SECONDS)
+    with pytest.raises(RunAlreadyActive), runner.lock_held(timeout=0):
+        pass
+    threading.Timer(0.2, released.set).start()
+
+    with runner.lock_held(timeout=WAIT_SECONDS):
+        assert runner.is_active()
+
+    holder.join(WAIT_SECONDS)
+    assert not runner.is_active()
+
+
+def test_a_stop_ends_the_wait_of_lock_held_and_refuses_a_free_lock(runner):
+    released = threading.Event()
+    started = threading.Event()
+    outcome = []
+
+    # The holder and the waiter keep longer than the test waits for the waiter, so only the stop can end the wait.
+    def hold():
+        with runner.lock_held():
+            started.set()
+            released.wait(WAIT_SECONDS * 6)
+
+    def wait_for_the_lock():
+        try:
+            with runner.lock_held(timeout=WAIT_SECONDS * 6):
+                outcome.append("held")
+        except RunAlreadyActive:
+            outcome.append("refused")
+
+    holder = threading.Thread(target=hold, daemon=True)
+    holder.start()
+    assert started.wait(WAIT_SECONDS)
+    waiter = threading.Thread(target=wait_for_the_lock, daemon=True)
+    waiter.start()
+    try:
+        assert runner.stop(timeout=0.1) is False
+        waiter.join(WAIT_SECONDS)
+        # The wait ended while the lock was still taken.
+        assert not waiter.is_alive()
+    finally:
+        released.set()
+        holder.join(WAIT_SECONDS)
+
+    assert outcome == ["refused"]
+    with pytest.raises(RunAlreadyActive, match="stops"), runner.lock_held(timeout=0):
+        pass
+    assert not runner.is_active()
+
+
 def test_stop_terminates_the_active_child_and_fails_the_run(runner, fake_starter, db_sessions):
     fake_starter.plan.append({"blocking": True})
     run_id = runner.claim(RunTrigger.SCHEDULE)

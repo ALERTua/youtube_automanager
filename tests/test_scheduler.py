@@ -3,6 +3,7 @@ import itertools
 import logging
 import threading
 from datetime import UTC, datetime, timedelta
+from datetime import time as time_of_day
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,6 +17,7 @@ from youtube_automanager.scheduler import (
     CLEANUP_MINUTE,
     MAX_INTERVAL_S,
     ROTATION_JOB_ID,
+    YTDLP_JOB_ID,
     RunNowOutcome,
     Scheduler,
     SchedulerState,
@@ -592,5 +594,114 @@ def test_a_stopped_scheduler_has_no_cleanup_times(runner):
         await wait_for_first_cleanup(probe)
         await scheduler.shutdown()
         return await scheduler.next_cleanup_times(3)
+
+    assert asyncio.run(main()) == []
+
+
+# The daily yt-dlp update.
+
+
+def no_update():
+    raise AssertionError("The yt-dlp update must not run in this test")
+
+
+def kyiv_times(times):
+    return [(time.astimezone(KYIV).hour, time.astimezone(KYIV).minute) for time in times]
+
+
+def test_the_ytdlp_update_runs_each_day_at_its_time_in_the_time_zone_of_the_schedule(runner):
+    async def body(scheduler):
+        await scheduler.start_ytdlp_updates(no_update, time_of_day(4, 0), enabled=True)
+        job = scheduler._scheduler.get_job(YTDLP_JOB_ID)
+        return await scheduler.next_ytdlp_update_times(3), job.misfire_grace_time
+
+    times, misfire_grace_time = run_with_scheduler(runner, cron("0 18 * * *", timezone="Europe/Kyiv"), body)
+
+    assert kyiv_times(times) == [(4, 0)] * 3
+    assert times[0] > datetime.now(UTC)
+    assert times[0] <= datetime.now(UTC) + timedelta(days=1)
+    assert [later - earlier for earlier, later in itertools.pairwise(times)] == [timedelta(days=1)] * 2
+    assert misfire_grace_time is None
+
+
+def test_a_ytdlp_update_that_is_off_has_no_time(runner):
+    async def body(scheduler):
+        await scheduler.start_ytdlp_updates(no_update, time_of_day(4, 0), enabled=False)
+        return await scheduler.next_ytdlp_update_times(3)
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body) == []
+
+
+def test_a_new_plan_of_the_ytdlp_update_acts_without_a_restart(runner):
+    async def body(scheduler):
+        await scheduler.start_ytdlp_updates(no_update, time_of_day(4, 0), enabled=True)
+        await scheduler.plan_ytdlp_updates(time_of_day(5, 30), enabled=False)
+        off = await scheduler.next_ytdlp_update_times(2)
+        # A second change while off must not turn the update on.
+        await scheduler.plan_ytdlp_updates(time_of_day(6, 15), enabled=False)
+        still_off = await scheduler.next_ytdlp_update_times(2)
+        await scheduler.plan_ytdlp_updates(time_of_day(6, 15), enabled=True)
+        return off, still_off, await scheduler.next_ytdlp_update_times(2)
+
+    off, still_off, times = run_with_scheduler(runner, cron("0 18 * * *", timezone="Europe/Kyiv"), body)
+
+    assert (off, still_off) == ([], [])
+    assert kyiv_times(times) == [(6, 15)] * 2
+
+
+def test_the_ytdlp_update_follows_a_change_of_the_time_zone_and_stays_off(runner):
+    new_york = ZoneInfo("America/New_York")
+
+    async def body(scheduler):
+        await scheduler.start_ytdlp_updates(no_update, time_of_day(4, 0), enabled=True)
+        await scheduler.apply(cron("0 18 * * *", timezone="America/New_York"))
+        moved = await scheduler.next_ytdlp_update_times(2)
+        await scheduler.plan_ytdlp_updates(time_of_day(4, 0), enabled=False)
+        await scheduler.apply(cron("0 18 * * *", timezone="Europe/Kyiv"))
+        return moved, await scheduler.next_ytdlp_update_times(2)
+
+    moved, after_off = run_with_scheduler(runner, cron("0 18 * * *", timezone="Europe/Kyiv"), body)
+
+    assert [(time.astimezone(new_york).hour, time.astimezone(new_york).minute) for time in moved] == [(4, 0)] * 2
+    assert after_off == []
+
+
+def test_the_ytdlp_update_goes_on_while_the_schedule_is_paused(runner):
+    async def body(scheduler):
+        await scheduler.start_ytdlp_updates(no_update, time_of_day(4, 0), enabled=True)
+        await scheduler.pause()
+        await scheduler.apply(cron("0 6 * * *", enabled=False))
+        return await scheduler.state(), len(await scheduler.next_ytdlp_update_times(2))
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body) == (SchedulerState.PAUSED, 2)
+
+
+def test_the_ytdlp_update_runs_its_function_when_it_is_due(runner):
+    ran = threading.Event()
+
+    async def body(scheduler):
+        await scheduler.start_ytdlp_updates(ran.set, time_of_day(4, 0), enabled=True)
+        scheduler._scheduler.modify_job(YTDLP_JOB_ID, next_run_time=datetime.now(UTC))
+        return await asyncio.to_thread(ran.wait, WAIT_SECONDS)
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body)
+
+
+def test_a_plan_of_the_ytdlp_update_needs_its_start(runner):
+    async def body(scheduler):
+        with pytest.raises(RuntimeError, match="not started"):
+            await scheduler.plan_ytdlp_updates(time_of_day(4, 0), enabled=True)
+        return await scheduler.next_ytdlp_update_times(1)
+
+    assert run_with_scheduler(runner, cron("0 18 * * *"), body) == []
+
+
+def test_a_stopped_scheduler_has_no_ytdlp_update_times(runner):
+    async def main():
+        scheduler = Scheduler(runner)
+        await scheduler.start(cron("0 18 * * *"))
+        await scheduler.start_ytdlp_updates(no_update, time_of_day(4, 0), enabled=True)
+        await scheduler.shutdown()
+        return await scheduler.next_ytdlp_update_times(3)
 
     assert asyncio.run(main()) == []

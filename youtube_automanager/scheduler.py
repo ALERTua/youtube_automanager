@@ -3,7 +3,7 @@
 The rest of the service calls APScheduler only through this module, so a move to another major version of APScheduler
 changes only this module. The schedule lives in the ``schedule`` table. APScheduler keeps its jobs in memory, and
 a change of the schedule acts at once, without a restart. Next to the sync job, the scheduler runs one cleanup job,
-which the owner of the history gives to it.
+which the owner of the history gives to it, and the daily update of yt-dlp.
 """
 
 import asyncio
@@ -12,7 +12,7 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -34,6 +34,7 @@ ROTATION_JOB_ID = "cookie_rotation"
 # The wait before the first turn of the cookie rotation, and before the next turn after a turn that failed.
 ROTATION_DELAY_S = 60.0
 CLEANUP_JOB_ID = "cleanup"
+YTDLP_JOB_ID = "ytdlp_update"
 
 # The cleanup of the old history runs each day at this time of the day, in the time zone of the schedule.
 CLEANUP_HOUR = 3
@@ -170,8 +171,12 @@ def build_trigger(spec: ScheduleSpec) -> BaseTrigger:
     raise ValueError(f"Unknown schedule kind {spec.kind!r}")
 
 
+def _daily_trigger(at: time, timezone: str) -> CronTrigger:
+    return CronTrigger(hour=at.hour, minute=at.minute, timezone=_zone(timezone))
+
+
 def _cleanup_trigger(timezone: str) -> CronTrigger:
-    return CronTrigger(hour=CLEANUP_HOUR, minute=CLEANUP_MINUTE, timezone=_zone(timezone))
+    return _daily_trigger(time(CLEANUP_HOUR, CLEANUP_MINUTE), timezone)
 
 
 def _following_times(trigger: BaseTrigger, first: datetime, count: int) -> list[datetime]:
@@ -201,6 +206,19 @@ def upcoming_run_times(spec: ScheduleSpec, count: int, now: datetime | None = No
     if first is not None and first <= now:
         first = trigger.get_next_fire_time(first, now)
     return [] if first is None else _following_times(trigger, first, count)
+
+
+def _replan(scheduler: AsyncIOScheduler, job_id: str, trigger: BaseTrigger, enabled: bool) -> None:
+    """Give the job ``job_id`` the trigger ``trigger``, and keep it paused unless ``enabled``."""
+    if enabled:
+        scheduler.reschedule_job(job_id, trigger=trigger)
+    else:
+        # reschedule_job sets a next run time, so it would also resume a paused job.
+        scheduler.modify_job(job_id, trigger=trigger, next_run_time=None)
+
+
+def _describe_daily(at: time, enabled: bool, timezone: str) -> str:
+    return f"each day at {at:%H:%M} in {timezone}" if enabled else "never, because it is off"
 
 
 def load_schedule(sessions: sessionmaker[Session], default_timezone: str) -> ScheduleSpec:
@@ -254,7 +272,7 @@ def save_enabled(sessions: sessionmaker[Session], enabled: bool) -> None:
 
 
 class Scheduler:
-    """Starts ``SyncRunner`` runs by a schedule and on request, and runs the cleanup of the history each day.
+    """Starts ``SyncRunner`` runs by a schedule and on request, and runs the daily cleanup and yt-dlp update.
 
     Each method runs on the event loop of the service. A pause or a new schedule acts only in this process: the caller
     keeps the ``enabled`` flag and the schedule in the ``schedule`` table, so they survive a restart.
@@ -268,6 +286,10 @@ class Scheduler:
         self._runner = runner
         self._cleanup = cleanup
         self._scheduler: AsyncIOScheduler | None = None
+        # The time zone of the schedule, which each daily job follows.
+        self._timezone = "UTC"
+        # The time of the day of the yt-dlp update and whether it runs, after ``start_ytdlp_updates``.
+        self._ytdlp_plan: tuple[time, bool] | None = None
 
     def _running_scheduler(self) -> AsyncIOScheduler:
         if self._scheduler is None:
@@ -280,6 +302,7 @@ class Scheduler:
         trigger = build_trigger(spec)
         scheduler = AsyncIOScheduler(timezone=UTC)
         scheduler.start()
+        self._timezone = spec.timezone
         # A synchronous job runs in the thread pool of the event loop. Without a misfire grace time, a run that starts
         # late, for example after a busy event loop, still starts. A missed run is never queued twice.
         options = {} if spec.enabled else {"next_run_time": None}
@@ -320,15 +343,15 @@ class Scheduler:
     async def apply(self, spec: ScheduleSpec) -> None:
         """Replace the schedule. A disabled ``spec`` pauses the schedule, and an enabled one resumes it."""
         scheduler = self._running_scheduler()
-        trigger = build_trigger(spec)
-        if spec.enabled:
-            scheduler.reschedule_job(JOB_ID, trigger=trigger)
-        else:
-            # reschedule_job sets a next run time, so it would also resume a paused job.
-            scheduler.modify_job(JOB_ID, trigger=trigger, next_run_time=None)
+        _replan(scheduler, JOB_ID, build_trigger(spec), spec.enabled)
+        self._timezone = spec.timezone
         if self._cleanup is not None:
             # The cleanup follows the time zone of the schedule, also while the schedule is paused.
             scheduler.reschedule_job(CLEANUP_JOB_ID, trigger=_cleanup_trigger(spec.timezone))
+        if self._ytdlp_plan is not None:
+            # So does the yt-dlp update, and it stays on or off.
+            at, enabled = self._ytdlp_plan
+            _replan(scheduler, YTDLP_JOB_ID, _daily_trigger(at, spec.timezone), enabled)
         LOG.info("The schedule changed: %s", self._describe(spec))
 
     async def pause(self) -> None:
@@ -357,9 +380,12 @@ class Scheduler:
 
     async def next_run_times(self, count: int) -> list[datetime]:
         """Return the next ``count`` run times of the schedule. A paused or stopped schedule has none."""
+        return self._next_times(JOB_ID, count)
+
+    def _next_times(self, job_id: str, count: int) -> list[datetime]:
         if self._scheduler is None or count < 1:
             return []
-        job = self._scheduler.get_job(JOB_ID)
+        job = self._scheduler.get_job(job_id)
         if job is None or job.next_run_time is None:
             return []
         return _following_times(job.trigger, job.next_run_time, count)
@@ -399,12 +425,41 @@ class Scheduler:
 
     async def next_cleanup_times(self, count: int) -> list[datetime]:
         """Return the next ``count`` run times of the cleanup. A scheduler without a cleanup has none."""
-        if self._scheduler is None or count < 1:
-            return []
-        job = self._scheduler.get_job(CLEANUP_JOB_ID)
-        if job is None or job.next_run_time is None:
-            return []
-        return _following_times(job.trigger, job.next_run_time, count)
+        return self._next_times(CLEANUP_JOB_ID, count)
+
+    async def start_ytdlp_updates(self, update: Callable[[], object], at: time, enabled: bool) -> None:
+        """Run the blocking ``update`` each day at the time ``at`` in the time zone of the schedule, while ``enabled``.
+
+        A pause of the schedule does not stop the updates, and a change of the time zone of the schedule moves them.
+        ``plan_ytdlp_updates`` changes the time and turns the updates on and off without a restart.
+        """
+        scheduler = self._running_scheduler()
+        # A job that is off has no next run time, as a paused schedule.
+        options = {} if enabled else {"next_run_time": None}
+        scheduler.add_job(
+            update,
+            trigger=_daily_trigger(at, self._timezone),
+            id=YTDLP_JOB_ID,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=None,
+            **options,
+        )
+        self._ytdlp_plan = (at, enabled)
+        LOG.info("The yt-dlp update runs %s", _describe_daily(at, enabled, self._timezone))
+
+    async def plan_ytdlp_updates(self, at: time, enabled: bool) -> None:
+        """Move the daily yt-dlp update to the time ``at``, and turn it on or off. The change acts at once."""
+        scheduler = self._running_scheduler()
+        if self._ytdlp_plan is None:
+            raise RuntimeError("The yt-dlp updates are not started")
+        _replan(scheduler, YTDLP_JOB_ID, _daily_trigger(at, self._timezone), enabled)
+        self._ytdlp_plan = (at, enabled)
+        LOG.info("The yt-dlp update now runs %s", _describe_daily(at, enabled, self._timezone))
+
+    async def next_ytdlp_update_times(self, count: int) -> list[datetime]:
+        """Return the next ``count`` times of the yt-dlp update. Updates that are off have none."""
+        return self._next_times(YTDLP_JOB_ID, count)
 
     async def state(self) -> SchedulerState:
         if self._scheduler is None:

@@ -1,0 +1,221 @@
+"""Tests of the yt-dlp block of the settings page. The autouse fake ``ytdlp_install`` stands in for PyPI and uv."""
+
+import asyncio
+import importlib.metadata
+import re
+import threading
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import pytest
+from ui_support import element_of, eventually, running_service, set_value, store, text_of
+
+from youtube_automanager.db.models import Schedule, ScheduleKind, Setting
+from youtube_automanager.runner import sync_lock_held
+from youtube_automanager.ytdlp_job import LAST_UPDATE_KEY, SETTINGS_KEY
+
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
+
+KYIV = ZoneInfo("Europe/Kyiv")
+TIME = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+")
+IMAGE = importlib.metadata.version("yt-dlp")
+OLD = "2026.7.1"
+NEW = "2026.8.19"
+BUSY_TEXT = "Another task works with YouTube now"
+# How long a test waits for a click that must change nothing.
+SETTLE_SECONDS = 0.3
+
+
+def setting(sessions, key):
+    with sessions() as session:
+        row = session.get(Setting, key)
+        return None if row is None else row.value
+
+
+def next_kyiv_time(hour: int, minute: int) -> str:
+    now = datetime.now(KYIV)
+    planned = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if planned <= now:
+        planned = (planned + timedelta(days=1)).replace(hour=hour, minute=minute)
+    return planned.strftime("%Y-%m-%d %H:%M %Z")
+
+
+async def test_a_new_service_uses_the_ytdlp_of_the_image_and_updates_it_each_day_at_0400(user):
+    await user.open("/settings")
+
+    await user.should_see(marker="ytdlp-card")
+    assert text_of(user, "ytdlp-version") == IMAGE
+    assert text_of(user, "ytdlp-source") == "Image of the service"
+    assert text_of(user, "ytdlp-last-at") == "Never"
+    await user.should_not_see(marker="ytdlp-last-result")
+    assert text_of(user, "ytdlp-next") == next_kyiv_time(4, 0)
+    assert element_of(user, "ytdlp-channel").value == "stable"
+    assert element_of(user, "ytdlp-enabled").value is True
+    assert element_of(user, "ytdlp-time").value == "04:00"
+    assert text_of(user, "ytdlp-time-help") == "In the time zone of the schedule, Europe/Kyiv."
+
+
+async def test_the_release_of_the_data_folder_and_the_last_update_show_on_the_page(
+    nicegui_globals, settings, sessions, fake_starter, ytdlp_install
+):
+    ytdlp_install.write_release(settings.ytdlp_dir, OLD)
+    record = {
+        "at": "2026-10-12T01:00:00+00:00",
+        "ok": False,
+        "channel": "nightly",
+        "old_version": OLD,
+        "new_version": NEW,
+        "error": "uv exited with code 2: error: No solution found",
+    }
+    store(sessions, Setting(key=LAST_UPDATE_KEY, value=record))
+
+    async with running_service(settings, fake_starter) as user:
+        await user.open("/settings")
+
+        assert text_of(user, "ytdlp-version") == OLD
+        assert text_of(user, "ytdlp-source") == "Data folder"
+        assert text_of(user, "ytdlp-last-at") == "2026-10-12 04:00 EEST"
+        assert text_of(user, "ytdlp-last-result") == (
+            "The update failed: uv exited with code 2: error: No solution found"
+        )
+        assert "text-negative" in element_of(user, "ytdlp-last-result").classes
+
+
+async def test_a_save_stores_the_settings_and_moves_the_update_without_a_restart(user, sessions, ytdlp_install):
+    await user.open("/settings")
+    set_value(user, "ytdlp-channel", "nightly")
+    set_value(user, "ytdlp-time", "05:30")
+
+    user.find(marker="ytdlp-save").click()
+
+    await user.should_see("The yt-dlp settings are saved.")
+    assert setting(sessions, SETTINGS_KEY) == {"enabled": True, "channel": "nightly", "time": "05:30"}
+    await eventually(lambda: text_of(user, "ytdlp-next") == next_kyiv_time(5, 30), "The new time of the update")
+    # A new channel installs at the next update, not at once.
+    assert ytdlp_install.calls == []
+
+    set_value(user, "ytdlp-enabled", False)
+    user.find(marker="ytdlp-save").click()
+
+    await eventually(lambda: text_of(user, "ytdlp-next") == "No update is planned", "The update off")
+    assert setting(sessions, SETTINGS_KEY) == {"enabled": False, "channel": "nightly", "time": "05:30"}
+    assert ytdlp_install.calls == []
+
+
+async def test_a_save_of_the_same_settings_writes_nothing(user, sessions):
+    await user.open("/settings")
+
+    user.find(marker="ytdlp-save").click()
+
+    await user.should_see("The yt-dlp settings did not change.")
+    assert setting(sessions, SETTINGS_KEY) is None
+
+
+@pytest.mark.parametrize("value", ["25:00", "", None, "noon"])
+async def test_a_wrong_time_shows_the_error_and_stores_nothing(user, sessions, value):
+    await user.open("/settings")
+    set_value(user, "ytdlp-time", value)
+
+    user.find(marker="ytdlp-save").click()
+
+    await user.should_see(marker="ytdlp-error")
+    assert text_of(user, "ytdlp-error") == "Enter the time as HH:MM, from 00:00 to 23:59."
+    assert setting(sessions, SETTINGS_KEY) is None
+    assert text_of(user, "ytdlp-next") == next_kyiv_time(4, 0)
+
+
+async def test_update_now_shows_a_spinner_and_then_the_result_and_the_new_version(
+    nicegui_globals, settings, sessions, fake_starter, ytdlp_install
+):
+    ytdlp_install.write_release(settings.ytdlp_dir, OLD)
+    ytdlp_install.plan.append({"version": NEW})
+    ytdlp_install.release = threading.Event()
+    store(sessions, Setting(key=SETTINGS_KEY, value={"enabled": True, "channel": "nightly", "time": "04:00"}))
+
+    async with running_service(settings, fake_starter) as user:
+        await user.open("/settings")
+        assert text_of(user, "ytdlp-version") == OLD
+
+        user.find(marker="ytdlp-update-now").click()
+        await eventually(lambda: ytdlp_install.calls, "The start of the update")
+
+        button = element_of(user, "ytdlp-update-now")
+        assert "loading" in button.props
+        assert not button.enabled
+        assert text_of(user, "ytdlp-result") == (
+            "The service installs the newest yt-dlp of the saved channel. This can take a few minutes."
+        )
+        user.find(marker="ytdlp-update-now").click()
+        await asyncio.sleep(SETTLE_SECONDS)
+        assert len(ytdlp_install.calls) == 1
+
+        ytdlp_install.release.set()
+
+        await eventually(lambda: text_of(user, "ytdlp-result") == f"Updated from {OLD} to {NEW}.", "The result")
+        assert "loading" not in element_of(user, "ytdlp-update-now").props
+        assert element_of(user, "ytdlp-update-now").enabled
+        assert text_of(user, "ytdlp-version") == NEW
+        assert text_of(user, "ytdlp-source") == "Data folder"
+        assert TIME.fullmatch(text_of(user, "ytdlp-last-at"))
+        assert text_of(user, "ytdlp-last-result") == f"Updated from {OLD} to {NEW}."
+
+    assert ytdlp_install.calls == [(settings.ytdlp_dir, "nightly")]
+    assert ytdlp_install.lock_taken == [True]
+    assert setting(sessions, LAST_UPDATE_KEY)["new_version"] == NEW
+
+
+@pytest.mark.parametrize(
+    ("plan", "expected"),
+    [
+        ([], f"{IMAGE} is already the newest version."),
+        ([{"version": NEW}], f"Installed {NEW} into the data folder."),
+    ],
+    ids=["current", "first-install"],
+)
+async def test_update_now_tells_the_kind_of_result(user, ytdlp_install, settings, plan, expected):
+    if not plan:
+        ytdlp_install.write_release(settings.ytdlp_dir, IMAGE)
+    ytdlp_install.plan.extend(plan)
+    await user.open("/settings")
+
+    user.find(marker="ytdlp-update-now").click()
+
+    await eventually(lambda: text_of(user, "ytdlp-result") == expected, "The result")
+    assert "text-negative" not in element_of(user, "ytdlp-result").classes
+
+
+async def test_a_failed_update_shows_its_cause(user, ytdlp_install):
+    ytdlp_install.plan.append({"version": NEW, "error": "uv exited with code 2: error: No solution found"})
+    await user.open("/settings")
+
+    user.find(marker="ytdlp-update-now").click()
+
+    expected = "The update failed: uv exited with code 2: error: No solution found"
+    await eventually(lambda: text_of(user, "ytdlp-result") == expected, "The failure")
+    assert "text-negative" in element_of(user, "ytdlp-result").classes
+    assert text_of(user, "ytdlp-last-result") == expected
+    assert text_of(user, "ytdlp-source") == "Image of the service"
+
+
+async def test_update_now_while_the_sync_lock_is_taken_installs_nothing(user, sessions, ytdlp_install):
+    await user.open("/settings")
+
+    with sync_lock_held():
+        user.find(marker="ytdlp-update-now").click()
+        await eventually(lambda: text_of(user, "ytdlp-result").startswith(BUSY_TEXT), "The busy text")
+
+    assert "text-negative" in element_of(user, "ytdlp-result").classes
+    assert ytdlp_install.calls == []
+    assert setting(sessions, LAST_UPDATE_KEY) is None
+    assert element_of(user, "ytdlp-update-now").enabled
+
+
+async def test_the_next_update_follows_the_time_zone_of_the_schedule(nicegui_globals, settings, sessions, fake_starter):
+    store(sessions, Schedule(enabled=True, kind=ScheduleKind.CRON, cron_expression="0 18 * * *", timezone="UTC"))
+
+    async with running_service(settings, fake_starter) as user:
+        await user.open("/settings")
+
+        assert text_of(user, "ytdlp-time-help") == "In the time zone of the schedule, UTC."
+        next_update = datetime.strptime(text_of(user, "ytdlp-next"), "%Y-%m-%d %H:%M UTC").replace(tzinfo=UTC)
+        assert (next_update.hour, next_update.minute) == (4, 0)

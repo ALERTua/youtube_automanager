@@ -1,5 +1,5 @@
-"""The FastAPI application of the service and its lifespan: the database, the schedule, the scheduler and the cookie
-rotation.
+"""The FastAPI application of the service and its lifespan: the database, the schedule, the scheduler, the cookie
+rotation and the daily yt-dlp update.
 
 ``create_app`` returns a plain FastAPI application, so more routes and pages can mount on it before it starts.
 """
@@ -23,6 +23,9 @@ from youtube_automanager.scheduler import Scheduler, load_schedule
 from youtube_automanager.settings import Settings, get_settings
 from youtube_automanager.web.api import router
 from youtube_automanager.web.services import Services
+from youtube_automanager.youtube.ytdlp_updater import update as update_ytdlp
+from youtube_automanager.ytdlp_job import YtdlpUpdates
+from youtube_automanager.ytdlp_job import read_settings as read_ytdlp_settings
 
 LOG = logging.getLogger(__name__)
 
@@ -64,7 +67,10 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
             await scheduler.start(spec)
             # The setting of the rotation decides at each turn whether the turn rotates.
             await scheduler.start_rotation(CookieRotation(sessions, settings))
-            app.state.services = Services(settings, engine, sessions, runner, scheduler)
+            ytdlp = YtdlpUpdates(sessions, runner, settings.ytdlp_dir, install=update_ytdlp)
+            ytdlp_settings = await asyncio.to_thread(read_ytdlp_settings, sessions)
+            await scheduler.start_ytdlp_updates(ytdlp.run_scheduled, ytdlp_settings.at, ytdlp_settings.enabled)
+            app.state.services = Services(settings, engine, sessions, runner, scheduler, ytdlp)
             try:
                 yield
             finally:

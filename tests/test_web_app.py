@@ -8,8 +8,18 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from youtube_automanager import ytdlp_job
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
-from youtube_automanager.db.models import Account, Run, RunStatus, RunTrigger, Schedule, ScheduleKind, SessionState
+from youtube_automanager.db.models import (
+    Account,
+    Run,
+    RunStatus,
+    RunTrigger,
+    Schedule,
+    ScheduleKind,
+    SessionState,
+    Setting,
+)
 from youtube_automanager.runner import INTERRUPTED_ERROR, UNAVAILABLE_EXIT_CODE
 from youtube_automanager.scheduler import ROTATION_DELAY_S, ROTATION_JOB_ID, RunNowOutcome
 from youtube_automanager.settings import Settings
@@ -210,6 +220,46 @@ def test_start_plans_the_first_turn_of_the_cookie_rotation(settings, fake_starte
 
     assert job is not None
     assert datetime.now(UTC) < job.next_run_time <= datetime.now(UTC) + timedelta(seconds=ROTATION_DELAY_S)
+
+
+def test_start_plans_the_ytdlp_update_each_day_at_0400_in_the_time_zone_of_the_schedule(settings, fake_starter):
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        services = client.app.state.services
+        times = client.portal.call(services.scheduler.next_ytdlp_update_times, 2)
+
+    assert [(time.astimezone(KYIV).hour, time.astimezone(KYIV).minute) for time in times] == [(4, 0)] * 2
+    assert datetime.now(UTC) < times[0] <= datetime.now(UTC) + timedelta(days=1)
+
+
+def test_start_follows_the_stored_ytdlp_settings(settings, sessions, fake_starter):
+    store(sessions, Setting(key=ytdlp_job.SETTINGS_KEY, value={"enabled": True, "channel": "nightly", "time": "05:45"}))
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        times = client.portal.call(client.app.state.services.scheduler.next_ytdlp_update_times, 1)
+
+    assert [(time.astimezone(KYIV).hour, time.astimezone(KYIV).minute) for time in times] == [(5, 45)]
+
+
+def test_start_without_the_daily_ytdlp_update_plans_none(settings, sessions, fake_starter):
+    store(sessions, Setting(key=ytdlp_job.SETTINGS_KEY, value={"enabled": False}))
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        times = client.portal.call(client.app.state.services.scheduler.next_ytdlp_update_times, 1)
+
+    assert times == []
+
+
+def test_the_ytdlp_update_of_the_service_holds_the_sync_lock_of_the_runs(settings, fake_starter, ytdlp_install):
+    ytdlp_install.plan.append({"version": "2099.1.2"})
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        record = client.app.state.services.ytdlp.update_now()
+        status = client.get("/api/status").json()
+
+    assert ytdlp_install.calls == [(settings.ytdlp_dir, "stable")]
+    assert ytdlp_install.lock_taken == [True]
+    assert record.changed
+    assert (status["ytdlp_version"], status["ytdlp_source"]) == ("2099.1.2", "data_folder")
 
 
 def test_session_check_runs_the_check_child_and_answers_with_the_state(settings, sessions, fake_starter):
