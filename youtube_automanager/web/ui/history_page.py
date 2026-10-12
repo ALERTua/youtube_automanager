@@ -141,14 +141,25 @@ class PageState:
 
 
 def parse_day(text: str | None) -> date | None:
-    """Return the date of ``text`` in the form 2026-10-02, moved into the range of the filter. Return None for no date."""
-    if not text:
+    """Return the date of ``text`` in the form 2026-10-02, moved into the range of the filter.
+
+    Return None for an empty text. Raise ValueError for a text that is not such a date.
+    """
+    if not text or not text.strip():
         return None
-    try:
-        day = date.fromisoformat(text.strip())
-    except ValueError:
-        return None
+    day = date.fromisoformat(text.strip())
     return min(max(day, EARLIEST_DAY), LATEST_DAY)
+
+
+def read_day(field: ui.input) -> date | None:
+    """Return the date of a date field of the filter. Mark a field with a wrong date, and keep its filter off."""
+    try:
+        day = parse_day(field.value)
+    except ValueError:
+        field.error = _("This is not a date, so the filter does not use it.")
+        return None
+    field.error = None
+    return day
 
 
 def _timezone(session: Session, default_timezone: str) -> str:
@@ -293,8 +304,8 @@ async def history_page(services: Services) -> None:
         return RunFilter(
             status=None if status_select.value == ANY else RunStatus(status_select.value),
             trigger=None if trigger_select.value == ANY else RunTrigger(trigger_select.value),
-            first_day=parse_day(first_input.value),
-            last_day=parse_day(last_input.value),
+            first_day=read_day(first_input),
+            last_day=read_day(last_input),
         )
 
     async def load_runs(page: int | None = None) -> None:
@@ -437,13 +448,19 @@ async def history_page(services: Services) -> None:
             .classes("w-40")
             .mark("filter-trigger")
         )
+        # The page marks a wrong date itself, in ``read_day``. The automatic validation would clear that mark at each
+        # change of the value, after the change handlers.
         first_input = (
             ui.input(_("From"), on_change=filters_changed)
+            .without_auto_validation()
             .props("type=date outlined dense clearable")
             .mark("filter-from")
         )
         last_input = (
-            ui.input(_("To"), on_change=filters_changed).props("type=date outlined dense clearable").mark("filter-to")
+            ui.input(_("To"), on_change=filters_changed)
+            .without_auto_validation()
+            .props("type=date outlined dense clearable")
+            .mark("filter-to")
         )
         ui.button(_("Refresh"), icon="refresh", on_click=refresh).mark("refresh")
     runs_view(first_page)

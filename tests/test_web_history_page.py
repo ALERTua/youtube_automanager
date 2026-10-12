@@ -390,17 +390,46 @@ async def test_the_date_range_counts_whole_days_of_the_time_zone_of_the_schedule
         await user.should_not_see(marker="runs-table")
 
 
-async def test_a_date_that_is_not_a_date_filters_nothing_and_a_cleared_date_lifts_the_filter(user, runs_of_four_days):
+WRONG_DATE = "This is not a date, so the filter does not use it."
+
+
+def date_error(user, marker: str) -> tuple[object, object]:
+    element = element_of(user, marker)
+    return element.props.get("error"), element.props.get("error-message")
+
+
+async def test_a_date_that_is_not_a_date_is_marked_and_filters_nothing_and_a_cleared_date_lifts_the_filter(
+    user, runs_of_four_days
+):
     await user.open("/history")
+    assert date_error(user, "filter-from") == (None, None)
     set_value(user, "filter-from", "2026-10-04")
     await runs_are(user, [5])
 
     set_value(user, "filter-from", "2026-13-45")
     await runs_are(user, [5, 4, 3, 2, 1])
+    assert date_error(user, "filter-from") == (True, WRONG_DATE)
+    assert date_error(user, "filter-to") == (None, None)
     set_value(user, "filter-from", "2026-10-04")
     await runs_are(user, [5])
+    assert date_error(user, "filter-from") == (None, None)
     user.find(marker="filter-from").clear()
     await runs_are(user, [5, 4, 3, 2, 1])
+    assert date_error(user, "filter-from") == (None, None)
+
+
+async def test_a_wrong_date_in_one_field_keeps_its_mark_while_the_other_field_changes(user, runs_of_four_days):
+    await user.open("/history")
+
+    set_value(user, "filter-to", "yesterday")
+    await eventually(lambda: date_error(user, "filter-to") == (True, WRONG_DATE), "The mark of the wrong date")
+    set_value(user, "filter-from", "2026-10-03")
+
+    await runs_are(user, [5, 4])
+    assert date_error(user, "filter-to") == (True, WRONG_DATE)
+    assert date_error(user, "filter-from") == (None, None)
+    set_value(user, "filter-to", " ")
+    await eventually(lambda: date_error(user, "filter-to") == (None, None), "The end of the mark of a blank field")
 
 
 async def test_the_refresh_button_shows_new_runs(user, sessions):
