@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-12 15:11+0300\n"
+"POT-Creation-Date: 2026-10-12 15:54+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -16,6 +16,17 @@ msgstr ""
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
+
+#: youtube_automanager/web/ui/service_settings.py
+msgid "A fixed number of the newest videos"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"A new mode starts each source again at the next run. That run stores the "
+"current videos of each source as seen and adds none of them, so the "
+"videos that came since the last run are not checked."
+msgstr ""
 
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "A run is already active, so no new run started."
@@ -25,6 +36,14 @@ msgstr ""
 msgid ""
 "A sync run or another task with YouTube is active now. Delete the rule "
 "when it ends."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"A target gets an event when the target is on, the event is checked, and "
+"the level of the event is at least the lowest level of the target. The "
+"table shows only the start of each URL, because a URL holds the token of "
+"its service."
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -46,6 +65,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Add a group"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Add a target"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -74,6 +97,10 @@ msgstr ""
 msgid "All playlists"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Another target has this name."
+msgstr ""
+
 #: youtube_automanager/web/ui/account_lists.py
 msgid ""
 "Another task works with YouTube now: a sync run, a session check, a "
@@ -85,11 +112,22 @@ msgstr ""
 msgid "Any of these conditions"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Apprise URL"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Apprise does not accept this URL. The link below lists the URL of each "
+"service."
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Back"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "Cancel"
 msgstr ""
 
@@ -97,8 +135,24 @@ msgstr ""
 msgid "Case-sensitive"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Change the mode"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Change the name or the URL"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Change the processing mode?"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Change the rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Change the target"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -111,8 +165,16 @@ msgstr ""
 msgid "Channel"
 msgstr ""
 
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Channel error"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Channels"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Check the session"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
@@ -143,12 +205,41 @@ msgstr ""
 msgid "Close"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Close each private window of Firefox. All private windows share one "
+"session, so only a new private window after that gives a new session."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Close the private window without a sign-out. A sign-out ends the session "
+"of the exported cookies, and a YouTube tab that stays open can end it "
+"within about 20 minutes."
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Condition"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Cookie file (cookies.txt)"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Cookie rotation"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Cookie session"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Cookies expire soon"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Cookies refused"
 msgstr ""
 
 #: youtube_automanager/web/ui/scheduler_page.py
@@ -188,12 +279,22 @@ msgid "Deferred"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "Delete"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 #, python-brace-format
 msgid "Delete the rule \"{name}\"?"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Delete the target"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "Delete the target \"{name}\"?"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -212,16 +313,42 @@ msgstr ""
 msgid "Each rule already reads this channel."
 msgstr ""
 
+#: youtube_automanager/web/ui/service_settings.py
+msgid ""
+"Each run reads a source down to the upload day of the newest video that "
+"an earlier run saw."
+msgstr ""
+
+#: youtube_automanager/web/ui/service_settings.py
+#, python-brace-format
+msgid ""
+"Each run reads a source from its newest video down to the first video "
+"that an earlier run saw, and always at least the {count} newest videos."
+msgstr ""
+
+#: youtube_automanager/web/ui/service_settings.py
+msgid ""
+"Each run reads the given number of the newest videos of a source, and "
+"checks each one that an earlier run did not see."
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Each video"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "Each {entries} videos cost one more request to YouTube for each source."
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "Earliest cookie expiry"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "Enabled"
 msgstr ""
 
@@ -234,6 +361,7 @@ msgid "Enter a name, an @handle, a channel ID or a channel URL."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "Enter a name."
 msgstr ""
 
@@ -253,6 +381,14 @@ msgstr ""
 msgid "Enter a whole number of seconds, 0 or more."
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Enter a whole number of videos, 1 or more."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Enter the Apprise URL of the target."
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/history_page.py
 msgid "Error"
@@ -262,8 +398,19 @@ msgstr ""
 msgid "Expiring"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Export the cookies of youtube.com as a cookies.txt file in the Netscape "
+"format, with a cookie export add-on that has the permission to run in "
+"private windows."
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Failed"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Failure"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -292,8 +439,29 @@ msgstr ""
 msgid "History"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"How far each run reads the videos of each channel and of the "
+"subscriptions feed."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "How to export the cookies"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "In progress"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"In the same window, open https://www.youtube.com/robots.txt in a new tab,"
+" and close the YouTube tab, so that this page is the only tab of the "
+"window."
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Info"
 msgstr ""
 
 #: youtube_automanager/web/ui/scheduler_page.py
@@ -305,6 +473,7 @@ msgid "Interval in seconds"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "Last check"
 msgstr ""
 
@@ -321,11 +490,22 @@ msgstr ""
 msgid "Live status"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Lowest level"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Make a key with this command, and give it to the service as COOKIES_KEY, "
+"for example in the file .env:"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Manual"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "Name"
 msgstr ""
 
@@ -338,11 +518,16 @@ msgid "Name, @handle, channel ID or channel URL"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "Never"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "New rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "New target"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -371,15 +556,21 @@ msgid "No channel matches the filters."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "No cookies are stored yet."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "No expiry date"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "No handle"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "No notification target yet. The button Add a target creates one."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -425,12 +616,30 @@ msgstr ""
 msgid "Not subscribed"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Notifications"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Number of the newest videos"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "OK"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Open a new private window, and sign in to YouTube there with the account "
+"that the service uses."
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Open on YouTube"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Or paste the text of the cookie file"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -448,6 +657,10 @@ msgstr ""
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Playlist"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Processing mode"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -476,6 +689,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "Retention"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Rotate the cookie session"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -507,8 +724,16 @@ msgstr ""
 msgid "Run"
 msgstr ""
 
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Run failed"
+msgstr ""
+
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "Run now"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Run summary"
 msgstr ""
 
 #: youtube_automanager/web/ui/scheduler_page.py
@@ -528,6 +753,7 @@ msgstr ""
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/settings_page.py
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Save"
 msgstr ""
@@ -535,6 +761,10 @@ msgstr ""
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "Schedule"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Schedule paused or resumed"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -549,6 +779,14 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Seconds"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Send a test"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Settings"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
@@ -567,6 +805,7 @@ msgstr ""
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/settings_page.py
 msgid "State"
 msgstr ""
 
@@ -575,8 +814,20 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
+#: youtube_automanager/web/ui/service_settings.py
+msgid "Stop at a seen video (default)"
+msgstr ""
+
+#: youtube_automanager/web/ui/service_settings.py
+msgid "Stop at the date mark"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Stopped"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Store the pasted cookies"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -616,12 +867,22 @@ msgstr ""
 msgid "Succeeded"
 msgstr ""
 
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Success"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Target playlist"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Text"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"The URL names the service and its token, for example "
+"tgram://bottoken/ChatID for Telegram."
 msgstr ""
 
 #. Translators: {cause} is the English cause from the service, for example that
@@ -634,6 +895,26 @@ msgstr ""
 #: youtube_automanager/web/ui/rule_form.py
 #, python-brace-format
 msgid "The condition is not valid JSON: {error}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The cookie rotation is off."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The cookie rotation is on."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The cookies are stored."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The file is larger than 1 MB, so it is no cookie file of YouTube."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The file is no text in UTF-8, so it is no cookie file."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -666,8 +947,25 @@ msgstr ""
 msgid "The pattern does not compile: {error}"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The processing mode did not change."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The processing mode is saved. The next run uses it."
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "The retention is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The rotation renews the session of the stored cookies about each "
+"{minutes} minutes, the way an open YouTube tab does. It is off by "
+"default, and this default can change after a measurement that still runs."
+" A change acts at the next turn of the rotation, without a restart."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -720,6 +1018,23 @@ msgstr ""
 msgid "The search failed. {reason}"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The service cannot store cookies, because COOKIES_KEY is not set."
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service. It never holds
+#. the key.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The service cannot store cookies, because COOKIES_KEY is not valid: "
+"{cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The service checks the session with YouTube. This takes up to a minute."
+msgstr ""
+
 #: youtube_automanager/web/ui/account_lists.py
 #, python-brace-format
 msgid "The service could not finish the work: {cause}"
@@ -732,8 +1047,46 @@ msgid ""
 "day at {time} ({zone})."
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"The service reads the subscriptions and changes the playlists of your "
+"account with the cookies of a YouTube session. The page never shows a "
+"cookie value."
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "The service works with YouTube. This takes up to a minute."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The services of Apprise and their URLs"
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service, for example that
+#. no cookies are stored.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The session check cannot use the stored cookies: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The session check failed: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The stored URL stays when this field is empty. It starts with {scheme}. A"
+" URL in this field replaces it."
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The stored mode is not valid, so each run stops with an error: {cause}. "
+"Choose a mode and save it."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -747,8 +1100,67 @@ msgid ""
 "that a rule reads. Click a channel to see its actions."
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The target does not exist any more."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The target {name} is deleted."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The target {name} is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The test notification to {name} failed. The log of the service names the "
+"cause."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The test notification went to {name}."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The text holds no login cookie of {domain}. Export the cookies of "
+"youtube.com while you are signed in to YouTube."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The text is empty. Upload the cookie file, or paste its text."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The text is not a Netscape cookie file: {cause}."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The text lacks these login cookies of {domain}: {names}. Export the "
+"cookies again while you are signed in to YouTube."
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "The visual editor cannot show this condition. Edit it as JsonLogic."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Then restart the service. Keep the key: with another key, the service "
+"cannot read the stored cookies, and you upload them again."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "This is not a date, so the filter does not use it."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -783,6 +1195,10 @@ msgstr ""
 msgid "Trigger"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "URL"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Unknown"
 msgstr ""
@@ -804,8 +1220,22 @@ msgstr ""
 msgid "Upload date"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Upload the file here, or paste its text."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Use Firefox. Chrome and other Chromium browsers can give cookies that "
+"stop to work a few hours after the export."
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "Video"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Video added"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
@@ -820,6 +1250,14 @@ msgstr ""
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/history_page.py
 msgid "Videos seen"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Warning"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "With Docker Compose, run the command in the image of the service:"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -849,9 +1287,27 @@ msgstr ""
 msgid "YouTube AutoManager"
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"YouTube accepts the cookies, but they expire soon. Export new cookies and"
+" upload them."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "YouTube accepts the cookies."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "YouTube cookies"
+msgstr ""
+
 #: youtube_automanager/web/ui/account_lists.py
 #, python-brace-format
 msgid "YouTube did not give the expected answer: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "YouTube does not accept the cookies. Export new cookies and upload them."
 msgstr ""
 
 #: youtube_automanager/web/ui/account_lists.py
@@ -970,6 +1426,10 @@ msgstr ""
 msgid "upcoming"
 msgstr ""
 
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "yt-dlp update"
+msgstr ""
+
 #. Translators: a channel that left the subscriptions. A rule can still read it
 #. by its id.
 #: youtube_automanager/web/ui/rules_page.py
@@ -1010,6 +1470,12 @@ msgstr ""
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "{name} (off)"
+msgstr ""
+
+#. Translators: one step of a numbered list, for example "1. Use Firefox."
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "{number}. {step}"
 msgstr ""
 
 #. Translators: the title of the browser tab. {page} is the name of the page,

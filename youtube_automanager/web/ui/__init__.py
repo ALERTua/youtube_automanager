@@ -19,6 +19,7 @@ from youtube_automanager.web.ui import rules_page  # noqa: F401
 from youtube_automanager.web.ui import subscriptions_page  # noqa: F401
 from youtube_automanager.web.ui import scheduler_page  # noqa: F401
 from youtube_automanager.web.ui import history_page  # noqa: F401
+from youtube_automanager.web.ui import settings_page  # noqa: F401
 
 # isort: on
 from youtube_automanager.web.ui.layout import Page, frame, pages
