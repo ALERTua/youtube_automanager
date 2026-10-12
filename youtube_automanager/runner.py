@@ -289,6 +289,15 @@ class SyncRunner:
     def is_active(self) -> bool:
         return self._lock.locked()
 
+    @contextmanager
+    def lock_held(self, timeout: float | None = None) -> Iterator[None]:
+        """Hold the sync lock of this runner for the body of the ``with`` block, so no run and no child starts.
+
+        Raise ``RunAlreadyActive`` when the lock stays taken for ``timeout`` seconds. 0 does not wait.
+        """
+        with sync_lock_held(timeout, self._lock):
+            yield
+
     def stop(self, timeout: float) -> bool:
         """Start no more runs, stop the active child, and wait up to ``timeout`` s until the active run ends.
 

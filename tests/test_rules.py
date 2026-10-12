@@ -4,6 +4,7 @@ import pytest
 
 from youtube_automanager.engine import rules
 from youtube_automanager.engine.rules import (
+    MATCH_ALL,
     MAX_UNKNOWN_LEAVES,
     VIDEO_FIELDS,
     RuleError,
@@ -283,6 +284,24 @@ class TestTreeThatReadsNoField:
     @pytest.mark.parametrize("data", [VIDEO, EMPTY_VIDEO, {}])
     def test_false_tree_does_not_match(self, data):
         assert evaluate({"and": [{"==": [1, 1]}, {"in": ["x", ["a", "b"]]}]}, data) is Verdict.NO_MATCH
+
+
+class TestMatchAll:
+    @pytest.mark.parametrize("data", [VIDEO, dict.fromkeys(VIDEO_FIELDS), {}])
+    def test_match_all_is_valid_and_matches_each_video(self, data):
+        validate(MATCH_ALL)
+        assert evaluate(MATCH_ALL, data) is Verdict.MATCH
+
+    @pytest.mark.parametrize("tree", [{"and": []}, {"or": []}])
+    def test_an_empty_group_matches_no_video(self, tree):
+        assert evaluate(tree, VIDEO) is Verdict.NO_MATCH
+
+    @pytest.mark.parametrize(
+        ("is_short", "expected"), [(False, Verdict.MATCH), (True, Verdict.NO_MATCH), (None, Verdict.UNKNOWN)]
+    )
+    def test_match_all_with_the_shorts_check_of_a_rule_without_shorts(self, is_short, expected):
+        tree = {"and": [MATCH_ALL, {"!": [{"var": "is_short"}]}]}
+        assert evaluate(tree, video(is_short=is_short)) is expected
 
 
 def test_failure_at_evaluation_raises_rule_error():

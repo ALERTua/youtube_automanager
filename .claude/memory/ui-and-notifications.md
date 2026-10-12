@@ -26,6 +26,7 @@ metadata:
 - A `ui.dialog` keeps `visible` true also when it is closed, so `user.find` finds the elements of a closed dialog. A test reads `dialog.value` to know whether the dialog is open.
 - In the user simulation, `user.find` sees only visible elements, so an element that `bind_visibility_from` hides is not found. `ElementFilter(marker=..., local_scope=False)` inside `with user.client:` also finds the hidden ones.
 - In the user simulation, `click()` does nothing on a disabled element, `type()` adds to the value, and `clear()` sets the value to `None`. `should_not_see` returns at the first check where the element is absent, so it does not wait for a handler that runs in the background. A test that proves that a click changed nothing waits a short time first.
+- In the user simulation, `set_value` with the value that the element already has calls no `on_change`. A test that waits for a rebuild after such a call waits until its timeout.
 - In the user simulation, a click on a `ui.select` opens its list, and a second `user.find("<option label>").click()` chooses the option. A `ui.radio` takes `value` of any hashable key, for example a `StrEnum` member, and `element.value` returns that member.
 - `ui.table` rows and columns are props, not elements. `user.find` does not see the text of a cell, and a cell slot from `add_slot("body-cell-<name>", ...)` does not render in the simulation. A test reads `table.rows` and `table.columns`, so give each cell the ready display text.
 - `table.on("rowClick", handler, js_handler="(event, row) => emit(row.id)")` sends only the id of the clicked row, and `e.args` in the handler is that id and not a list. In the simulation, `user.find(marker=...).trigger("rowClick", args=<id>)` calls the handler. A real browser run confirmed it.
@@ -40,7 +41,7 @@ metadata:
 
 - Babel 2.18 reads the extraction mapping from `[tool.babel]` of `pyproject.toml` when you give `-F pyproject.toml`. It writes each location with `/`, also on Windows.
 - The template `messages.pot` keeps each location without a line number and sorts the messages, so a moved line does not change it. The test compares the messages and ignores the header, because the header holds the creation date, the year and the version of Babel.
-- Babel copies a `# Translators:` comment into the template only when the call of `_` on the next line is not inside another call. A comment above `ui.page_title(_("..."))` does not go into the template, and a comment above `title = _("...")` does.
+- Babel copies a `# Translators:` comment into the template only when the call of `_` on the next line is not inside another call. A comment above `ui.page_title(_("..."))` does not go into the template, and a comment above `title = _("...")` does. A comment of two lines above `text = _("...").format(...)` also goes into the template.
 - `pybabel extract` ends the template with an empty line, and the hook `end-of-file-fixer` removes it. The test ignores this difference.
 
 ## Apprise

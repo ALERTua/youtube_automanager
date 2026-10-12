@@ -15,6 +15,7 @@ from youtube_automanager.web.services import Services
 # The drawer lists the pages in the order of these imports, so the sorting of the imports stays off here.
 # isort: off
 from youtube_automanager.web.ui import dashboard  # noqa: F401
+from youtube_automanager.web.ui import rules_page  # noqa: F401
 from youtube_automanager.web.ui import subscriptions_page  # noqa: F401
 from youtube_automanager.web.ui import scheduler_page  # noqa: F401
 from youtube_automanager.web.ui import history_page  # noqa: F401
