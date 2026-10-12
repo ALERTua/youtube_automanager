@@ -143,6 +143,11 @@ def _leaves(node: Any, path: _Path = ()) -> Iterator[tuple[_Path, Any]]:
         yield from _leaves(item, (*path, index))
 
 
+def fields_read(tree: Any) -> frozenset[str]:
+    """Return the names of the video fields that the rule ``tree`` reads."""
+    return frozenset(name for name in _fields_read(tree) if isinstance(name, str))
+
+
 def _fields_read(node: Any) -> Iterator[str]:
     if isinstance(node, list):
         for item in node:

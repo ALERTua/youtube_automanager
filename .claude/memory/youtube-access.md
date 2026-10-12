@@ -15,6 +15,7 @@ metadata:
 
 - Anonymous flat extraction of `https://www.youtube.com/playlist?list=UU<channel id without the UC prefix>` gives all uploads of a channel in one request. The uploads include videos, Shorts and past live streams, each with a duration. A past stream has `live_status=was_live`. A Short has no mark.
 - The uploads playlist lists the newest video first. A sample of 1800 entries from 18 channels had no entry out of order.
+- A flat entry of a normal video has `live_status` null. Upcoming entries are not only at the top of the uploads playlist: they can sit between normal videos.
 - Upcoming and live entries occur, and they have no date and no duration. In one sample of 1800 entries, about one entry in nine had no date, and nearly all of them were 180 s or shorter. In a later sample of 1700 entries, only the upcoming and live entries had no date. Keep the date optional.
 - A flat entry gets a date only with the extractor argument `youtubetab:approximate_date`. The date comes as `timestamp` at UTC midnight, never as `upload_date`. It is only as exact as the relative text of YouTube, for example "1 month ago". The channel tab `/shorts` gives no duration, no date and no channel fields.
 - One request returns up to 100 entries in 1 to 3 s.

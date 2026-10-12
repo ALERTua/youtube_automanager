@@ -15,10 +15,8 @@ YTDLP_DIRNAME = "yt-dlp"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
-    username: str = "user"
     home: Path = HOME_DEFAULT
     db_filename: str = f"{PROJECT_NAME}.sqlite"
-    config_filename: str = f"{PROJECT_NAME}.yaml"
     verbose: bool = False
     host: str = "0.0.0.0"
     port: int = Field(default=8080, ge=0, le=65535)
@@ -56,10 +54,6 @@ class Settings(BaseSettings):
     @property
     def db_filepath(self) -> Path:
         return self.home / self.db_filename
-
-    @property
-    def config_filepath(self) -> Path:
-        return self.home / self.config_filename
 
 
 @functools.cache

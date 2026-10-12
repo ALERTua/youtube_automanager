@@ -120,6 +120,9 @@ class Channel(Base):
 
     The row stays after the channel disappears from YouTube, so the UI still shows the title of a rule channel.
     The title and the handle are for display only. The service never looks for a channel by them.
+
+    ``mark_date`` and ``last_checked_at`` are the state of the sync: the date mark of the processing mode
+    ``mark_date``, and the time of the last full read of the uploads of the channel.
     """
 
     __tablename__ = "channel"
@@ -166,10 +169,13 @@ class RuleChannel(Base):
 
 
 class SeenVideo(Base):
-    """A video that the service saw.
+    """A video that the service saw in one source.
 
-    A rule could not decide a deferred video, because a field had no value. The next runs check the video again
-    while it stays in the processing window.
+    ``channel_id`` names the source: the `UC...` id of a channel for its uploads, or the fixed value ``feed`` for the
+    subscriptions feed of the account. A video that a channel showed is thus still new to the feed.
+
+    A deferred video waits for a later run: a rule could not decide it, because a field had no value, or the video is
+    upcoming or live. The next runs check the video again while it stays in the processing window.
     """
 
     __tablename__ = "seen_video"
@@ -185,7 +191,8 @@ class SeenVideo(Base):
 class AddedVideo(Base):
     """A video that the service added to a playlist once.
 
-    The service never adds the video again, also after the user removed it.
+    The service does not add the video to the playlist again, also after the user removed it. The row stays while a
+    source still keeps the video in ``seen_video``, because only then can a run reach the video again.
     """
 
     __tablename__ = "added_video"
@@ -254,6 +261,13 @@ class NotificationTarget(Base):
 
 
 class Setting(Base):
+    """A setting of the service as a JSON value under a key.
+
+    ``processing_mode`` is the processing mode of the sync, for example ``{"mode": "newest", "count": 30}``. The sync
+    engine also keeps its own state here: ``processing_mode_of_state``, and for the subscriptions feed
+    ``feed_mark_date`` and ``feed_last_read_at``.
+    """
+
     __tablename__ = "setting"
 
     key: Mapped[str] = mapped_column(primary_key=True)
