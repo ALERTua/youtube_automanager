@@ -1,0 +1,55 @@
+{
+  "info": {
+    "version": "2026.8.19"
+  },
+  "releases": {
+    "2021.1.15": [
+      {
+        "yanked": true
+      },
+      {
+        "yanked": true
+      }
+    ],
+    "2021.1.15.post1": [
+      {
+        "yanked": true
+      },
+      {
+        "yanked": true
+      }
+    ],
+    "2026.10.10.233141.dev0": [
+      {
+        "yanked": false
+      },
+      {
+        "yanked": false
+      }
+    ],
+    "2026.8.19": [
+      {
+        "yanked": false
+      },
+      {
+        "yanked": false
+      }
+    ],
+    "2026.8.19.233000.dev0": [
+      {
+        "yanked": false
+      },
+      {
+        "yanked": false
+      }
+    ],
+    "2026.9.27.232945.dev0": [
+      {
+        "yanked": false
+      },
+      {
+        "yanked": false
+      }
+    ]
+  }
+}

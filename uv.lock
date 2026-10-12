@@ -558,6 +558,7 @@ version = "0.1.2"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "packaging" },
     { name = "pendulum" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
@@ -576,6 +577,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi" },
+    { name = "packaging" },
     { name = "pendulum" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
