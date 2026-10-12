@@ -45,6 +45,15 @@ metadata:
 - A rule needs `is_short` when it has `no_shorts` or its condition reads `is_short`. The engine reads the Shorts of a channel at most once in a run, and only when such a rule gives UNKNOWN.
 - A feed video without a channel id has no known `is_short`, so a rule with `no_shorts` defers it.
 
+## The preview and the apply of one rule
+
+- `engine.rule_apply` reads the sources of one rule since a day and evaluates the rule as a sync run does, with the same Shorts check. The read of a source stops at the first dated entry before the day, or after `READ_LIMIT` (500) entries. An entry without a date never stops it.
+- The preview writes nothing. It runs in the child `preview-rule` through `run_short_child`, and only a rule that reads the feed needs the account. The draft of the editor goes to the child as ASCII JSON in one argument `--draft=<json>`.
+- The apply is a run with the trigger `rule_apply`: `apply_in_child` calls `SyncRunner.claim` without a wait and `SyncRunner.execute` with the command of the child `apply-rule`. It writes `added_video` rows and `added` actions, but never `seen_video`, a mark or a read time. It adds at most `APPLY_LIMIT` (100) videos, the oldest first, and a failed add stops it.
+- An add sends two requests with the cookies, a read of the page config and the change, 5 s or more apart. An apply of 100 videos thus takes more than 1000 s, longer than `SCHEDULED_WAIT_S` (600 s), so a scheduled run that comes during such an apply does not start.
+- The clean-up of a sync run removes an `added_video` row when it removes the last `seen_video` row of its video. A row that an apply wrote for a video that a source of the sync also stored can thus go, and a later apply over the same days adds that video again.
+- `engine.rule_preview` holds the limits, the draft and the result of a preview, and it imports no yt-dlp, so the web process uses it. `engine.rule_apply` imports yt-dlp through `engine.sync`, so only a child imports it.
+
 ## Account cache
 
 - `refresh_account_cache` in `account_cache.py` copies the subscriptions into `channel`. It copies the library playlists, with Watch Later as `WL`, into `playlist`.

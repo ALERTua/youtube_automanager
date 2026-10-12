@@ -2,15 +2,22 @@
 
 A rule adds the matching videos of its channels to its target playlist, and a rule without channels reads the
 subscriptions feed of the account. The page takes the channels and the playlists only from the stored copy of the
-account, which the refresh of the account data writes, so it makes no request to YouTube. The page reads and writes
-the database in a thread, never on the event loop. Each time shows in the time zone of the schedule.
+account, which the refresh of the account data writes, so a page load makes no request to YouTube. The page reads and
+writes the database in a thread, never on the event loop. Each time shows in the time zone of the schedule.
+
+The editor previews a rule for the videos since a day, and the apply dialog adds the matching videos of a saved rule
+since a day to its playlist. Both read YouTube in a child process through ``rule_actions``, and the apply is a run of
+the history.
 """
 
 import asyncio
 import functools
+import json
+import logging
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -19,11 +26,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 
-from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, Schedule, utc_now
+from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, RunStatus, Schedule, utc_now
+from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.i18n import N_, _
+from youtube_automanager.rule_actions import AppliedRun, apply_in_child, preview_in_child
 from youtube_automanager.runner import RunAlreadyActive, SyncRunner
+from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.account_lists import account_lists
+from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
 from youtube_automanager.web.ui.dashboard import format_time
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
@@ -47,6 +57,8 @@ from youtube_automanager.web.ui.rule_form import (
     value_kind,
 )
 
+LOG = logging.getLogger(__name__)
+
 # The value of a filter that lets each rule through.
 ANY = "any"
 ENABLED = "enabled"
@@ -57,6 +69,36 @@ STATES = {ENABLED: N_("Enabled"), DISABLED: N_("Disabled")}
 LONG_CELL = """
 <q-td :props="props">
   <div class="ellipsis" style="max-width: 20rem" :title="props.value">{{ props.value }}</div>
+</q-td>
+"""
+
+# The first day of a preview and of an apply is this many days back by default.
+DEFAULT_DAYS_BACK = 7
+# The first day is at most this many days back.
+MAX_DAYS_BACK = 365
+# The table of a preview shows this many videos on one page.
+PREVIEW_PAGE_SIZE = 20
+# Each add sends two requests with the cookies of the account, 5 s or more apart.
+SECONDS_PER_ADD = 10
+
+# The label and the color of each result of a preview, in the order of the counts.
+MARKS = {
+    Mark.WILL_ADD: (N_("Will be added"), "positive"),
+    Mark.ALREADY_ADDED: (N_("Already added"), "grey"),
+    Mark.MATCHES: (N_("Matches"), "positive"),
+    Mark.MATCHES_NOW: (N_("Matches now"), "positive"),
+    Mark.NO_LONGER_MATCHES: (N_("No longer matches"), "negative"),
+    Mark.UNDECIDED: (N_("Undecided"), "warning"),
+}
+
+VIDEO_TITLE_CELL = """
+<q-td :props="props">
+  <a :href="props.row.url" target="_blank" rel="noopener noreferrer">{{ props.value }}</a>
+</q-td>
+"""
+MARK_CELL = """
+<q-td :props="props">
+  <q-badge :color="props.row.mark_color">{{ props.value }}</q-badge>
 </q-td>
 """
 
@@ -278,13 +320,173 @@ def channel_options(stored: Stored, extra: list[str]) -> dict[str, str]:
     return options
 
 
+def today_in(timezone: str) -> date:
+    """Return the day of today in the time zone ``timezone``."""
+    return datetime.now(ZoneInfo(timezone)).date()
+
+
+def parse_since(text: str | None, today: date) -> date:
+    """Return the first day of ``text`` in the form 2026-10-05.
+
+    Raise ValueError with a message for the user when the day is missing, in the future, or more than MAX_DAYS_BACK
+    days before ``today``.
+    """
+    try:
+        day = date.fromisoformat((text or "").strip())
+    except ValueError:
+        raise ValueError(_("Choose the first day of the videos.")) from None
+    if day > today:
+        raise ValueError(_("Choose a day that is not in the future."))
+    if day < today - timedelta(days=MAX_DAYS_BACK):
+        raise ValueError(_("Choose a day at most {days} days back.").format(days=MAX_DAYS_BACK))
+    return day
+
+
+def day_input(today: date) -> ui.input:
+    """Add the input of the first day of a preview or an apply, with the default day."""
+    earliest = today - timedelta(days=MAX_DAYS_BACK)
+    return (
+        ui.input(_("Videos from"), value=(today - timedelta(days=DEFAULT_DAYS_BACK)).isoformat())
+        .props(f"type=date outlined dense min={earliest.isoformat()} max={today.isoformat()}")
+        .classes("w-48")
+    )
+
+
+def preview_columns() -> list[dict]:
+    return [
+        _column("date", _("Date")),
+        _column("channel", _("Channel")),
+        _column("title", _("Title")),
+        _column("mark", _("Result")),
+    ]
+
+
+def preview_row(video: PreviewVideo) -> dict:
+    label, color = MARKS[video.mark]
+    return {
+        "id": video.video_id,
+        "date": video.upload_date.isoformat() if video.upload_date else _("No date"),
+        "channel": video.channel_title,
+        "title": video.title,
+        "url": video.url,
+        "mark": _(label),
+        "mark_color": color,
+    }
+
+
+def counts_text(preview: Preview) -> str:
+    """Return the count of the videos of each result, for example "Will be added: 3, Undecided: 1"."""
+    parts = []
+    for mark, (label, _color) in MARKS.items():
+        if preview.count(mark):
+            # Translators: {result} is the result of a preview for a video, for example "Will be added".
+            part = _("{result}: {count}").format(result=_(label), count=preview.count(mark))
+            parts.append(part)
+    return ", ".join(parts)
+
+
+def add_text(count: int) -> str:
+    """Return the text of the button that starts an apply of ``count`` videos."""
+    if count == 1:
+        return _("Add 1 video")
+    return _("Add {count} videos").format(count=count)
+
+
+def applied_text(applied: AppliedRun) -> str:
+    """Tell how an apply ended."""
+    if applied.status is not RunStatus.SUCCEEDED:
+        return _("The apply failed: {error} The History page shows it as run {run}.").format(
+            error=applied.error_text or "", run=applied.run_id
+        )
+    if applied.error_count:
+        return _(
+            "The apply is done with errors. Videos added: {count}. Errors: {errors}. The History page shows them in "
+            "run {run}."
+        ).format(count=applied.added_count, errors=applied.error_count, run=applied.run_id)
+    return _("The apply is done. Videos added: {count}. The History page shows it as run {run}.").format(
+        count=applied.added_count, run=applied.run_id
+    )
+
+
+def _same_tree(first: Any, second: Any) -> bool:
+    # Python == takes 1 for true, so the comparison uses the JSON text.
+    return json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+
+
+class PreviewView:
+    """The place of the result of a preview: a message while it runs, the cause of a failure, or the listed videos.
+
+    ``marker`` starts the marker of each part, and ``empty_text`` tells that the preview lists no video.
+    """
+
+    def __init__(self, marker: str, empty_text: str) -> None:
+        self.marker = marker
+        self.empty_text = empty_text
+        self.container = ui.column().classes("w-full gap-2").mark(marker)
+
+    def clear(self) -> None:
+        self.container.clear()
+
+    def working(self) -> None:
+        self.container.clear()
+        with self.container, ui.row().classes("items-center gap-2"):
+            ui.spinner(size="sm")
+            ui.label(_("The service reads the videos on YouTube. This takes up to a few minutes.")).mark(
+                f"{self.marker}-working"
+            )
+
+    def failed(self, text: str) -> None:
+        self.container.clear()
+        with self.container:
+            ui.label(text).classes("text-negative whitespace-pre-wrap").mark(f"{self.marker}-failed")
+
+    def show(self, preview: Preview) -> None:
+        self.container.clear()
+        with self.container:
+            for error in preview.errors:
+                ui.label(error).classes("text-negative").mark(f"{self.marker}-error")
+            if preview.cut_sources:
+                ui.label(
+                    _(
+                        "The read stops after {limit} videos of a source, so the older videos of these sources are "
+                        "not in the list: {sources}"
+                    ).format(limit=READ_LIMIT, sources=", ".join(preview.cut_sources))
+                ).classes("text-warning").mark(f"{self.marker}-cut")
+            if not preview.videos:
+                ui.label(self.empty_text).mark(f"{self.marker}-empty")
+                return
+            ui.label(counts_text(preview)).mark(f"{self.marker}-counts")
+            table = (
+                ui.table(
+                    columns=preview_columns(),
+                    rows=[preview_row(video) for video in preview.videos],
+                    row_key="id",
+                    pagination=PREVIEW_PAGE_SIZE,
+                )
+                .props("flat bordered dense")
+                .classes("w-full")
+                .mark(f"{self.marker}-table")
+            )
+            table.add_slot("body-cell-title", VIDEO_TITLE_CELL)
+            table.add_slot("body-cell-mark", MARK_CELL)
+            if preview.more:
+                ui.label(
+                    _("The table shows the newest {shown} of the {total} videos.").format(
+                        shown=len(preview.videos), total=preview.total
+                    )
+                ).mark(f"{self.marker}-more")
+
+
 def _marker(name: str, path: tuple[int, ...]) -> str:
     """The marker of a part of the condition editor. The path holds the index of each item from the root."""
     return "-".join([name, *map(str, path)])
 
 
 class RuleEditor:
-    """The form that creates or changes one rule. ``done`` runs after a save or a delete."""
+    """The form that creates or changes one rule. ``done`` runs after a save or a delete.
+
+    ``open_apply`` opens the apply dialog of a saved rule, and it gets whether the form has changes that are not saved.
+    """
 
     def __init__(
         self,
@@ -293,15 +495,18 @@ class RuleEditor:
         rule: RuleRecord | None,
         close: Callable[[], None],
         done: Callable[[], Awaitable[None]],
+        open_apply: Callable[[RuleRecord, bool], None] | None = None,
     ) -> None:
         self.services = services
         self.stored = stored
         self.rule = rule
         self.close = close
         self.done = done
+        self.open_apply = open_apply
         # None when the visual editor cannot show the condition. The form then shows the condition as JSON text.
         self.root: Group | None = from_tree(rule.condition) if rule else Group()
         self.saving = False
+        self.previewing = False
 
     def build(self) -> None:
         rule = self.rule
@@ -324,6 +529,7 @@ class RuleEditor:
         self.no_shorts_switch = ui.switch(_("No Shorts"), value=rule.no_shorts if rule else False).mark(
             "rule-no-shorts"
         )
+        self._preview_part()
         self._actions()
 
     def _sources(self) -> None:
@@ -373,8 +579,9 @@ class RuleEditor:
         self.enabled_switch = ui.switch(_("Enabled"), value=rule.enabled if rule else True).mark("rule-enabled")
         ui.label(
             _(
-                "The rule acts only on new videos. It does not go back to the videos that are already on its "
-                "channels, also after a change or when you turn it on again."
+                "A run acts only on new videos. It does not go back to the videos that are already on the channels of "
+                "the rule, also after a change or when you turn the rule on again. To add older videos of a saved "
+                "rule, use Apply to videos from a date."
             )
         ).classes("text-grey-7").mark("rule-new-videos-hint")
         self.error_label = ui.label().classes("text-negative whitespace-pre-wrap").mark("editor-error")
@@ -384,9 +591,38 @@ class RuleEditor:
             ui.button(_("Cancel"), on_click=self.close).props("flat").mark("editor-cancel")
             if rule:
                 ui.space()
+                ui.button(_("Apply to videos from a date"), icon="playlist_add_check", on_click=self.apply).props(
+                    "flat"
+                ).mark("editor-apply")
                 ui.button(_("Delete"), icon="delete", color="negative", on_click=self.ask_delete).props("flat").mark(
                     "editor-delete"
                 )
+
+    def _preview_part(self) -> None:
+        """Add the preview of the form: the first day, the button and the result."""
+        if self.rule is None:
+            hint = _(
+                "The preview lists each video of the rule sources since the day that this rule matches or cannot "
+                "decide yet. It adds nothing."
+            )
+            empty = _("The rule matches no video of its sources since this day.")
+        else:
+            hint = _(
+                "The preview lists each video of the rule sources since the day for which your changes change the "
+                "result: a video that the rule matches now, or no longer matches. It adds nothing."
+            )
+            empty = _("Your changes change the result for no video since this day.")
+        with ui.card().props("flat bordered").classes("w-full gap-2 p-2").mark("preview-part"):
+            ui.label(_("Preview")).classes("text-subtitle1")
+            ui.label(hint).classes("text-grey-7").mark("preview-hint")
+            with ui.row().classes("items-center gap-2"):
+                self.preview_since = day_input(today_in(self.stored.timezone)).mark("preview-since")
+                self.preview_button = (
+                    ui.button(_("Preview"), icon="visibility", on_click=self.preview)
+                    .props("outline")
+                    .mark("preview-run")
+                )
+            self.preview_view = PreviewView("preview", empty)
 
     # The condition editor.
 
@@ -531,6 +767,12 @@ class RuleEditor:
 
     # Save and delete.
 
+    def read_condition(self) -> Any:
+        """Return the condition of the form. Raise ValueError with a message for the user when it is not valid."""
+        if self.root is None:
+            return condition_from_json(self.json_input.value)
+        return condition_of(self.root)
+
     def read_draft(self) -> RuleDraft:
         """Return the rule of the form. Raise ValueError with a message for the user when the form cannot be saved."""
         name = (self.name_input.value or "").strip()
@@ -539,22 +781,79 @@ class RuleEditor:
         playlist_id = self.playlist_select.value
         if not playlist_id:
             raise ValueError(_("Choose a target playlist."))
-        if self.root is None:
-            condition = condition_from_json(self.json_input.value)
-        else:
-            condition = condition_of(self.root)
         return RuleDraft(
             name=name,
             enabled=bool(self.enabled_switch.value),
             channel_ids=tuple(self.channel_select.value or ()),
             playlist_id=playlist_id,
             no_shorts=bool(self.no_shorts_switch.value),
-            condition=condition,
+            condition=self.read_condition(),
+        )
+
+    def has_changes(self) -> bool:
+        """Tell whether the form differs from the saved rule. A form that cannot be saved counts as changed."""
+        rule = self.rule
+        if rule is None:
+            return True
+        try:
+            draft = self.read_draft()
+        except ValueError:
+            return True
+        return (
+            (draft.name, draft.enabled, draft.playlist_id, draft.no_shorts)
+            != (rule.name, rule.enabled, rule.playlist_id, rule.no_shorts)
+            or set(draft.channel_ids) != set(rule.channel_ids)
+            or not _same_tree(draft.condition, rule.condition)
         )
 
     def show_error(self, text: str | None) -> None:
         self.error_label.set_text(text or "")
         self.error_label.set_visibility(bool(text))
+
+    # The preview and the apply.
+
+    async def preview(self) -> None:
+        """Preview the form: a new rule alone, or the change of the saved rule. The preview adds nothing."""
+        if self.previewing:
+            return
+        try:
+            since = parse_since(self.preview_since.value, today_in(self.stored.timezone))
+            draft = DraftRule(
+                self.read_condition(), tuple(self.channel_select.value or ()), bool(self.no_shorts_switch.value)
+            )
+        except ValueError as error:
+            self.preview_view.failed(str(error))
+            return
+        self.previewing = True
+        self.preview_button.props("loading")
+        self.preview_button.disable()
+        self.preview_view.working()
+        try:
+            result: Preview | str = await asyncio.to_thread(
+                preview_in_child,
+                self.services.runner,
+                since,
+                rule_id=None if self.rule is None else self.rule.id,
+                draft=draft,
+            )
+        except ChildError as error:
+            LOG.warning("The preview of a rule failed: %s", error)
+            result = _("The preview failed. {reason}").format(reason=child_error_text(error))
+        finally:
+            self.previewing = False
+        # The user can close the editor while the child runs.
+        if self.preview_button.is_deleted:
+            return
+        self.preview_button.props(remove="loading")
+        self.preview_button.enable()
+        if isinstance(result, str):
+            self.preview_view.failed(result)
+        else:
+            self.preview_view.show(result)
+
+    def apply(self) -> None:
+        if self.rule is not None and self.open_apply is not None:
+            self.open_apply(self.rule, self.has_changes())
 
     async def save(self) -> None:
         if self.saving:
@@ -607,6 +906,171 @@ class RuleEditor:
         ui.notify(_("The rule is deleted."), type="positive")
         self.close()
         await self.done()
+
+
+class ApplyDialog:
+    """The dialog that previews a saved rule for the videos since a day, and adds the matching ones to its playlist.
+
+    The apply reads and evaluates the videos again, because the preview can be old. It is a run of the history with
+    the trigger ``rule_apply``, and it adds at most APPLY_LIMIT videos, the oldest first. The dialog belongs to the
+    page, so an apply that runs survives the close of the dialog and of the editor.
+    """
+
+    def __init__(self, services: Services) -> None:
+        self.services = services
+        self.rule: RuleRecord | None = None
+        self.timezone = services.settings.tz
+        # The newest preview, and its first day. An apply starts only after a preview of the shown day.
+        self.preview: Preview | None = None
+        self.preview_day: date | None = None
+        self.working = False
+        with ui.dialog().mark("apply-dialog") as self.dialog:
+            self.card = ui.card().classes("gap-2").style("width: min(56rem, 95vw); max-width: 95vw")
+
+    def open(self, stored: Stored, rule: RuleRecord, *, unsaved: bool) -> None:
+        """Show the dialog for ``rule``. While an apply runs, the dialog shows that apply."""
+        if not self.working:
+            self._build(stored, rule, unsaved)
+        self.dialog.open()
+
+    def _build(self, stored: Stored, rule: RuleRecord, unsaved: bool) -> None:
+        self.rule = rule
+        self.timezone = stored.timezone
+        self.preview, self.preview_day = None, None
+        self.card.clear()
+        with self.card:
+            ui.label(_('Apply the rule "{name}" to videos from a date').format(name=rule.name)).classes("text-h6").mark(
+                "apply-title"
+            )
+            if unsaved:
+                ui.label(
+                    _("The editor has changes that are not saved. The apply uses the saved version of the rule.")
+                ).classes("text-warning").mark("apply-unsaved")
+            ui.label(
+                _(
+                    "The apply adds each video of the rule sources since the day that the rule matches to the playlist "
+                    "{playlist}, the oldest first, and at most {limit} videos at a time. It skips each video that the "
+                    "service added to this playlist before, each upcoming or live video, and each video that the rule "
+                    "cannot decide yet."
+                ).format(playlist=stored.playlist_title(rule.playlist_id), limit=APPLY_LIMIT)
+            ).classes("text-grey-7").mark("apply-hint")
+            with ui.row().classes("items-center gap-2"):
+                self.since_input = day_input(today_in(self.timezone)).mark("apply-since")
+                self.since_input.on_value_change(self._day_changed)
+                self.preview_button = (
+                    ui.button(_("Preview"), icon="visibility", on_click=self.run_preview)
+                    .props("outline")
+                    .mark("apply-preview")
+                )
+            self.view = PreviewView("apply-result", _("The rule matches no video of its sources since this day."))
+            self.limit_label = ui.label().classes("text-warning").mark("apply-limit")
+            self.limit_label.set_visibility(False)
+            self.status_label = ui.label().classes("whitespace-pre-wrap").mark("apply-status")
+            self.status_label.set_visibility(False)
+            with ui.row().classes("w-full items-center gap-2"):
+                self.add_button = ui.button(icon="playlist_add", on_click=self.run_apply).mark("apply-run")
+                self.add_button.set_visibility(False)
+                ui.space()
+                ui.button(_("Close"), on_click=self.dialog.close).props("flat").mark("apply-close")
+
+    def _day_changed(self) -> None:
+        """Forget the preview of another day, so no apply starts with the count of that day."""
+        if self.working:
+            return
+        self.preview, self.preview_day = None, None
+        self.view.clear()
+        self.add_button.set_visibility(False)
+        self.limit_label.set_visibility(False)
+
+    def _set_working(self, working: bool) -> None:
+        self.working = working
+        for button in (self.preview_button, self.add_button):
+            if working:
+                button.props("loading")
+                button.disable()
+            else:
+                button.props(remove="loading")
+                button.enable()
+        self.since_input.set_enabled(not working)
+
+    def _status(self, text: str, *, error: bool = False) -> None:
+        if error:
+            self.status_label.classes(add="text-negative")
+        else:
+            self.status_label.classes(remove="text-negative")
+        self.status_label.set_text(text)
+        self.status_label.set_visibility(bool(text))
+
+    async def run_preview(self) -> None:
+        if self.working or self.rule is None:
+            return
+        self._day_changed()
+        self._status("")
+        try:
+            since = parse_since(self.since_input.value, today_in(self.timezone))
+        except ValueError as error:
+            self.view.failed(str(error))
+            return
+        self._set_working(True)
+        self.view.working()
+        try:
+            result = await asyncio.to_thread(preview_in_child, self.services.runner, since, rule_id=self.rule.id)
+        except ChildError as error:
+            LOG.warning("The preview of rule %s failed: %s", self.rule.id, error)
+            self.view.failed(_("The preview failed. {reason}").format(reason=child_error_text(error)))
+            return
+        finally:
+            self._set_working(False)
+        self.view.show(result)
+        self.preview, self.preview_day = result, since
+        count = result.count(Mark.WILL_ADD)
+        if count:
+            self.add_button.set_text(add_text(min(count, APPLY_LIMIT)))
+            self.add_button.set_visibility(True)
+        if count > APPLY_LIMIT:
+            self.limit_label.set_text(
+                _("One apply adds the {limit} oldest of the {count} videos. Apply again to add the rest.").format(
+                    limit=APPLY_LIMIT, count=count
+                )
+            )
+            self.limit_label.set_visibility(True)
+
+    async def run_apply(self) -> None:
+        if self.working or self.rule is None or self.preview is None or self.preview_day is None:
+            return
+        rule, since = self.rule, self.preview_day
+        count = min(self.preview.count(Mark.WILL_ADD), APPLY_LIMIT)
+        self._set_working(True)
+        self.add_button.set_visibility(False)
+        self._status(
+            _(
+                "The apply runs. Each add takes {seconds} s or more, so the apply takes {minutes} min or more. The "
+                "History page shows the apply as a run."
+            ).format(seconds=SECONDS_PER_ADD, minutes=math.ceil(count * SECONDS_PER_ADD / 60))
+        )
+        try:
+            applied = await asyncio.to_thread(
+                apply_in_child, self.services.runner, self.services.sessions, rule.id, since
+            )
+        except ChildError as error:
+            LOG.warning("The apply of rule %s did not start: %s", rule.id, error)
+            self._status(_("The apply did not start. {reason}").format(reason=child_error_text(error)), error=True)
+            self.add_button.set_visibility(True)
+            return
+        finally:
+            self._set_working(False)
+        # The preview is old now, so a new apply needs a new preview.
+        self.preview, self.preview_day = None, None
+        self.limit_label.set_visibility(False)
+        text = applied_text(applied)
+        if applied.status is not RunStatus.SUCCEEDED:
+            kind = "negative"
+        elif applied.error_count:
+            kind = "warning"
+        else:
+            kind = "positive"
+        self._status(text, error=kind == "negative")
+        ui.notify(text, type=kind)
 
 
 @dataclass
@@ -689,8 +1153,11 @@ async def rules_page(services: Services) -> None:
             if rule is None:
                 ui.notify(_("The rule does not exist any more."), type="warning")
                 return
-        editor_view.refresh(RuleEditor(services, state.stored, rule, close_editor, reload))
+        editor_view.refresh(RuleEditor(services, state.stored, rule, close_editor, reload, open_apply))
         editor_dialog.open()
+
+    def open_apply(rule: RuleRecord, unsaved: bool) -> None:
+        apply_dialog.open(state.stored, rule, unsaved=unsaved)
 
     ui.label(_("Rules")).classes("text-h5")
     # The editor reads the stored lists again at each open, so a refresh needs only a new read of the table.
@@ -731,3 +1198,4 @@ async def rules_page(services: Services) -> None:
     # A user can close the dialog only with its buttons, so an edit does not get lost by a click outside it.
     with ui.dialog().props("persistent").mark("editor-dialog") as editor_dialog:
         editor_view(None)
+    apply_dialog = ApplyDialog(services)

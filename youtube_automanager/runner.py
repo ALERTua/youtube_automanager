@@ -244,11 +244,15 @@ class SyncRunner:
         LOG.info("Run %s started by %s", run_id, trigger.value)
         return run_id
 
-    def execute(self, run_id: int) -> RunStatus:
-        """Run the child for the claimed run ``run_id``, write the result, and release the sync lock."""
+    def execute(self, run_id: int, command: Sequence[str] | None = None) -> RunStatus:
+        """Run the child for the claimed run ``run_id``, write the result, and release the sync lock.
+
+        ``command`` starts the child, and by default it is the sync of ``child_command``. Each child of a run ends as
+        the sync does: with exit code 0, or with the cause as the last line of stderr.
+        """
         try:
             try:
-                status, error_text = self._run_child(run_id)
+                status, error_text = self._run_child(run_id, command or child_command(run_id))
             except Exception as error:
                 LOG.exception("Run %s: the service cannot run the sync process", run_id)
                 status, error_text = RunStatus.FAILED, f"The service cannot run the sync process: {error}"
@@ -371,8 +375,8 @@ class SyncRunner:
         finally:
             self._lock.release()
 
-    def _run_child(self, run_id: int) -> tuple[RunStatus, str | None]:
-        end = self._run_process(child_command(run_id), f"Run {run_id}", self._child_timeout_s)
+    def _run_child(self, run_id: int, command: Sequence[str]) -> tuple[RunStatus, str | None]:
+        end = self._run_process(command, f"Run {run_id}", self._child_timeout_s)
         if end.start_error is not None:
             return RunStatus.FAILED, f"The service cannot start the sync process: {end.start_error}"
         if end.timed_out:

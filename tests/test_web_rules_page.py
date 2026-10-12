@@ -608,8 +608,9 @@ async def test_the_editor_offers_the_stored_channels_and_the_own_playlists(user,
         (C, "Gamma (@gamma), not subscribed"),
     ]
     assert text_of(user, "rule-new-videos-hint") == (
-        "The rule acts only on new videos. It does not go back to the videos that are already on its channels, "
-        "also after a change or when you turn it on again."
+        "A run acts only on new videos. It does not go back to the videos that are already on the channels of the "
+        "rule, also after a change or when you turn the rule on again. To add older videos of a saved rule, use Apply "
+        "to videos from a date."
     )
     assert element_of(user, "rule-enabled").value is True
     assert element_of(user, "rule-no-shorts").value is False

@@ -41,6 +41,7 @@ RUN_STATUSES = {
 RUN_TRIGGERS = {
     RunTrigger.SCHEDULE: N_("Schedule"),
     RunTrigger.MANUAL: N_("Manual"),
+    RunTrigger.RULE_APPLY: N_("Rule apply"),
 }
 
 
