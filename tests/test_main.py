@@ -52,6 +52,51 @@ def test_refresh_account_runs_the_refresh_body_with_the_settings_and_gives_its_e
     assert logging_setups == [True]
 
 
+@pytest.mark.parametrize(
+    ("argv", "query"),
+    [
+        (["find-channels", "--query", "Deep Look"], "Deep Look"),
+        (["find-channels", "--query=-starts with a dash"], "-starts with a dash"),
+        (["find-channels", "--query=@misha_katsurin"], "@misha_katsurin"),
+    ],
+)
+def test_find_channels_runs_the_search_body_with_the_query_and_gives_its_exit_code(
+    settings, logging_setups, monkeypatch, argv, query
+):
+    calls = []
+    monkeypatch.setattr(cli, "find_channels_once", lambda given: calls.append(given) or 5)
+
+    assert cli.main(argv) == 5
+
+    assert calls == [query]
+    assert logging_setups == [True]
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["subscribe", "--channel-id=UCx", "--title=- A title"], ("UCx", True, "- A title")),
+        (["subscribe", "--channel-id", "UCx"], ("UCx", True, None)),
+        (["unsubscribe", "--channel-id=UCx"], ("UCx", False, None)),
+    ],
+)
+def test_subscribe_and_unsubscribe_run_the_subscription_body_and_give_its_exit_code(
+    settings, logging_setups, monkeypatch, argv, expected
+):
+    calls = []
+
+    def change(given, channel_id, *, subscribe, title=None):
+        calls.append((given, channel_id, subscribe, title))
+        return 4
+
+    monkeypatch.setattr(cli, "change_subscription_once", change)
+
+    assert cli.main(argv) == 4
+
+    assert calls == [(settings, *expected)]
+    assert logging_setups == [True]
+
+
 def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(
     settings, logging_setups, monkeypatch, nicegui_globals
 ):
@@ -70,7 +115,18 @@ def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(
 
 
 @pytest.mark.parametrize(
-    "argv", [[], ["run-once"], ["run-once", "--run-id", "x"], ["refresh-account", "--run-id", "1"], ["unknown"]]
+    "argv",
+    [
+        [],
+        ["run-once"],
+        ["run-once", "--run-id", "x"],
+        ["refresh-account", "--run-id", "1"],
+        ["unknown"],
+        ["find-channels"],
+        ["subscribe"],
+        ["unsubscribe", "--title=x"],
+        ["unsubscribe", "--channel-id=UCx", "--title=x"],
+    ],
 )
 def test_wrong_command_line_exits_with_code_2(argv, capsys):
     with pytest.raises(SystemExit) as caught:

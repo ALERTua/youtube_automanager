@@ -41,6 +41,7 @@ metadata:
 - When `ytInitialData` of a page is incomplete, the `YoutubeTab` extractor downloads the page again up to three times before it reads `ytcfg`. A check of `LOGGED_IN` right after each page download stops at the first page.
 - A flat entry of a video of two or more channels together has no `channel_id`. Its `creators` field has the names of the channels.
 - A flat read of a playlist makes one more request, because yt-dlp reads the playlist again with its unavailable videos.
+- An anonymous channel search by name gives up to 20 channels in one request. Some results have no subscriber count, for example 7 of 20 for one name, so the count stays optional.
 
 ## YouTube with cookies
 
