@@ -14,9 +14,14 @@ metadata:
 ## yt-dlp
 
 - Anonymous flat extraction of `https://www.youtube.com/playlist?list=UU<channel id without the UC prefix>` gives all uploads of a channel in one request. The uploads include videos, Shorts and past live streams, each with a duration. A past stream has `live_status=was_live`. A Short has no mark.
-- The uploads playlist lists the newest video first. A sample of 1800 entries from 18 channels had no entry out of order. About one entry in nine had no date, and nearly all of them were 180 s or shorter. Upcoming and live entries occur.
-- A flat entry gets a date only with the extractor argument `youtubetab:approximate_date`, and the date has day precision. The channel tab `/shorts` gives no duration and no date.
+- The uploads playlist lists the newest video first. A sample of 1800 entries from 18 channels had no entry out of order.
+- Upcoming and live entries occur, and they have no date and no duration. In one sample of 1800 entries, about one entry in nine had no date, and nearly all of them were 180 s or shorter. In a later sample of 1700 entries, only the upcoming and live entries had no date. Keep the date optional.
+- A flat entry gets a date only with the extractor argument `youtubetab:approximate_date`. The date comes as `timestamp` at UTC midnight, never as `upload_date`. It is only as exact as the relative text of YouTube, for example "1 month ago". The channel tab `/shorts` gives no duration, no date and no channel fields.
 - One request returns up to 100 entries in 1 to 3 s.
+- To read a long playlist page by page, call `extract_info(url, download=False, process=False)`. Its `entries` is a generator that requests the next page only when the iteration reaches it. With `extract_flat` and `lazy_playlist`, `extract_info` returns only after it read the whole playlist, for example 9.5 s and 20 requests for 1852 uploads.
+- A missing handle gives a `DownloadError` whose cause is an `HTTPError` with status 404. A missing channel ID gives an `ExtractorError` with the text "YouTube said: This channel does not exist." A channel without Shorts gives "This channel does not have a shorts tab".
+- yt-dlp writes `ERROR:` lines to stderr also with `quiet` and `no_warnings`. Only a `logger` option stops them.
+- `YoutubeDL` has `close()` and `__exit__`, but no `__del__`, so an instance that nobody closes keeps its connections until the garbage collector finds it. With lazy `entries`, close the instance when the entries end, not when `extract_info` returns.
 - yt-dlp has no write action on YouTube. A write goes through internal methods of the `YoutubeTab` extractor: `_extract_data` for `ytcfg`, `generate_api_headers`, and `_extract_response` with `ep='browse/edit_playlist'`. A method name with a leading underscore is internal, and a new release of yt-dlp can change it.
 - `browse/edit_playlist` with `{"action": "ACTION_ADD_VIDEO", "addedVideoId": <id>}` and `playlistId` `WL` adds a video to Watch Later and returns `status` `STATUS_SUCCEEDED`. `ACTION_REMOVE_VIDEO_BY_VIDEO_ID` with `removedVideoId` removes it.
 - To read a cookie file without a change to the file, do not set `cookiefile`. Load the file with `ydl.cookiejar.load(path, ignore_discard=True, ignore_expires=True)`.
