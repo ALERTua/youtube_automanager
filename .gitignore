@@ -1,4 +1,5 @@
 /.env
+/.env.old
 /venv/
 /.idea/
 **/__pycache__
