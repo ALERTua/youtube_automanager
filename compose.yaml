@@ -1,0 +1,18 @@
+# Start: copy .env.example to .env, set COOKIES_KEY and TZ in it, then run "docker compose up -d".
+# The web UI and the API answer on port 8080 of the host. Choose yourself how you reach it from outside,
+# for example a reverse proxy or a VPN: the service has no login of its own.
+services:
+  youtube-automanager:
+    image: ghcr.io/alertua/youtube_automanager:latest
+    build: .
+    container_name: youtube_automanager
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      # The database and the yt-dlp releases of the updater.
+      - ./data:/data
+    # The service runs as the user 1000:1000 of the image. If ./data belongs to another user, give that user here,
+    # for example "99:100" on Unraid.
+    # user: "1000:1000"
