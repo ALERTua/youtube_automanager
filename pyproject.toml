@@ -5,10 +5,12 @@ description = "Adds videos to your YouTube playlists automatically based on rule
 readme = "README.md"
 requires-python = "==3.14.*"
 dependencies = [
+    "alembic",
     "apprise",
     "fastapi",
     "packaging",
     "pendulum",
+    "psycopg[binary]",
     "pydantic-settings",
     "pyyaml",
     "sqlalchemy",
