@@ -23,6 +23,7 @@ from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, 
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.runner import RunAlreadyActive, SyncRunner
 from youtube_automanager.web.services import Services
+from youtube_automanager.web.ui.account_lists import account_lists
 from youtube_automanager.web.ui.dashboard import format_time
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
@@ -352,7 +353,6 @@ class RuleEditor:
         }
         if rule and rule.playlist_id not in own:
             own[rule.playlist_id] = self.stored.playlist_title(rule.playlist_id)
-        # The button that refreshes the stored lists of the account goes next to this select.
         self.playlist_select = (
             ui.select(own, label=_("Target playlist"), value=rule.playlist_id if rule else None, with_input=True)
             .props("outlined dense")
@@ -362,8 +362,8 @@ class RuleEditor:
         if not own:
             ui.label(
                 _(
-                    "No playlist is stored yet. The lists of the channels and the playlists come from the refresh of "
-                    "the account data."
+                    "No playlist is stored yet. Close the editor and refresh the lists with the button Refresh lists "
+                    "at the top of the page."
                 )
             ).classes("text-warning").mark("rule-no-playlists")
 
@@ -693,6 +693,8 @@ async def rules_page(services: Services) -> None:
         editor_dialog.open()
 
     ui.label(_("Rules")).classes("text-h5")
+    # The editor reads the stored lists again at each open, so a refresh needs only a new read of the table.
+    await account_lists(services, on_refreshed=reload)
     with ui.row().classes("w-full items-center gap-4"):
         text_input = (
             ui.input(_("Search"), on_change=lambda: rules_view.refresh())

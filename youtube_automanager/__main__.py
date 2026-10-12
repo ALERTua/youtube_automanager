@@ -1,6 +1,7 @@
 """The command line of the service: ``serve`` starts the web service. ``run-once`` is one sync, ``check-session`` is one
-session check, and ``refresh-account`` is one refresh of the account data. The service starts each of the last three in
-a child process.
+session check, ``refresh-account`` is one refresh of the account data, ``find-channels`` is one channel search, and
+``subscribe`` and ``unsubscribe`` change one subscription. The service starts each command except ``serve`` in a child
+process.
 """
 
 import argparse
@@ -8,6 +9,7 @@ import sys
 from collections.abc import Sequence
 
 from youtube_automanager.account_refresh import refresh_once
+from youtube_automanager.channel_actions import change_subscription_once, find_channels_once
 from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.runner import check_session_once, run_once
 from youtube_automanager.settings import get_settings
@@ -32,6 +34,25 @@ def _parser() -> argparse.ArgumentParser:
         help="read the subscriptions and the playlists of the account once; the service starts this command in a "
         "child process",
     )
+    find_parser = commands.add_parser(
+        "find-channels",
+        help="find channels on YouTube without cookies; the service starts this command in a child process",
+    )
+    find_parser.add_argument(
+        "--query",
+        required=True,
+        help="a name, an @handle, a channel id or a channel URL; give a query that starts with '-' as --query=TEXT",
+    )
+    subscribe_parser = commands.add_parser(
+        "subscribe", help="subscribe the account to a channel; the service starts this command in a child process"
+    )
+    subscribe_parser.add_argument("--channel-id", required=True, help="the UC... id of the channel")
+    subscribe_parser.add_argument("--title", help="the title of a new channel row")
+    unsubscribe_parser = commands.add_parser(
+        "unsubscribe",
+        help="unsubscribe the account from a channel; the service starts this command in a child process",
+    )
+    unsubscribe_parser.add_argument("--channel-id", required=True, help="the UC... id of the channel")
     return parser
 
 
@@ -70,6 +91,18 @@ def _refresh_account() -> int:
     return refresh_once(settings)
 
 
+def _find_channels(query: str) -> int:
+    settings = get_settings()
+    setup_logging(settings.verbose)
+    return find_channels_once(query)
+
+
+def _change_subscription(channel_id: str, *, subscribe: bool, title: str | None = None) -> int:
+    settings = get_settings()
+    setup_logging(settings.verbose)
+    return change_subscription_once(settings, channel_id, subscribe=subscribe, title=title)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "serve":
@@ -78,6 +111,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _check_session()
     if args.command == "refresh-account":
         return _refresh_account()
+    if args.command == "find-channels":
+        return _find_channels(args.query)
+    if args.command == "subscribe":
+        return _change_subscription(args.channel_id, subscribe=True, title=args.title)
+    if args.command == "unsubscribe":
+        return _change_subscription(args.channel_id, subscribe=False)
     return _run_once(args.run_id)
 
 

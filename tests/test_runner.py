@@ -137,6 +137,23 @@ def test_long_stderr_keeps_its_end(runner, fake_starter, db_sessions):
     assert run.error_text.endswith("ValueError: the real cause")
 
 
+def test_a_short_child_gives_its_last_stderr_line_in_full_and_the_end_of_its_stderr(runner, fake_starter):
+    result = "[" + "x" * 5000 + "]"
+    fake_starter.plan.append({"stderr": f"a warning\n{result}\n\n  \n"})
+
+    end = runner.run_short_child(["child"], "The test child", 10)
+
+    assert end.returncode == 0
+    assert end.last_line == result
+    assert len(end.error_text) == ERROR_TEXT_MAX_CHARS
+
+
+def test_a_short_child_without_stderr_has_an_empty_last_line(runner, fake_starter):
+    fake_starter.plan.append({"stderr": "\n \n"})
+
+    assert runner.run_short_child(["child"], "The test child", 10).last_line == ""
+
+
 def test_failed_child_without_stderr_names_the_exit_code(runner, fake_starter, db_sessions):
     fake_starter.plan.append({"exit_code": 3})
 

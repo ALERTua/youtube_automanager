@@ -582,11 +582,12 @@ async def test_a_rule_needs_a_name_and_a_target_playlist(user, sessions, account
 
 async def test_without_a_stored_playlist_the_editor_says_where_the_lists_come_from(user, sessions):
     await user.open("/rules")
+    await user.should_see(marker="refresh-lists")
     await open_editor(user)
 
     assert text_of(user, "rule-no-playlists") == (
-        "No playlist is stored yet. The lists of the channels and the playlists come from the refresh of the account "
-        "data."
+        "No playlist is stored yet. Close the editor and refresh the lists with the button Refresh lists at the top of "
+        "the page."
     )
     assert options(user, "rule-playlist") == {}
     assert options(user, "rule-channels") == {}

@@ -8,6 +8,7 @@ import json
 import logging
 import socket
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import pytest
 from yt_dlp.extractor.common import InfoExtractor
@@ -449,6 +450,63 @@ def test_resolve_channel_returns_none_for_a_channel_that_does_not_exist(fake, te
 def test_resolve_channel_refuses_text_that_is_not_a_channel(fake, text):
     with pytest.raises(ValueError, match="not a YouTube channel id, handle or channel URL"):
         public.resolve_channel(text)
+
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("@Epicurious", True),
+        ("  @Epicurious  ", True),
+        ("https://www.youtube.com/@Epicurious", True),
+        ("youtube.com/@Epicurious/videos", True),
+        (f"https://www.youtube.com/channel/{WIRED}", True),
+        (WIRED, True),
+        # A word without "@" is a name, also when it has the form of a handle.
+        ("Epicurious", False),
+        ("Deep Look", False),
+        ("@two words", False),
+        ("@", False),
+        ("@ab", False),
+        ("https://example.com/@Epicurious", False),
+        ("", False),
+    ],
+)
+def test_is_channel_reference_takes_a_handle_with_at_an_id_or_a_url(text, expected):
+    assert public.is_channel_reference(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "url"),
+    [("@Epicurious", EPICURIOUS_PAGE_URL), (f"  https://www.youtube.com/channel/{WIRED} ", WIRED_PAGE_URL)],
+)
+def test_find_channels_resolves_a_reference_to_its_channel(fake, text, url):
+    channels = public.find_channels(text)
+
+    assert fake.calls == [(url, {"playlist_items": "0"})]
+    assert [channel.channel_id for channel in channels] == [EPICURIOUS if url == EPICURIOUS_PAGE_URL else WIRED]
+
+
+def test_find_channels_gives_no_channel_for_a_reference_that_does_not_exist(fake):
+    assert public.find_channels("@thishandledoesnotexist0x9q7z") == []
+
+
+@pytest.mark.parametrize("text", ["epicurious", "  epicurious  ", "@epicurious and more"])
+def test_find_channels_searches_a_name(fake, text):
+    url = f"https://www.youtube.com/results?search_query={quote_plus(text.strip())}&sp=EgIQAg%253D%253D"
+    fake.recordings[url] = fake.recordings[SEARCH_URL]
+
+    channels = public.find_channels(text, limit=3)
+
+    assert fake.calls == [(url, {})]
+    assert len(channels) == 3
+    assert channels[0].channel_id == EPICURIOUS
+
+
+@pytest.mark.parametrize("text", ["", "   "])
+def test_find_channels_finds_nothing_for_empty_text_without_a_request(fake, text):
+    assert public.find_channels(text) == []
 
     assert fake.calls == []
 

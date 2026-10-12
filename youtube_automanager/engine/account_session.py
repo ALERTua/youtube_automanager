@@ -46,7 +46,7 @@ class SessionDead(AccountUnavailable):
 
 
 class ClientLike(Protocol):
-    """The part of ``AccountClient`` that a run, a check and a refresh of the account data use."""
+    """The part of ``AccountClient`` that a run, a check, a refresh of the account data and a subscription change use."""
 
     def check_session(self) -> None: ...
 
@@ -61,6 +61,10 @@ class ClientLike(Protocol):
     def iter_subscription_feed(self) -> Iterable[Any]: ...
 
     def add_video(self, playlist_id: str, video_id: str) -> None: ...
+
+    def subscribe(self, channel_id: str) -> None: ...
+
+    def unsubscribe(self, channel_id: str) -> None: ...
 
 
 class CheckOutcome(enum.StrEnum):

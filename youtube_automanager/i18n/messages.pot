@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-12 15:09+0300\n"
+"POT-Creation-Date: 2026-10-12 15:11+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -48,12 +48,21 @@ msgstr ""
 msgid "Add a group"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Add the channel to a rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Add to rule…"
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "Added"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "All"
 msgstr ""
 
@@ -65,8 +74,19 @@ msgstr ""
 msgid "All playlists"
 msgstr ""
 
+#: youtube_automanager/web/ui/account_lists.py
+msgid ""
+"Another task works with YouTube now: a sync run, a session check, a "
+"refresh of the lists, a channel action or a yt-dlp update. Try again when"
+" it ends."
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Any of these conditions"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Back"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -87,6 +107,7 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rule_form.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Channel"
 msgstr ""
 
@@ -116,6 +137,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Choose whether the video is a Short."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Close"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -183,6 +208,10 @@ msgstr ""
 msgid "Duration in seconds"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Each rule already reads this channel."
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Each video"
 msgstr ""
@@ -198,6 +227,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Enter a date."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Enter a name, an @handle, a channel ID or a channel URL."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -233,6 +266,10 @@ msgstr ""
 msgid "Failed"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Find a channel on YouTube"
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "Finished"
 msgstr ""
@@ -245,6 +282,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "From"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Handle"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -271,6 +312,11 @@ msgstr ""
 msgid "Last run"
 msgstr ""
 
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "Lists refreshed: {time}"
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Live status"
 msgstr ""
@@ -281,6 +327,14 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Name"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Name or @handle"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Name, @handle, channel ID or channel URL"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -304,11 +358,16 @@ msgid "Next runs of this schedule"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "No"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "No Shorts"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No channel matches the filters."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -319,14 +378,26 @@ msgstr ""
 msgid "No expiry date"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No handle"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid ""
-"No playlist is stored yet. The lists of the channels and the playlists "
-"come from the refresh of the account data."
+"No playlist is stored yet. Close the editor and refresh the lists with "
+"the button Refresh lists at the top of the page."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No rule exists yet. Create a rule first."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "No rule matches the filters."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No rule reads this channel."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -350,8 +421,16 @@ msgstr ""
 msgid "None of these conditions"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Not subscribed"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "OK"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Open on YouTube"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -375,6 +454,14 @@ msgstr ""
 msgid "Refresh"
 msgstr ""
 
+#: youtube_automanager/web/ui/account_lists.py
+msgid "Refresh lists"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "Refreshing the lists..."
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Remove the condition"
 msgstr ""
@@ -392,10 +479,27 @@ msgid "Retention"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Rule"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Rule {rule} already reads {title}."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Rule {rule} does not exist any more."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Rule {rule} now reads {title}."
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Rules"
 msgstr ""
 
@@ -424,6 +528,7 @@ msgstr ""
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Save"
 msgstr ""
 
@@ -438,6 +543,7 @@ msgid "Scheduler"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Search"
 msgstr ""
 
@@ -473,6 +579,35 @@ msgstr ""
 msgid "Stopped"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Stored channels"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscribe"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscribed"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Subscribed to {title}."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscribers"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscription"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscriptions"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Subscriptions feed"
 msgstr ""
@@ -489,6 +624,13 @@ msgstr ""
 msgid "Text"
 msgstr ""
 
+#. Translators: {cause} is the English cause from the service, for example that
+#. no cookies are stored.
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "The YouTube account is not available: {cause}"
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 #, python-brace-format
 msgid "The condition is not valid JSON: {error}"
@@ -502,6 +644,23 @@ msgstr ""
 msgid "The interval must be a whole number of seconds."
 msgstr ""
 
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid ""
+"The lists are refreshed. Channels: {channels_new} new, {channels_updated}"
+" changed, {channels_unsubscribed} no longer subscribed. Playlists: "
+"{playlists_new} new, {playlists_updated} changed."
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "The lists did not refresh. {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "The lists were never refreshed."
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 #, python-brace-format
 msgid "The pattern does not compile: {error}"
@@ -509,6 +668,12 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "The retention is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid ""
+"The rule acts only on new videos of this channel. The current videos of "
+"the channel become a baseline, and the rule adds none of them."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -534,6 +699,10 @@ msgstr ""
 msgid "The rule is saved."
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "The rules that name this channel still read its videos."
+msgstr ""
+
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "The schedule has no run time."
 msgstr ""
@@ -546,6 +715,16 @@ msgstr ""
 msgid "The schedule is saved."
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "The search failed. {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "The service could not finish the work: {cause}"
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 #, python-brace-format
 msgid ""
@@ -553,8 +732,29 @@ msgid ""
 "day at {time} ({zone})."
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "The service works with YouTube. This takes up to a minute."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "The subscription did not change. {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid ""
+"The subscriptions of the account from the last refresh, and each channel "
+"that a rule reads. Click a channel to see its actions."
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "The visual editor cannot show this condition. Edit it as JsonLogic."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid ""
+"This rule has no channels now, so it reads the subscriptions feed. After "
+"this change, it reads only its channels, and not the subscriptions feed."
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -587,6 +787,19 @@ msgstr ""
 msgid "Unknown"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Unsubscribe"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Unsubscribe the YouTube account from this channel?"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Unsubscribed from {title}."
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Upload date"
 msgstr ""
@@ -609,6 +822,10 @@ msgstr ""
 msgid "Videos seen"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "With rules"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid ""
 "Without channels, the rule reads the subscriptions feed. The feed needs "
@@ -619,12 +836,33 @@ msgstr ""
 msgid "Without conditions, the rule takes each video of its channels."
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Without rules"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Yes"
 msgstr ""
 
 #: youtube_automanager/web/ui/__init__.py youtube_automanager/web/ui/layout.py
 msgid "YouTube AutoManager"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "YouTube did not give the expected answer: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid ""
+"YouTube does not accept the stored cookies any more ({cause}). Export new"
+" YouTube cookies from your browser and upload them to the service."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "YouTube found no channel for this text."
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
@@ -768,9 +1006,20 @@ msgstr ""
 msgid "{field}: {error}"
 msgstr ""
 
+#. Translators: the name of a rule that is turned off.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{name} (off)"
+msgstr ""
+
 #. Translators: the title of the browser tab. {page} is the name of the page,
 #. for example "Dashboard".
 #: youtube_automanager/web/ui/layout.py
 #, python-brace-format
 msgid "{page} - YouTube AutoManager"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{shown} of {total} channels"
 msgstr ""

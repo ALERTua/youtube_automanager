@@ -101,13 +101,18 @@ class SessionCheckResult:
 
 @dataclass(frozen=True)
 class _ChildEnd:
-    """How a child process ended. ``start_error`` is set when the child never started."""
+    """How a child process ended. ``start_error`` is set when the child never started.
+
+    ``error_text`` keeps only the end of a long stderr. ``last_line`` is the last stderr line that is not empty, in
+    full, because a short child writes its result there, and a result can be longer than the error text.
+    """
 
     returncode: int | None = None
     timed_out: bool = False
     stopped: bool = False
     start_error: str | None = None
     error_text: str = ""
+    last_line: str = ""
 
 
 class ChildProcess(Protocol):
@@ -421,7 +426,16 @@ class SyncRunner:
         if reader is not None:
             # A grandchild can keep the pipe open after the child ends, so the wait has a limit.
             reader.join(timeout=KILL_WAIT_SECONDS)
-        return _ChildEnd(returncode, timed_out, stopped, error_text=error_text_from_tail(tail))
+        # The reader can still run when the wait ended, so the lines come from one copy of the tail.
+        kept = list(tail)
+        lines = [line.strip() for line in kept if line.strip()]
+        return _ChildEnd(
+            returncode,
+            timed_out,
+            stopped,
+            error_text=error_text_from_tail(kept),
+            last_line=lines[-1] if lines else "",
+        )
 
     def _finish(self, run_id: int, status: RunStatus, error_text: str | None) -> None:
         with self._sessions.begin() as session:

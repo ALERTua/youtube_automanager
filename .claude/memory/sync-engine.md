@@ -27,7 +27,7 @@ metadata:
 - A `NotLoggedInError` during the run goes to `session_died`, and the run tries no more adds.
 - When the run stops, the child writes the cause as the last line of stderr. The parent stores the end of stderr as the error text of the run.
 - Each run with stored cookies first checks the session. The engine asks for the checked client only at the first need: a read of the feed or an add.
-- With a live session, `run_with_youtube` then calls `refresh_if_stale` with the same `AccountSession`, before the sources. A refresh that YouTube refuses as logged out goes to `AccountSession.died`, so the run goes on without the account. Another failed refresh writes a warning to the log and does not stop the run.
+- With a live session, `run_with_youtube` then calls `refresh_if_stale` with the same `AccountSession`, before the sources. A refresh that YouTube refuses as logged out goes to `AccountSession.died`, so the run goes on without the account. An `AccountError` of the refresh writes a warning to the log, and an unexpected error writes its trace. Neither stops the run, because the refresh is a side step.
 
 ## Processing modes
 
@@ -63,7 +63,9 @@ metadata:
 - `run_short_child` takes the sync lock without a wait and holds it while the child runs. The route answers 409 with `BUSY_TEXT` while a run, a session check, another refresh or a yt-dlp update holds the lock.
 - The refresh child works with the account as a run does: it checks the session, reads the lists, and saves the updated cookies with `AccountSession`. A read that YouTube refuses as logged out marks the session `dead` through `AccountSession.died`.
 - The child ends with exit code 0 and the counts as one JSON line at the end of stderr. The runner copies and keeps only the stderr of a child, so the counts come on that stream. The log of the child is on stdout.
-- A failed child writes its cause as the last line of stderr and ends with a code. `UNAVAILABLE_EXIT_CODE` (3) is for no usable cookies, and a session check child uses the same code. `EXIT_LOGGED_OUT` (4) and `EXIT_ACCOUNT_ERROR` (5) are only for the refresh. Another exit code is a crash, and the route does not show its stderr.
+- A failed child writes its cause as the last line of stderr and ends with a code. `UNAVAILABLE_EXIT_CODE` (3) is for no usable cookies, and a session check child uses the same code. `EXIT_LOGGED_OUT` (4) and `EXIT_YOUTUBE_ERROR` (5) of `short_child` are for each short child. Another exit code is a crash, and the route does not show its stderr.
+- `short_child` holds the protocol of each short child: the exit codes, the errors, `work_with_account` for the body of a child that works with the account, and `run_child` for the parent. The refresh, the channel search (`find-channels`) and the subscription change (`subscribe`, `unsubscribe`) follow it.
+- The runner keeps the end of stderr, at most `ERROR_TEXT_MAX_CHARS` characters, as `error_text`, and the last stderr line in full as `last_line`. A short child reads its result from `last_line`, because a name search of 20 channels gives a result line of more than 5000 characters.
 - The route answers 409 for the codes 3 and 4. It answers 502 for the code 5, a crash, a stop of the service, a timeout and a child without counts.
 - The child gets `REFRESH_TIMEOUT_SECONDS`, 300 s. This is shorter than `SCHEDULED_WAIT_S`, the wait of a scheduled run for the sync lock, so a refresh never makes a scheduled run give up.
 
@@ -71,3 +73,4 @@ metadata:
 
 - Only the child of a run imports yt-dlp. `run_once` imports the engine inside the function, and a test makes sure that the parent never imports `yt_dlp`.
 - The refresh of the account data follows the same rule: `refresh_once` imports the engine inside the function, and the web process only starts the child. A test makes sure that a refresh through the route leaves `yt_dlp` out of `sys.modules` of the web process.
+- The channel search and the subscription change follow the same rule, also the anonymous search: each runs in a child through `run_short_child` and holds the sync lock. A test makes sure that the subscriptions page, a search, a subscribe and an unsubscribe leave `yt_dlp` out of `sys.modules` of the web process.
