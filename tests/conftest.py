@@ -132,11 +132,40 @@ def settings(tmp_path):
     )
 
 
+@pytest.fixture(scope="session")
+def migrated_database(tmp_path_factory):
+    """A SQLite file with the newest schema, made once for the test session.
+
+    The migrations of a fresh database take about 0.15 s, and a copy of this file takes less than 1 ms. The tests of the
+    migrations themselves still migrate their own databases.
+    """
+    path = tmp_path_factory.mktemp("template") / "migrated.sqlite"
+    upgrade_to_head(f"sqlite:///{path}")
+    return path
+
+
 @pytest.fixture
-def sessions(settings):
+def new_database(migrated_database):
+    """Return a function that copies the migrated database to a path and returns the URL of the copy."""
+
+    def copy(path):
+        url = f"sqlite:///{path}"
+        if path.exists():
+            # The service of the test, or another fixture, made this database already, and it holds their rows. A copy
+            # would replace them, and the migrations of a database at head take a few milliseconds.
+            upgrade_to_head(url)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(migrated_database, path)
+        return url
+
+    return copy
+
+
+@pytest.fixture
+def sessions(settings, new_database):
     """Sessions of the database of ``settings``, with the newest schema."""
-    settings.home.mkdir(parents=True, exist_ok=True)
-    upgrade_to_head(settings.database_url)
+    new_database(settings.home / "service.sqlite")
     engine = make_engine(settings.database_url)
     yield make_session_factory(engine)
     engine.dispose()
@@ -237,11 +266,9 @@ def fake_starter():
 
 
 @pytest.fixture
-def db_url(tmp_path):
+def db_url(tmp_path, new_database):
     """A SQLite database with the newest schema."""
-    url = f"sqlite:///{tmp_path / 'service.sqlite'}"
-    upgrade_to_head(url)
-    return url
+    return new_database(tmp_path / "service.sqlite")
 
 
 @pytest.fixture

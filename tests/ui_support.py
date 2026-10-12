@@ -1,6 +1,7 @@
 """Helpers of the tests that run the whole service with its pages. The fixtures of these tests are in ``conftest.py``."""
 
 import asyncio
+import functools
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,8 @@ from youtube_automanager.web.app import create_app
 from youtube_automanager.web.ui import mount_ui
 
 WAIT_SECONDS = 10
+# The pause of NiceGUI between two tries of ``User.should_see``.
+SEE_PAUSE_SECONDS = 0.1
 
 
 def store(sessions, *rows):
@@ -32,7 +35,12 @@ async def running_service(settings, start) -> AsyncIterator[User]:
         app.router.lifespan_context(app),
         httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client,
     ):
-        yield User(client)
+        user = User(client)
+        # NiceGUI tries 3 times, 0.1 s apart. Under load, for example in a parallel run, a page can need longer. The
+        # tries end at the first success, so the longer limit costs a passing test nothing. A call can still give its
+        # own number of tries.
+        user.should_see = functools.partial(user.should_see, retries=round(WAIT_SECONDS / SEE_PAUSE_SECONDS))
+        yield user
 
 
 def elements_of(user: User, marker: str) -> list[ui.element]:

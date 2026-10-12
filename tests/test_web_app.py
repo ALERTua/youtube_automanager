@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from youtube_automanager import ytdlp_job
-from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
+from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.db.models import (
     Account,
     Run,
@@ -51,10 +51,9 @@ def settings(tmp_path):
 
 
 @pytest.fixture
-def sessions(settings):
+def sessions(settings, new_database):
     """Sessions of the database of ``settings``, with the newest schema."""
-    settings.home.mkdir(parents=True, exist_ok=True)
-    upgrade_to_head(settings.database_url)
+    new_database(settings.home / "service.sqlite")
     engine = make_engine(settings.database_url)
     yield make_session_factory(engine)
     engine.dispose()

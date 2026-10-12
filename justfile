@@ -48,6 +48,10 @@ key:
 test *ARGS:
     uv run pytest -q {{ARGS}}
 
+# Run the tests on each core of the machine. Use it only when the machine has nothing else to do
+test-fast *ARGS:
+    uv run pytest -q -n auto {{ARGS}}
+
 # Format the code and fix the lint findings
 lint:
     uv run ruff format; uv run ruff check --fix

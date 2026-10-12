@@ -5,7 +5,7 @@ import datetime
 import pytest
 from sqlalchemy import select
 
-from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
+from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.db.models import Account, CookieOrigin, CookieVersion, CookieVersionState, SessionState
 from youtube_automanager.youtube.session import (
     VERSIONS_KEPT,
@@ -36,10 +36,9 @@ def key():
 
 
 @pytest.fixture
-def database(tmp_path):
+def database(tmp_path, new_database):
     path = tmp_path / "test.sqlite"
-    url = f"sqlite:///{path}"
-    upgrade_to_head(url)
+    url = new_database(path)
     engine = make_engine(url)
     yield path, make_session_factory(engine)
     engine.dispose()
