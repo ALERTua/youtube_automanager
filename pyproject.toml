@@ -7,6 +7,7 @@ requires-python = "==3.14.*"
 dependencies = [
     "alembic",
     "apprise",
+    "apscheduler",
     "datalogic-py",
     "fastapi",
     "packaging",
@@ -15,12 +16,14 @@ dependencies = [
     "pydantic-settings",
     "pyyaml",
     "sqlalchemy",
+    "tzdata",
     "uvicorn",
     "yt-dlp",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx",
     "pre-commit-uv",
     "pytest",
     "ruff",

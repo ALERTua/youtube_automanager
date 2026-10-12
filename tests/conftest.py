@@ -1,11 +1,101 @@
+import io
+import subprocess
+import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
+from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.runners.automanage import YoutubeAutoManager
 
 IN_WINDOW = "2026-01-02T00:00:00+00:00"
+
+
+class FakeChild:
+    """Replaces the child process of a run.
+
+    A child that does not block ends at once with ``exit_code``. A blocking child ends at ``finish``, ``terminate``
+    or ``kill``.
+    """
+
+    TERMINATED_CODE = -15
+    KILLED_CODE = -9
+
+    def __init__(self, exit_code=0, stderr="", blocking=False):
+        self.stderr = io.StringIO(stderr)
+        self.returncode = None
+        self.terminated = False
+        self.killed = False
+        self._exit_code = exit_code
+        self._ended = threading.Event()
+        if not blocking:
+            self.finish(exit_code)
+
+    def finish(self, exit_code=None):
+        if not self._ended.is_set():
+            self.returncode = self._exit_code if exit_code is None else exit_code
+            self._ended.set()
+
+    def wait(self, timeout=None):
+        if not self._ended.wait(timeout):
+            raise subprocess.TimeoutExpired("fake child", timeout)
+        return self.returncode
+
+    def poll(self):
+        return self.returncode if self._ended.is_set() else None
+
+    def terminate(self):
+        self.terminated = True
+        self.finish(self.TERMINATED_CODE)
+
+    def kill(self):
+        self.killed = True
+        self.finish(self.KILLED_CODE)
+
+
+class FakeStarter:
+    """Replaces the start of the child process and records each start.
+
+    Each start takes the keyword arguments of the next ``FakeChild`` from ``plan``. With an empty plan, the child ends
+    at once with exit code 0. A set ``error`` is raised instead of a start.
+    """
+
+    def __init__(self):
+        self.plan = []
+        self.error = None
+        self.calls = []
+        self.children = []
+        self.child_started = threading.Event()
+
+    def __call__(self, command, env):
+        if self.error is not None:
+            raise self.error
+        self.calls.append((list(command), dict(env)))
+        child = FakeChild(**(self.plan.pop(0) if self.plan else {}))
+        self.children.append(child)
+        self.child_started.set()
+        return child
+
+
+@pytest.fixture
+def fake_starter():
+    return FakeStarter()
+
+
+@pytest.fixture
+def db_url(tmp_path):
+    """A SQLite database with the newest schema."""
+    url = f"sqlite:///{tmp_path / 'service.sqlite'}"
+    upgrade_to_head(url)
+    return url
+
+
+@pytest.fixture
+def db_sessions(db_url):
+    engine = make_engine(db_url)
+    yield make_session_factory(engine)
+    engine.dispose()
 
 
 class FakeYoutubeAPI:

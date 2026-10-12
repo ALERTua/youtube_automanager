@@ -1,0 +1,50 @@
+import pytest
+from fastapi import FastAPI
+
+from youtube_automanager import __main__ as cli
+from youtube_automanager.settings import Settings
+
+
+@pytest.fixture
+def settings(tmp_path, monkeypatch):
+    settings = Settings(home=tmp_path, host="127.0.0.1", port=8123, tz="UTC", verbose=True)
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+    return settings
+
+
+@pytest.fixture
+def logging_setups(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "setup_logging", calls.append)
+    return calls
+
+
+def test_run_once_runs_the_sync_body_with_the_run_id(settings, logging_setups, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "run_once", lambda run_id, given: calls.append((run_id, given)) or 7)
+
+    assert cli.main(["run-once", "--run-id", "42"]) == 7
+
+    assert calls == [(42, settings)]
+    assert logging_setups == [True]
+
+
+def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(settings, logging_setups, monkeypatch):
+    calls = []
+    monkeypatch.setattr("uvicorn.run", lambda app, **options: calls.append((app, options)))
+
+    assert cli.main(["serve"]) == 0
+
+    ((app, options),) = calls
+    assert isinstance(app, FastAPI)
+    assert options == {"host": "127.0.0.1", "port": 8123, "log_config": None}
+    assert logging_setups == [True]
+
+
+@pytest.mark.parametrize("argv", [[], ["run-once"], ["run-once", "--run-id", "x"], ["unknown"]])
+def test_wrong_command_line_exits_with_code_2(argv, capsys):
+    with pytest.raises(SystemExit) as caught:
+        cli.main(argv)
+
+    assert caught.value.code == 2
+    assert "usage: python -m youtube_automanager" in capsys.readouterr().err

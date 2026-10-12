@@ -1,0 +1,73 @@
+"""The FastAPI application of the service and its lifespan: the database, the schedule and the scheduler.
+
+``create_app`` returns a plain FastAPI application, so more routes and pages can mount on it before it starts.
+"""
+
+import asyncio
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from sqlalchemy import make_url
+
+from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
+from youtube_automanager.log_setup import setup_logging
+from youtube_automanager.runner import ChildStarter, SyncRunner, mark_interrupted_runs, start_child
+from youtube_automanager.scheduler import Scheduler, load_schedule
+from youtube_automanager.settings import Settings, get_settings
+from youtube_automanager.web.api import router
+from youtube_automanager.web.services import Services
+
+LOG = logging.getLogger(__name__)
+
+# How long a shutdown waits for the stopped child to end. The next start marks a run that is still open as failed.
+STOP_TIMEOUT_SECONDS = 10
+
+
+def _prepare_database(url: str) -> None:
+    """Create the folder of a SQLite file, and bring the schema to the newest version."""
+    parsed = make_url(url)
+    if parsed.get_backend_name() == "sqlite" and parsed.database and parsed.database != ":memory:":
+        Path(parsed.database).parent.mkdir(parents=True, exist_ok=True)
+    upgrade_to_head(url)
+
+
+def create_app(settings: Settings | None = None, *, start: ChildStarter = start_child) -> FastAPI:
+    """Create the application. ``start`` starts the child process of a run, and a test gives a fake one."""
+    settings = settings or get_settings()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        setup_logging(settings.verbose)
+        LOG.info("Starting with the database %s", make_url(settings.database_url).render_as_string(hide_password=True))
+        await asyncio.to_thread(_prepare_database, settings.database_url)
+        engine = make_engine(settings.database_url)
+        try:
+            sessions = make_session_factory(engine)
+            spec = await asyncio.to_thread(load_schedule, sessions, settings.tz)
+            await asyncio.to_thread(mark_interrupted_runs, sessions)
+            runner = SyncRunner(
+                sessions,
+                ytdlp_dir=settings.ytdlp_dir,
+                database_url=settings.database_url,
+                child_timeout_s=settings.child_timeout_s,
+                start=start,
+            )
+            scheduler = Scheduler(runner)
+            await scheduler.start(spec)
+            app.state.services = Services(settings, engine, sessions, runner, scheduler)
+            try:
+                yield
+            finally:
+                # The runner stops first, so the scheduler starts no new run and has no job in a thread at its shutdown.
+                await asyncio.to_thread(runner.stop, STOP_TIMEOUT_SECONDS)
+                await scheduler.shutdown()
+        finally:
+            engine.dispose()
+            LOG.info("The service stopped")
+
+    app = FastAPI(title="YouTube AutoManager", lifespan=lifespan)
+    app.include_router(router)
+    return app
