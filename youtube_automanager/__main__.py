@@ -27,12 +27,15 @@ def _serve() -> int:
     import uvicorn
 
     from youtube_automanager.web.app import create_app
+    from youtube_automanager.web.ui import mount_ui
 
     settings = get_settings()
     # Logging starts before uvicorn, so the first lines of uvicorn get the format of the service.
     # With log_config=None, uvicorn keeps that setup.
     setup_logging(settings.verbose)
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, log_config=None)
+    app = create_app(settings)
+    mount_ui(app)
+    uvicorn.run(app, host=settings.host, port=settings.port, log_config=None)
     return 0
 
 

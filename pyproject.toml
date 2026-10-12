@@ -11,6 +11,7 @@ dependencies = [
     "cryptography",
     "datalogic-py",
     "fastapi",
+    "nicegui",
     "packaging",
     "pendulum",
     "psycopg[binary]",
@@ -24,6 +25,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "babel",
     "httpx",
     "pre-commit-uv",
     "pytest",
@@ -36,3 +38,10 @@ exclude-newer = "1 week"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+# The message catalog template of the user interface. After a change of a translated text, run this command in the
+# repository root:
+# uv run pybabel extract -F pyproject.toml --add-location=file --sort-output --add-comments=Translators: -o youtube_automanager/i18n/messages.pot youtube_automanager
+[[tool.babel.mappings]]
+method = "python"
+pattern = "**.py"

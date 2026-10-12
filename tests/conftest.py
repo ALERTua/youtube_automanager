@@ -5,11 +5,30 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from nicegui import Client
+from nicegui.testing.general import nicegui_reset_globals
 
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.runners.automanage import YoutubeAutoManager
 
 IN_WINDOW = "2026-01-02T00:00:00+00:00"
+
+
+@pytest.fixture
+def nicegui_globals():
+    """Give a test that mounts the pages a clean global state of NiceGUI.
+
+    NiceGUI keeps one global application. ``mount_ui`` adds middleware to it, and Starlette refuses that after the
+    application served a request. At its end, the reset of NiceGUI also removes the module of each page function and
+    its parent packages from ``sys.modules``, so that a NiceGUI main file registers its pages again. The service
+    registers its pages in ``mount_ui``, so the fixture empties the list of page functions first, and the modules of
+    the service stay.
+    """
+    with nicegui_reset_globals():
+        try:
+            yield
+        finally:
+            Client.page_routes.clear()
 
 
 class FakeChild:

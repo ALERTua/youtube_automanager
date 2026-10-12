@@ -1,0 +1,37 @@
+"""The web pages of the service, made with NiceGUI on the FastAPI application of ``create_app``.
+
+Each page module registers its page with ``layout.register_page`` when it is imported. Import each page module here,
+in the order of the navigation drawer.
+"""
+
+from collections.abc import Awaitable, Callable
+
+from fastapi import FastAPI
+from nicegui import ui
+
+from youtube_automanager.i18n import _
+from youtube_automanager.web.services import Services
+from youtube_automanager.web.ui import dashboard  # noqa: F401
+from youtube_automanager.web.ui.layout import Page, frame, pages
+
+
+def _page_function(page: Page, app: FastAPI) -> Callable[[], Awaitable[None]]:
+    async def show_page() -> None:
+        # A page request reaches the NiceGUI application, not ``app``, so the services come from ``app`` itself.
+        services: Services = app.state.services
+        with frame(page):
+            await page.build(services)
+
+    return show_page
+
+
+def mount_ui(app: FastAPI) -> None:
+    """Add the pages to ``app``, before it starts.
+
+    NiceGUI keeps one global application, which this function mounts at the root of ``app``. The routes of ``app``
+    stay first, and NiceGUI answers each other path. NiceGUI starts before the lifespan of ``app`` and stops after
+    it. A second call in the same process needs a reset of NiceGUI first, which only tests do.
+    """
+    for page in pages():
+        ui.page(page.path)(_page_function(page, app))
+    ui.run_with(app, title=_("YouTube AutoManager"), show_welcome_message=False)
