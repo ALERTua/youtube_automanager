@@ -152,6 +152,20 @@ def test_new_videos_are_added_from_the_oldest_to_the_newest(sync):
     )
 
 
+def test_a_live_status_condition_reads_a_normal_video_as_not_live(sync):
+    # A flat entry has a live status only for a live stream, so a normal video comes without one.
+    sync.rule("no past streams", {"!=": [{"var": "live_status"}, "was_live"]}, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+
+    sync.sources.uploads[A] = [entry("stream", live_status="was_live"), entry("normal"), *old]
+    sync.run()
+
+    assert sync.account.added == wl("normal")
+    assert (sync.seen(A)["stream"], sync.seen(A)["normal"]) == (SEEN, SEEN)
+
+
 def test_the_read_stops_after_the_newest_entries_when_it_met_a_seen_video(sync):
     sync.rule("all", ANY, channels=[A])
     old = entries("old", 50)
