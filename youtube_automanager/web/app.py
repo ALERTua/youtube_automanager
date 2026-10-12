@@ -1,4 +1,5 @@
-"""The FastAPI application of the service and its lifespan: the database, the schedule and the scheduler.
+"""The FastAPI application of the service and its lifespan: the database, the schedule, the scheduler and the cookie
+rotation.
 
 ``create_app`` returns a plain FastAPI application, so more routes and pages can mount on it before it starts.
 """
@@ -16,6 +17,7 @@ from sqlalchemy import make_url
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.retention import clean_history
+from youtube_automanager.rotation import CookieRotation
 from youtube_automanager.runner import ChildStarter, SyncRunner, mark_interrupted_runs, start_child
 from youtube_automanager.scheduler import Scheduler, load_schedule
 from youtube_automanager.settings import Settings, get_settings
@@ -60,6 +62,8 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
             # The scheduler runs the cleanup of the old history once now, and then each day.
             scheduler = Scheduler(runner, cleanup=functools.partial(clean_history, sessions))
             await scheduler.start(spec)
+            # The setting of the rotation decides at each turn whether the turn rotates.
+            await scheduler.start_rotation(CookieRotation(sessions, settings))
             app.state.services = Services(settings, engine, sessions, runner, scheduler)
             try:
                 yield

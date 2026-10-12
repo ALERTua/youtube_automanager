@@ -14,20 +14,23 @@ The first read of a source stores its current videos as seen, without an evaluat
 rule, a changed rule and a changed processing mode act only on new videos. Each source that a run read in full gets
 the time of that read: ``channel.last_checked_at`` for a channel, and the setting FEED_READ_KEY for the feed. A source
 with that time was read before, so it never gets a second baseline, also when it has no stored video.
+
+Without a live session of the account, the run still reads the channels and evaluates the rules, but adds nothing. A
+matching video waits as deferred, so a later run with a live session adds it while the video stays in the processing
+window. The feed needs the account, so it gets an error in such a run.
 """
 
 import datetime
 import logging
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any, NoReturn, Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager import notify
 from youtube_automanager.db.models import (
-    Account,
     AddedVideo,
     Channel,
     Playlist,
@@ -38,10 +41,10 @@ from youtube_automanager.db.models import (
     RunActionKind,
     SeenVideo,
     SeenVideoState,
-    SessionState,
     Setting,
     utc_now,
 )
+from youtube_automanager.engine.account_session import DEAD_SESSION_TEXT, AccountSession, AccountUnavailable
 from youtube_automanager.engine.modes import (
     Collected,
     Known,
@@ -57,9 +60,8 @@ from youtube_automanager.engine.modes import (
 from youtube_automanager.engine.rules import RuleError, Verdict, evaluate, fields_read, validate
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube import public
-from youtube_automanager.youtube.account import AccountClient, AccountError, NotLoggedInError
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError
 from youtube_automanager.youtube.public import PublicSourceError
-from youtube_automanager.youtube.session import CookieCipher, CookieKeyError, load_cookies
 
 LOG = logging.getLogger(__name__)
 
@@ -81,12 +83,12 @@ class SyncAborted(Exception):
     """The run cannot go on. The text names the cause and what the user can do."""
 
 
-class AccountUnavailable(SyncAborted):
-    """The run needs the account, but the cookies are missing, or the cookie key does not open them."""
-
-
 class _SourceStopped(Exception):
     """The source cannot go on in this run. The history already has the error."""
+
+
+class _NoAccount(Exception):
+    """The add needs the account, but the run goes on without it. The text names the cause."""
 
 
 class AccountLike(Protocol):
@@ -100,6 +102,7 @@ class AccountLike(Protocol):
 type ReadUploads = Callable[[str], Iterable[Any]]
 type ReadShorts = Callable[[str, int], Iterable[str]]
 type OpenAccount = Callable[[], AccountLike]
+type SessionDied = Callable[[NotLoggedInError], object]
 type Send = Callable[[notify.Notification], object]
 
 
@@ -180,8 +183,9 @@ class SyncRun:
     """One run of the sync. ``run`` does the whole run once.
 
     ``read_uploads`` and ``read_shorts`` read public channel data. ``open_account`` gives the account client, and the
-    run calls it only when a rule needs the account: to read the feed, or to add a video. ``send`` sends a
-    notification and never raises.
+    run calls it only when a rule needs the account: to read the feed, or to add a video. It raises AccountUnavailable
+    when the run must go on without the account. ``session_died`` takes a session that YouTube refused during the run.
+    ``send`` sends a notification and never raises.
     """
 
     def __init__(
@@ -193,6 +197,7 @@ class SyncRun:
         read_shorts: ReadShorts,
         open_account: OpenAccount,
         send: Send,
+        session_died: SessionDied | None = None,
         clock: Callable[[], datetime.datetime] = utc_now,
     ) -> None:
         self._sessions = sessions
@@ -200,9 +205,13 @@ class SyncRun:
         self._read_uploads = read_uploads
         self._read_shorts = read_shorts
         self._open_account = open_account
+        self._session_died = session_died
         self._send = send
         self._clock = clock
         self._account: AccountLike | None = None
+        # The cause when the run goes on without the account, and the number of matching videos that wait for it.
+        self._no_account: str | None = None
+        self._waiting = 0
         self._shorts: dict[str, frozenset[str] | None] = {}
         self._channel_titles: dict[str, str] = {}
         self._playlist_titles: dict[str, str] = {}
@@ -216,6 +225,8 @@ class SyncRun:
         for source in sources:
             outcomes[source.key] = self._sync_source(processing, source)
         self._clean_up(processing, [source.key for source in sources], outcomes)
+        if self._waiting:
+            self._error(f"{self._waiting} matching video(s) wait for the YouTube account: {self._no_account}")
         LOG.info(
             "Run %s finished: %d video(s) added, %d video(s) seen, %d error(s)",
             self._run_id,
@@ -311,8 +322,9 @@ class SyncRun:
             else:
                 collected = collect(processing, videos, known, mark, read_before)
         except NotLoggedInError as error:
-            self._session_dead(error)
-        except (PublicSourceError, AccountError) as error:
+            self._source_error(source, self._lose_session(error))
+            return None
+        except (PublicSourceError, AccountError, AccountUnavailable) as error:
             self._source_error(source, str(error))
             return None
 
@@ -400,13 +412,21 @@ class SyncRun:
             if verdict is Verdict.MATCH:
                 # Several rules with the same target add the video once, for the first rule.
                 targets.setdefault(rule.playlist_id, rule)
+        waits_for: str | None = None
         for playlist_id, rule in targets.items():
-            self._add(video, rule, playlist_id, first_time=known is None)
+            try:
+                self._add(video, rule, playlist_id, first_time=known is None)
+            except _NoAccount as error:
+                waits_for = str(error)
+                break
         undecided = [rule for rule, verdict in verdicts if verdict is Verdict.UNKNOWN]
-        if video.is_finished and not undecided:
+        if waits_for is None and video.is_finished and not undecided:
             self._record(source, video, SeenVideoState.SEEN)
             return
-        if undecided:
+        if waits_for is not None:
+            self._waiting += 1
+            reason = f"It matches, but it waits for the YouTube account. {waits_for}"
+        elif undecided:
             reason = f"No value yet for a field of rule {', '.join(rule.name for rule in undecided)}"
         else:
             reason = f"The video is {video.live_status}"
@@ -463,7 +483,8 @@ class SyncRun:
     def _add(self, video: Video, rule: RuleSpec, playlist_id: str, *, first_time: bool) -> None:
         """Add the video to the playlist, unless the service added it there before.
 
-        A video that the user removed from the playlist by hand is not added again.
+        A video that the user removed from the playlist by hand is not added again. Raise _NoAccount when the run goes
+        on without the account.
         """
         playlist_title = self._playlist_titles.get(playlist_id, playlist_id)
         with self._sessions() as session:
@@ -478,11 +499,12 @@ class SyncRun:
                     detail=f"{video.title}: the service added it to {playlist_title} before",
                 )
             return
-        account = self._account_client()
         try:
-            account.add_video(playlist_id, video.video_id)
+            self._account_client().add_video(playlist_id, video.video_id)
         except NotLoggedInError as error:
-            self._session_dead(error)
+            raise _NoAccount(self._lose_session(error)) from error
+        except AccountUnavailable as error:
+            raise _NoAccount(str(error)) from error
         except (AccountError, ValueError) as error:
             self._error(
                 f"Cannot add video {video.video_id} to {playlist_title}: {error}",
@@ -551,20 +573,27 @@ class SyncRun:
     # The account.
 
     def _account_client(self) -> AccountLike:
+        """Return the account client. Raise AccountUnavailable when the run goes on without the account."""
+        if self._no_account is not None:
+            raise AccountUnavailable(self._no_account)
         if self._account is None:
-            self._account = self._open_account()
+            try:
+                self._account = self._open_account()
+            except AccountUnavailable as error:
+                self._no_account = str(error)
+                raise
         return self._account
 
-    def _session_dead(self, error: NotLoggedInError) -> NoReturn:
-        """Write the session of the account as dead, and stop the run."""
-        with self._sessions.begin() as session:
-            account = session.scalars(select(Account).order_by(Account.id).limit(1)).first()
-            if account is not None:
-                account.session_state = SessionState.DEAD
-        raise SyncAborted(
-            f"YouTube does not accept the stored cookies any more ({error}). "
-            "Export new YouTube cookies from your browser and upload them to the service."
-        ) from error
+    def _lose_session(self, error: NotLoggedInError) -> str:
+        """Take a session that YouTube refused during the run. The rest of the run goes on without the account.
+
+        Return the cause for the history.
+        """
+        LOG.warning("Run %s: YouTube refused the session: %s", self._run_id, error)
+        if self._session_died is not None:
+            self._session_died(error)
+        self._no_account = DEAD_SESSION_TEXT
+        return self._no_account
 
     # The history and the notifications.
 
@@ -659,41 +688,27 @@ class SyncRun:
                     session.execute(delete(AddedVideo).where(AddedVideo.video_id.in_(orphans)))
 
 
-def open_account(sessions: sessionmaker[Session], settings: Settings) -> AccountClient:
-    """Return the client of the account with the stored cookies. Raise AccountUnavailable with the cause."""
-    if settings.cookies_key is None:
-        raise AccountUnavailable(
-            "The run needs the YouTube account, but COOKIES_KEY is not set, so the service cannot open the stored "
-            "cookies. Set COOKIES_KEY and upload the YouTube cookies."
-        )
-    try:
-        cipher = CookieCipher(settings.cookies_key.get_secret_value())
-        with sessions() as session:
-            cookies = load_cookies(session, cipher)
-    except CookieKeyError as error:
-        raise AccountUnavailable(
-            f"The run needs the YouTube account, but the cookies cannot be opened: {error}"
-        ) from None
-    if cookies is None:
-        raise AccountUnavailable(
-            "The run needs the YouTube account, but no YouTube cookies are stored. Upload the YouTube cookies."
-        )
-    try:
-        return AccountClient(cookies)
-    except ValueError as error:
-        raise AccountUnavailable(
-            f"The run needs the YouTube account, but the stored cookies are not valid: {error}. "
-            "Upload the YouTube cookies again."
-        ) from None
-
-
 def run_with_youtube(sessions: sessionmaker[Session], run_id: int, settings: Settings) -> RunReport:
-    """Do the run ``run_id`` with the real YouTube sources and the notification targets of the database."""
-    return SyncRun(
-        sessions,
-        run_id,
-        read_uploads=public.iter_channel_uploads,
-        read_shorts=lambda channel_id, limit: public.shorts_video_ids(channel_id, limit=limit),
-        open_account=lambda: open_account(sessions, settings),
-        send=lambda notification: notify.send_to_stored_targets(sessions, notification),
-    ).run()
+    """Do the run ``run_id`` with the real YouTube sources and the notification targets of the database.
+
+    The run first checks the session of the stored cookies, and at its end it saves the updated cookies.
+    """
+
+    def send(notification: notify.Notification) -> object:
+        return notify.send_to_stored_targets(sessions, notification)
+
+    account = AccountSession(sessions, settings, send=send)
+    result = account.check()
+    LOG.info("Run %s: the session check gave %s", run_id, result.outcome.value)
+    try:
+        return SyncRun(
+            sessions,
+            run_id,
+            read_uploads=public.iter_channel_uploads,
+            read_shorts=lambda channel_id, limit: public.shorts_video_ids(channel_id, limit=limit),
+            open_account=account.open,
+            session_died=account.died,
+            send=send,
+        ).run()
+    finally:
+        account.write_back()

@@ -65,6 +65,21 @@ metadata:
     1. `GET https://accounts.youtube.com/RotateCookiesPage?origin=https://www.youtube.com&yt_pid=1` with the `.youtube.com` cookies. The page holds `init('<id>', ...)`.
     2. `POST https://accounts.youtube.com/RotateCookies` with the body `[null,"<id>",1]`, `Content-Type: application/json`, `Origin: https://accounts.youtube.com` and the page URL as `Referer`. The answer is HTTP 200 with new `__Secure-1PSIDTS`, `__Secure-3PSIDTS`, `SIDCC`, `__Secure-1PSIDCC` and `__Secure-3PSIDCC`. Its body, after a prefix of 5 characters, is JSON with the next interval in seconds, for example `[["identity.hfcr",600],...]`.
 - The browser repeats the rotation at the interval from the answer, 600 s. A second rotation within 1 to 10 minutes can give HTTP 429.
+- A fresh Firefox export holds cookies that live minutes (`GPS` 30 min, `CONSISTENCY` 10 min), `ST-*` cookies that are already expired, and `YSC` as a session cookie. The other cookies live 180 days (`VISITOR_INFO1_LIVE`, `VISITOR_PRIVACY_METADATA`, `__Secure-YNID`, `__Secure-BUCKET`, `__Secure-ROLLOUT_TOKEN`), 365 days (`PSIDTS` and `SIDCC` cookies) or 400 days (`SID` cookies, `LOGIN_INFO`, `PREF`).
+- The earliest expiry of all cookies of an export is thus always minutes away. The service takes the earliest expiry of the login cookies only (`cookie_text.LOGIN_COOKIES`).
+- One read check of the home page made the jar lose `GPS`, `CONSISTENCY` and the `ST-*` cookies, gave no new cookie name, and gave new values of exactly `SIDCC`, `__Secure-1PSIDCC` and `__Secure-3PSIDCC`. The text with these three new values passed a second check 5 s later.
+- yt-dlp `YoutubeDLCookieJar.save` writes no `#HttpOnly_` mark. The write-back keeps each line of the stored text and changes only the value and the expiry date of a known cookie.
+
+## The cookie session of the service
+
+- The process of the service never imports yt-dlp. So a session check on request runs in the child command `check-session`, and the rotation uses `urllib` with `http.cookiejar`.
+- Each stored state of the cookies is a row of `cookie_version`. The current version is the newest version that is not dead, and `account.cookies` holds a copy of it.
+- An upload deletes the versions of the older upload, because they can belong to another account. A rollback thus never goes back to another export.
+- SQLite gives an `INTEGER PRIMARY KEY` again after the row with the highest id went, unless the table has `AUTOINCREMENT`. The write-back compares the id of its base version with the current one, so `cookie_version` has `sqlite_autoincrement`.
+- When a version dies, each newer version dies with it, and the newest good version becomes current. A version is good after it passed a session check. A rotation does not make a version good.
+- A run checks the session at its start when cookies are stored, and that check costs one request with cookies. A session that dies during a run kills the version and the session. The next check tries the newest good version.
+- The store keeps the 10 newest versions, the current version and the newest good version. A rotation every 10 minutes makes many versions between two runs, so the newest good version must stay outside the 10.
+- The rotation is the setting `cookie_rotation` (true or false), off by default. The setting `cookie_rotation_next_at` keeps the time of the next rotation across a restart.
 - `POST https://accounts.google.com/RotateCookies` with the cookies of `.youtube.com` returns HTTP 401, because those cookies belong to another domain.
 - The YouTube Terms of Service forbid access by automated means. The yt-dlp wiki warns that an account that yt-dlp uses can get a temporary or permanent ban.
 - Music Assistant and Youtarr do not refresh cookies. When the session ends, each one needs a new export from the user.

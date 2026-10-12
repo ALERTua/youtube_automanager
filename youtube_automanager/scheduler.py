@@ -12,13 +12,15 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -28,6 +30,9 @@ from youtube_automanager.runner import SyncRunner
 LOG = logging.getLogger(__name__)
 
 JOB_ID = "sync"
+ROTATION_JOB_ID = "cookie_rotation"
+# The wait before the first turn of the cookie rotation, and before the next turn after a turn that failed.
+ROTATION_DELAY_S = 60.0
 CLEANUP_JOB_ID = "cleanup"
 
 # The cleanup of the old history runs each day at this time of the day, in the time zone of the schedule.
@@ -42,6 +47,12 @@ MAX_INTERVAL_S = 365 * 24 * 60 * 60
 # A name means the same day in both, so the numbers become names before APScheduler sees them.
 _CRON_WEEKDAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
 _WEEKDAY_NUMBERS = re.compile(r"(\*|\d+)(?:-(\d+))?(?:/(\d+))?")
+
+
+class RotationTurns(Protocol):
+    """The cookie rotation as the scheduler runs it. ``turn`` blocks and returns the seconds until the next turn."""
+
+    def turn(self) -> float: ...
 
 
 class SchedulerState(enum.StrEnum):
@@ -352,6 +363,39 @@ class Scheduler:
         if job is None or job.next_run_time is None:
             return []
         return _following_times(job.trigger, job.next_run_time, count)
+
+    async def start_rotation(self, rotation: RotationTurns, first_delay_s: float = ROTATION_DELAY_S) -> None:
+        """Run the turns of the cookie rotation next to the sync job. Each turn plans the next one.
+
+        A pause of the schedule does not stop the rotation. A turn that fails writes a log entry, and the next turn
+        still comes.
+        """
+        self._running_scheduler()
+        self._plan_rotation(rotation, first_delay_s)
+
+    def _plan_rotation(self, rotation: RotationTurns, delay_s: float) -> None:
+        scheduler = self._scheduler
+        if scheduler is None:
+            # The scheduler stopped during the turn.
+            return
+        # The turn that plans the next one still counts as running, so the job allows a second instance.
+        scheduler.add_job(
+            self._rotation_turn,
+            trigger=DateTrigger(run_date=datetime.now(UTC) + timedelta(seconds=delay_s)),
+            args=(rotation,),
+            id=ROTATION_JOB_ID,
+            replace_existing=True,
+            max_instances=2,
+            misfire_grace_time=None,
+        )
+
+    async def _rotation_turn(self, rotation: RotationTurns) -> None:
+        try:
+            delay_s = await asyncio.to_thread(rotation.turn)
+        except Exception:
+            LOG.exception("A turn of the cookie rotation failed")
+            delay_s = ROTATION_DELAY_S
+        self._plan_rotation(rotation, delay_s)
 
     async def next_cleanup_times(self, count: int) -> list[datetime]:
         """Return the next ``count`` run times of the cleanup. A scheduler without a cleanup has none."""

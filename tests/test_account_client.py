@@ -116,6 +116,7 @@ class FakeYouTube:
     def __init__(self, fake_time: FakeTime):
         self.time = fake_time
         self.pages = {}
+        self.page_errors = {}
         self.api = {}
         self.requests = []
         self.responses = []
@@ -142,6 +143,9 @@ class FakeYouTube:
                 error_body = json.dumps({"error": {"code": answer, "message": "Fake error"}}).encode()
                 raise HTTPError(Response(io.BytesIO(error_body), request.url, {}, status=answer))
             return self._respond(json.dumps(answer), request.url, "application/json; charset=UTF-8")
+        if path.rstrip("/") in self.page_errors:
+            status = self.page_errors[path.rstrip("/")]
+            raise HTTPError(Response(io.BytesIO(b""), request.url, {}, status=status))
         html, final_url = self.pages[path.rstrip("/")]
         return self._respond(html, final_url, "text/html; charset=utf-8")
 
@@ -417,6 +421,71 @@ def test_a_read_closes_yt_dlp_when_the_login_check_fails(client, youtube, closes
         client.playlists()
 
     assert len(closes) == 1
+
+
+# The session check
+
+
+def test_check_session_reads_the_page_config_of_the_home_page_once(client, youtube, closes):
+    assert client.check_session() is None
+
+    assert [(request["method"], request["url"]) for request in youtube.requests] == [("GET", HOME_URL)]
+    assert len(closes) == 1
+
+
+@pytest.mark.parametrize(
+    ("answer", "message"),
+    [
+        (lambda youtube: youtube.page(HOME_URL, ANONYMOUS_YTCFG), "as to an anonymous user"),
+        (lambda youtube: youtube.page(HOME_URL, {}, final_url=SIGN_IN_URL), "Google sign-in page"),
+        (lambda youtube: youtube.page_errors.update({HOME_URL: 401}), "HTTP 401"),
+    ],
+    ids=["anonymous", "sign-in page", "401"],
+)
+def test_check_session_of_a_dead_session_raises_not_logged_in_after_one_request(
+    client, youtube, closes, answer, message
+):
+    answer(youtube)
+
+    with pytest.raises(NotLoggedInError, match=message):
+        client.check_session()
+
+    assert len(youtube.requests) == 1
+    assert len(closes) == 1
+
+
+@pytest.mark.parametrize(
+    ("answer", "message"),
+    [
+        (lambda youtube: youtube.pages.update({HOME_URL: ("<html></html>", HOME_URL)}), "no page config"),
+        (lambda youtube: youtube.page_errors.update({HOME_URL: 503}), "HTTP Error 503"),
+    ],
+    ids=["no config", "503"],
+)
+def test_check_session_without_a_clear_answer_raises_account_error(client, youtube, answer, message):
+    answer(youtube)
+
+    with pytest.raises(AccountError, match=message) as raised:
+        client.check_session()
+
+    assert not isinstance(raised.value, NotLoggedInError)
+
+
+def test_use_cookies_replaces_the_cookies_and_keeps_the_pause(client, youtube, fake_time):
+    client.check_session()
+
+    client.use_cookies(COOKIES.replace("fake-sid", "fake-sid-2"))
+    client.check_session()
+
+    assert {cookie.name: cookie.value for cookie in client._cookiejar}["SID"] == "fake-sid-2"
+    assert fake_time.sleeps == [5.0]
+
+
+def test_use_cookies_refuses_a_bad_text_and_keeps_the_cookies(client):
+    with pytest.raises(ValueError, match="does not start with the header line"):
+        client.use_cookies("SID=fake-sid-2")
+
+    assert {cookie.name: cookie.value for cookie in client._cookiejar}["SID"] == "fake-sid"
 
 
 # The account menu and the internal API

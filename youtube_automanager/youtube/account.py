@@ -35,6 +35,7 @@ from youtube_automanager.youtube._ytdlp import (
     closing_entries,
     utc_date,
 )
+from youtube_automanager.youtube.cookie_text import checked_lines
 
 LOG = logging.getLogger(__name__)
 
@@ -59,9 +60,6 @@ _SUCCEEDED = "STATUS_SUCCEEDED"
 
 _VIDEO_ID = re.compile(r"[0-9A-Za-z_-]{11}")
 _PLAYLIST_ID = re.compile(r"[0-9A-Za-z_-]{2,64}")
-_NETSCAPE_HEADER = re.compile(r"#( Netscape)? HTTP Cookie File")
-_COOKIE_EXPIRES = re.compile(r"[0-9]+(?:\.[0-9]+)?")
-_HTTPONLY_PREFIX = "#HttpOnly_"
 
 
 class AccountError(Exception):
@@ -208,6 +206,29 @@ class AccountClient:
     ) -> None:
         self._cookiejar = _load_cookie_jar(cookies)
         self._pacer = _Pacer(pause_s, clock, sleep)
+
+    def use_cookies(self, cookies: str) -> None:
+        """Replace the cookies of the client with the text of a Netscape cookie file.
+
+        The pause between two requests stays, so the next request still waits for the rest of the pause.
+        """
+        self._cookiejar = _load_cookie_jar(cookies)
+
+    def check_session(self) -> None:
+        """Read the page config of the YouTube home page and confirm that YouTube knows the session.
+
+        Raise NotLoggedInError when YouTube answers as to an anonymous user, sends the request to the Google sign-in
+        page, or refuses the session with HTTP 401. Raise AccountError when the answer does not tell either way.
+        """
+        what = "check the session"
+        ydl = self._new_youtube_dl()
+        try:
+            ydl.tab.initialize()
+            self._home_config(ydl, what)
+        except YoutubeDLError as error:
+            raise _account_error(error, what) from error
+        finally:
+            ydl.close()
 
     def cookies_text(self) -> str:
         """Return the current cookies of the client as the text of a Netscape cookie file.
@@ -363,10 +384,7 @@ class AccountClient:
             tab = ydl.tab
             tab.initialize()
             if ytcfg is None:
-                tab._download_webpage(_HOME_URL, what, note="Downloading the page config")
-                if not ydl.ytcfgs:
-                    raise AccountError(f"YouTube gave no page config, so the login is not confirmed to {what}")
-                ytcfg = ydl.ytcfgs[0]
+                ytcfg = self._home_config(ydl, what)
             response = tab._extract_response(
                 item_id=what,
                 query=query,
@@ -382,6 +400,14 @@ class AccountClient:
         if not isinstance(response, dict) or not response:
             raise AccountError(f"YouTube gave an empty answer when the client tried to {what}")
         return response
+
+    @staticmethod
+    def _home_config(ydl: _AccountYoutubeDL, what: str) -> dict:
+        """Read the config of the home page. The login check of the yt-dlp instance raises for an anonymous answer."""
+        ydl.tab._download_webpage(_HOME_URL, what, note="Downloading the page config")
+        if not ydl.ytcfgs:
+            raise AccountError(f"YouTube gave no page config, so the login is not confirmed to {what}")
+        return ydl.ytcfgs[0]
 
     def _editable_playlists(self, ytcfg: dict) -> dict[str, str]:
         """Return the id and the title of each playlist that the Save to playlist dialog lists, in its order."""
@@ -428,25 +454,8 @@ class AccountClient:
 
 
 def _load_cookie_jar(text: str) -> YoutubeDLCookieJar:
-    """Load the text of a Netscape cookie file. Refuse a text that has a line that yt-dlp would skip or refuse.
-
-    yt-dlp writes a skipped line with its cookie value to stderr, and Python puts a refused line into its error
-    message. So the check comes first, and its error names only the line number.
-    """
-    lines = text.splitlines()
-    if not lines or not _NETSCAPE_HEADER.match(lines[0]):
-        raise ValueError("the cookie text does not start with the header line of a Netscape cookie file")
-    for number, line in enumerate(lines[1:], start=2):
-        line = line.removeprefix(_HTTPONLY_PREFIX)
-        if line.startswith("#") or not line.strip():
-            continue
-        fields = line.split("\t")
-        if (
-            len(fields) != 7
-            or (fields[4] and not _COOKIE_EXPIRES.fullmatch(fields[4]))
-            or (fields[1] == "TRUE") != fields[0].startswith(".")
-        ):
-            raise ValueError(f"line {number} of the cookie text is not a line of a Netscape cookie file")
+    """Load the text of a Netscape cookie file. Refuse a text that has a line that yt-dlp would skip or refuse."""
+    lines = checked_lines(text)
     jar = YoutubeDLCookieJar()
     jar.load(io.StringIO("\n".join(lines) + "\n"))
     if not len(jar):

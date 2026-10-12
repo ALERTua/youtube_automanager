@@ -1,0 +1,490 @@
+"""Tests of the cookie session of a run or a check: the check, the rollback, the events and the write-back.
+
+A fake YouTube answers the session checks. It knows a cookie version by the value of its SIDCC cookie. The cookie
+values here are fake.
+"""
+
+import datetime
+
+import pytest
+from sqlalchemy import select
+
+from youtube_automanager.db.models import (
+    Account,
+    CookieOrigin,
+    CookieVersion,
+    CookieVersionState,
+    Run,
+    RunStatus,
+    RunTrigger,
+    SessionState,
+)
+from youtube_automanager.engine import sync as sync_module
+from youtube_automanager.engine.account_session import (
+    DEAD_SESSION_TEXT,
+    AccountSession,
+    AccountUnavailable,
+    CheckOutcome,
+    CheckResult,
+)
+from youtube_automanager.notify import Event
+from youtube_automanager.settings import Settings
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError
+from youtube_automanager.youtube.cookie_text import cookies
+from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
+
+FAR = 4_000_000_000
+NOW = datetime.datetime(2026, 10, 12, 18, 0, tzinfo=datetime.UTC)
+
+
+def cookie_text(sidcc="fake-sidcc-0", *, login_expires=FAR):
+    return (
+        "# Netscape HTTP Cookie File\n"
+        f".youtube.com\tTRUE\t/\tTRUE\t{login_expires}\tSAPISID\tfake-sapisid\n"
+        f".youtube.com\tTRUE\t/\tFALSE\t{FAR}\tSIDCC\t{sidcc}\n"
+        f".youtube.com\tTRUE\t/\tTRUE\t{FAR}\tPREF\tf6=1\n"
+        f".youtube.com\tTRUE\t/\tFALSE\t1700000000\tST-fake\tfake-st\n"
+    )
+
+
+def sidcc(text):
+    return {cookie.name: cookie.value for cookie in cookies(text)}["SIDCC"]
+
+
+class FakeYouTube:
+    """Answers the session checks. A refused SIDCC value is dead. After a check, the jar holds a new SIDCC value."""
+
+    def __init__(self):
+        self.refused = set()
+        self.failing = False
+        self.checks = []
+        self.clients = []
+
+    def client(self, text):
+        client = FakeClient(self, text)
+        self.clients.append(client)
+        return client
+
+
+class FakeClient:
+    def __init__(self, youtube, text):
+        self.youtube = youtube
+        self.text = text
+        self.renewed = False
+
+    def check_session(self):
+        value = sidcc(self.text)
+        self.youtube.checks.append(value)
+        if value in self.youtube.refused:
+            raise NotLoggedInError("YouTube answered https://www.youtube.com as to an anonymous user")
+        # Each answer brings a new SIDCC value, also an answer that does not tell whether the session lives.
+        self.renewed = True
+        if self.youtube.failing:
+            raise AccountError("yt-dlp failed to check the session: HTTP Error 503")
+
+    def use_cookies(self, text):
+        self.text = text
+        self.renewed = False
+
+    def cookies_text(self):
+        """The jar as yt-dlp saves it: the expired ST cookie is gone, PREF has the values of yt-dlp, SIDCC is new."""
+        text = self.text.replace("f6=1", "hl=en&tz=UTC")
+        text = "".join(line + "\n" for line in text.splitlines() if "ST-fake" not in line)
+        return text.replace(sidcc(self.text), sidcc(self.text) + "+1") if self.renewed else text
+
+    def iter_subscription_feed(self):
+        return iter(())
+
+    def add_video(self, playlist_id, video_id):
+        pass
+
+
+class Harness:
+    def __init__(self, sessions, tmp_path):
+        self.sessions = sessions
+        self.key = generate_key()
+        self.cipher = CookieCipher(self.key)
+        self.tmp_path = tmp_path
+        self.settings = self.make_settings()
+        self.youtube = FakeYouTube()
+        self.sent = []
+        self.now = NOW
+
+    def make_settings(self, *, key=..., tz="UTC"):
+        key = self.key if key is ... else key
+        return Settings(home=self.tmp_path, database_url="sqlite://", tz=tz, cookies_key=key)
+
+    def upload(self, text=None):
+        with self.sessions.begin() as session:
+            return save_cookies(session, self.cipher, text or cookie_text(), now=self.now).id
+
+    def account_session(self, **options):
+        return AccountSession(
+            self.sessions,
+            options.pop("settings", self.settings),
+            send=self.sent.append,
+            make_client=self.youtube.client,
+            clock=lambda: self.now,
+            **options,
+        )
+
+    def check(self):
+        account = self.account_session()
+        return account, account.check()
+
+    def account(self):
+        with self.sessions() as session:
+            return session.scalars(select(Account)).one()
+
+    def versions(self):
+        with self.sessions() as session:
+            rows = session.scalars(select(CookieVersion).order_by(CookieVersion.id))
+            return [(sidcc(self.cipher.decrypt(row.cookies)), row.origin, row.state) for row in rows]
+
+    def stored_text(self):
+        return self.cipher.decrypt(self.account().cookies)
+
+    def events(self):
+        return [notification.event for notification in self.sent]
+
+
+@pytest.fixture
+def harness(db_sessions, tmp_path):
+    return Harness(db_sessions, tmp_path)
+
+
+# Without usable cookies
+
+
+@pytest.mark.parametrize(
+    ("prepare", "expected"),
+    [
+        (lambda h: setattr(h, "settings", h.make_settings(key=None)), "COOKIES_KEY is not set"),
+        (lambda h: None, "no YouTube cookies are stored"),
+        (
+            lambda h: setattr(h, "settings", h.make_settings(key=generate_key())) or h.upload(),
+            "cannot be opened: The cookie key does not open",
+        ),
+        (lambda h: setattr(h, "settings", h.make_settings(key="not a key")), "A cookie key is not valid"),
+    ],
+    ids=["no key", "no cookies", "other key", "bad key"],
+)
+def test_a_check_without_usable_cookies_sends_no_request(harness, prepare, expected):
+    prepare(harness)
+
+    account, result = harness.check()
+
+    assert result.outcome is CheckOutcome.UNAVAILABLE
+    assert expected in result.detail
+    assert harness.youtube.clients == []
+    with pytest.raises(AccountUnavailable, match=expected):
+        account.open()
+    assert account.write_back() == ()
+
+
+def test_a_check_of_stored_text_that_is_not_a_cookie_file_names_no_value(harness):
+    with harness.sessions.begin() as session:
+        save_cookies(session, harness.cipher, "SID=fakeSIDvalue")
+
+    result = AccountSession(harness.sessions, harness.settings, send=harness.sent.append).check()
+
+    assert result.outcome is CheckOutcome.UNAVAILABLE
+    assert "stored cookies are not valid" in result.detail
+    assert "fakeSIDvalue" not in result.detail
+
+
+# A live session
+
+
+def test_a_live_session_makes_the_version_good_and_the_session_ok(harness):
+    harness.upload()
+
+    account, result = harness.check()
+
+    assert result == CheckResult(CheckOutcome.ALIVE)
+    assert harness.versions() == [("fake-sidcc-0", CookieOrigin.UPLOAD, CookieVersionState.GOOD)]
+    stored = harness.account()
+    assert (stored.session_state, stored.last_checked_at) == (SessionState.OK, NOW)
+    assert stored.earliest_cookie_expiry == datetime.datetime.fromtimestamp(FAR, datetime.UTC)
+    assert harness.sent == []
+    assert account.open() is harness.youtube.clients[0]
+
+
+def test_the_write_back_saves_only_new_values_of_known_cookies(harness):
+    harness.upload()
+    account, _ = harness.check()
+
+    assert account.write_back() == ("SIDCC",)
+
+    assert harness.versions()[-1] == ("fake-sidcc-0+1", CookieOrigin.WRITE_BACK, CookieVersionState.UNCHECKED)
+    stored = harness.stored_text()
+    # The removed ST cookie and the PREF of yt-dlp stay out.
+    assert stored == cookie_text("fake-sidcc-0+1")
+
+
+def test_a_session_that_dies_turns_dead_once_and_sends_the_event_once(harness):
+    harness.upload()
+    harness.youtube.refused.add("fake-sidcc-0")
+
+    account, result = harness.check()
+
+    assert result == CheckResult(CheckOutcome.DEAD, DEAD_SESSION_TEXT)
+    assert (harness.account().session_state, harness.account().last_checked_at) == (SessionState.DEAD, NOW)
+    assert harness.versions() == [("fake-sidcc-0", CookieOrigin.UPLOAD, CookieVersionState.DEAD)]
+    assert harness.events() == [Event.COOKIE_SESSION_DEAD]
+    with pytest.raises(AccountUnavailable, match="does not accept the stored cookies"):
+        account.open()
+    assert account.write_back() == ()
+
+    # Without a version to try, the next check sends no request and no second event.
+    _, again = harness.check()
+
+    assert again.outcome is CheckOutcome.DEAD
+    assert harness.youtube.checks == ["fake-sidcc-0"]
+    assert harness.events() == [Event.COOKIE_SESSION_DEAD]
+
+
+def test_a_new_upload_gets_the_dead_event_again(harness):
+    harness.upload()
+    harness.youtube.refused.add("fake-sidcc-0")
+    harness.check()
+
+    harness.upload(cookie_text("fake-sidcc-new"))
+    _, result = harness.check()
+    harness.youtube.refused.add("fake-sidcc-new")
+    _, dead = harness.check()
+
+    assert (result.outcome, dead.outcome) == (CheckOutcome.ALIVE, CheckOutcome.DEAD)
+    assert harness.events() == [Event.COOKIE_SESSION_DEAD, Event.COOKIE_SESSION_DEAD]
+
+
+def test_a_failed_check_keeps_the_state_and_the_client(harness):
+    harness.upload()
+    harness.check()
+    harness.youtube.failing = True
+    harness.now += datetime.timedelta(hours=1)
+
+    account, result = harness.check()
+
+    assert result.outcome is CheckOutcome.FAILED
+    assert "HTTP Error 503" in result.detail
+    assert (harness.account().session_state, harness.account().last_checked_at) == (SessionState.OK, NOW)
+    assert harness.sent == []
+    assert account.open() is harness.youtube.clients[-1]
+    # Without a passed check, the new values of the answer do not go back.
+    assert account.write_back() == ()
+    assert len(harness.versions()) == 1
+
+
+def test_a_failing_notification_does_not_fail_the_check(harness):
+    harness.upload()
+    harness.youtube.refused.add("fake-sidcc-0")
+
+    def broken_send(notification):
+        raise RuntimeError("the targets are broken")
+
+    account = AccountSession(
+        harness.sessions, harness.settings, send=broken_send, make_client=harness.youtube.client, clock=lambda: NOW
+    )
+
+    assert account.check().outcome is CheckOutcome.DEAD
+    assert harness.account().session_state is SessionState.DEAD
+
+
+# The rollback to the last good version
+
+
+def test_a_dead_version_goes_back_to_the_last_good_version_that_still_lives(harness):
+    harness.upload()
+    first, _ = harness.check()
+    first.write_back()
+    harness.youtube.refused.add("fake-sidcc-0+1")
+
+    account, result = harness.check()
+
+    assert result.outcome is CheckOutcome.ALIVE
+    # One client checks both versions, so the pause between its requests holds.
+    assert len(harness.youtube.clients) == 2
+    assert harness.youtube.checks == ["fake-sidcc-0", "fake-sidcc-0+1", "fake-sidcc-0"]
+    assert harness.versions() == [
+        ("fake-sidcc-0", CookieOrigin.UPLOAD, CookieVersionState.GOOD),
+        ("fake-sidcc-0+1", CookieOrigin.WRITE_BACK, CookieVersionState.DEAD),
+    ]
+    assert harness.account().session_state is SessionState.OK
+    assert harness.stored_text() == cookie_text("fake-sidcc-0")
+    assert harness.sent == []
+    assert account.open() is harness.youtube.clients[1]
+    # The write-back starts from the good version.
+    assert account.write_back() == ("SIDCC",)
+    assert harness.versions()[-1][0] == "fake-sidcc-0+1"
+
+
+def test_a_dead_version_without_a_living_good_version_kills_the_session(harness):
+    harness.upload()
+    first, _ = harness.check()
+    first.write_back()
+    harness.youtube.refused.update({"fake-sidcc-0", "fake-sidcc-0+1"})
+
+    _, result = harness.check()
+
+    assert result.outcome is CheckOutcome.DEAD
+    assert harness.youtube.checks == ["fake-sidcc-0", "fake-sidcc-0+1", "fake-sidcc-0"]
+    assert {state for _, _, state in harness.versions()} == {CookieVersionState.DEAD}
+    assert harness.events() == [Event.COOKIE_SESSION_DEAD]
+
+
+def test_a_dead_version_without_a_good_version_tries_no_other_version(harness):
+    harness.upload()
+    first = harness.account_session()
+    first.check()
+    first.write_back()
+    with harness.sessions.begin() as session:
+        for version in session.scalars(select(CookieVersion)):
+            version.state = CookieVersionState.UNCHECKED
+    harness.youtube.refused.add("fake-sidcc-0+1")
+
+    _, result = harness.check()
+
+    assert result.outcome is CheckOutcome.DEAD
+    assert harness.youtube.checks == ["fake-sidcc-0", "fake-sidcc-0+1"]
+
+
+# A session that dies during the work
+
+
+def test_a_session_that_dies_during_the_work_is_dead_and_the_next_check_tries_the_last_good_version(harness):
+    harness.upload()
+    first, _ = harness.check()
+    first.write_back()
+    account, _ = harness.check()
+
+    account.died(NotLoggedInError("YouTube refused the session with HTTP 401"))
+    account.died(NotLoggedInError("YouTube refused the session with HTTP 401"))
+
+    assert harness.account().session_state is SessionState.DEAD
+    assert harness.events() == [Event.COOKIE_SESSION_DEAD]
+    with pytest.raises(AccountUnavailable, match="does not accept the stored cookies"):
+        account.open()
+    assert account.write_back() == ()
+
+    _, result = harness.check()
+
+    assert result.outcome is CheckOutcome.ALIVE
+    assert harness.youtube.checks[-1] == "fake-sidcc-0"
+    assert harness.account().session_state is SessionState.OK
+
+
+def test_a_session_that_is_dead_already_gets_no_second_event(harness):
+    harness.upload()
+    first, _ = harness.check()
+    first.write_back()
+    account, _ = harness.check()
+    account.died(NotLoggedInError("YouTube refused the session with HTTP 401"))
+    harness.youtube.refused.add("fake-sidcc-0")
+
+    _, result = harness.check()
+
+    assert result.outcome is CheckOutcome.DEAD
+    assert harness.youtube.checks[-1] == "fake-sidcc-0"
+    assert harness.events() == [Event.COOKIE_SESSION_DEAD]
+
+
+# The expiry warnings
+
+
+def expiring(harness, expiry):
+    harness.upload(cookie_text(login_expires=int(expiry.timestamp())))
+
+
+@pytest.mark.parametrize(
+    ("days", "state"),
+    [(4, SessionState.OK), (3, SessionState.EXPIRING), (0, SessionState.EXPIRING), (-1, SessionState.EXPIRING)],
+)
+def test_a_live_session_within_three_days_of_the_expiry_is_expiring(harness, days, state):
+    expiring(harness, NOW + datetime.timedelta(days=days))
+
+    harness.check()
+
+    assert harness.account().session_state is state
+
+
+def test_each_expiry_warning_comes_once_at_three_one_and_zero_days(harness):
+    expiry = datetime.datetime(2026, 10, 15, 12, 0, tzinfo=datetime.UTC)
+    expiring(harness, expiry)
+    titles = []
+    for day in (11, 12, 12, 13, 14, 14, 15, 15, 16):
+        harness.now = datetime.datetime(2026, 10, day, 18, 0, tzinfo=datetime.UTC)
+        harness.check()
+        titles.append([n.title for n in harness.sent])
+        harness.sent.clear()
+
+    assert titles == [
+        [],
+        ["YouTube AutoManager: the YouTube cookies expire in 3 days"],
+        [],
+        [],
+        ["YouTube AutoManager: the YouTube cookies expire in 1 day"],
+        [],
+        ["YouTube AutoManager: the YouTube cookies expire today"],
+        [],
+        [],
+    ]
+
+
+def test_a_check_after_two_warning_days_sends_one_warning(harness):
+    expiring(harness, NOW)
+
+    harness.check()
+    harness.check()
+
+    assert [n.title for n in harness.sent] == ["YouTube AutoManager: the YouTube cookies expire today"]
+    assert harness.events() == [Event.COOKIE_EXPIRY_WARNING]
+
+
+def test_a_new_upload_gets_the_expiry_warnings_again(harness):
+    expiring(harness, NOW + datetime.timedelta(days=1))
+    harness.check()
+    expiring(harness, NOW + datetime.timedelta(days=1))
+
+    harness.check()
+
+    assert harness.events() == [Event.COOKIE_EXPIRY_WARNING, Event.COOKIE_EXPIRY_WARNING]
+
+
+def test_the_warning_days_count_in_the_time_zone_of_the_service(harness):
+    # 22:30 UTC on 12 October is 01:30 on 13 October in Kyiv, and the expiry is on 15 October in both zones.
+    harness.now = datetime.datetime(2026, 10, 12, 22, 30, tzinfo=datetime.UTC)
+    expiring(harness, datetime.datetime(2026, 10, 15, 1, 0, tzinfo=datetime.UTC))
+    harness.settings = harness.make_settings(tz="Europe/Kyiv")
+
+    harness.check()
+
+    (warning,) = harness.sent
+    assert warning.title.endswith("expire in 2 days")
+    assert "2026-10-15 04:00+03:00" in warning.body
+
+
+# The run with the real wiring
+
+
+def test_a_run_checks_the_session_first_uses_the_checked_client_and_saves_the_updated_cookies(harness, monkeypatch):
+    harness.upload()
+    created = []
+
+    def account_session(sessions, settings, *, send):
+        account = AccountSession(sessions, settings, send=send, make_client=harness.youtube.client)
+        created.append(account)
+        return account
+
+    monkeypatch.setattr(sync_module, "AccountSession", account_session)
+    with harness.sessions.begin() as session:
+        run = Run(status=RunStatus.RUNNING, trigger=RunTrigger.MANUAL)
+        session.add(run)
+        session.flush()
+        run_id = run.id
+
+    sync_module.run_with_youtube(harness.sessions, run_id, harness.settings)
+
+    assert harness.youtube.checks == ["fake-sidcc-0"]
+    assert harness.account().session_state is SessionState.OK
+    assert harness.versions()[-1] == ("fake-sidcc-0+1", CookieOrigin.WRITE_BACK, CookieVersionState.UNCHECKED)

@@ -30,6 +30,16 @@ def test_run_once_runs_the_sync_body_with_the_run_id(settings, logging_setups, m
     assert logging_setups == [True]
 
 
+def test_check_session_runs_the_session_check_body(settings, logging_setups, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "check_session_once", lambda given: calls.append(given) or 3)
+
+    assert cli.main(["check-session"]) == 3
+
+    assert calls == [settings]
+    assert logging_setups == [True]
+
+
 def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(
     settings, logging_setups, monkeypatch, nicegui_globals
 ):
