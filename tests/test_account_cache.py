@@ -396,8 +396,9 @@ def test_a_failed_read_changes_nothing(db_sessions, failing):
     assert stored_time(db_sessions) is None
 
 
-def test_a_failed_playlist_write_stores_no_playlist_and_no_refresh_time(db_sessions):
+def test_a_failed_playlist_write_stores_no_channel_no_playlist_and_no_refresh_time(db_sessions):
     # A playlist without a value for ``is_own`` breaks the NOT NULL rule of the table at the commit of the playlists.
+    store(db_sessions, Channel(channel_id=B, title="Beta", is_subscribed=True))
     client = FakeClient(
         channels=[channel(A, "Alpha")],
         playlists=[playlist("WL", "Watch later", True), playlist("PL1", "Broken", None)],
@@ -406,10 +407,11 @@ def test_a_failed_playlist_write_stores_no_playlist_and_no_refresh_time(db_sessi
     with pytest.raises(IntegrityError):
         refresh_account_cache(db_sessions, client, NOW)
 
+    # Both tables and the time share one transaction, so the channels that came before are not stored either.
+    assert channel_ids(db_sessions) == {B}
+    assert channel_row(db_sessions, B).is_subscribed is True
     assert playlist_ids(db_sessions) == set()
     assert stored_time(db_sessions) is None
-    # Each table has its own transaction, so the channels that came before are stored.
-    assert channel_ids(db_sessions) == {A}
 
 
 # The age of the copy.
@@ -433,12 +435,19 @@ def test_a_copy_is_stale_only_after_the_max_age(db_sessions):
     assert is_cache_stale(db_sessions, max_age, just_after) is True
 
 
-def test_the_default_max_age_is_24_hours(db_sessions):
+def test_the_default_max_age_is_20_hours(db_sessions):
     refresh_account_cache(db_sessions, FakeClient(), NOW)
 
-    assert MAX_AGE == datetime.timedelta(hours=24)
+    assert MAX_AGE == datetime.timedelta(hours=20)
     assert is_cache_stale(db_sessions, now=NOW + MAX_AGE) is False
     assert is_cache_stale(db_sessions, now=NOW + MAX_AGE + datetime.timedelta(seconds=1)) is True
+
+
+def test_each_daily_run_finds_the_copy_of_the_run_before_stale(db_sessions):
+    # Yesterday the scheduled run waited 10 minutes for the sync lock, and today it starts on time.
+    refresh_account_cache(db_sessions, FakeClient(), NOW + datetime.timedelta(minutes=10))
+
+    assert is_cache_stale(db_sessions, now=NOW + datetime.timedelta(days=1)) is True
 
 
 @pytest.mark.parametrize("value", ["yesterday", "", 5, None, ["2026-10-12T18:00:00+00:00"]])

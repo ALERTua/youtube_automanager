@@ -27,6 +27,7 @@ metadata:
 - A `NotLoggedInError` during the run goes to `session_died`, and the run tries no more adds.
 - When the run stops, the child writes the cause as the last line of stderr. The parent stores the end of stderr as the error text of the run.
 - Each run with stored cookies first checks the session. The engine asks for the checked client only at the first need: a read of the feed or an add.
+- With a live session, `run_with_youtube` then calls `refresh_if_stale` with the same `AccountSession`, before the sources. A refresh that YouTube refuses as logged out goes to `AccountSession.died`, so the run goes on without the account. Another failed refresh writes a warning to the log and does not stop the run.
 
 ## Processing modes
 
@@ -48,14 +49,14 @@ metadata:
 
 - `refresh_account_cache` in `account_cache.py` copies the subscriptions into `channel`. It copies the library playlists, with Watch Later as `WL`, into `playlist`.
 - The refresh reads both lists before it writes, so a failed read changes nothing.
-- The refresh writes `channel` in one transaction. It writes `playlist` and the setting `account_cache_refreshed_at` in a second transaction, so the time is stored only when both tables are written.
+- The refresh writes `channel`, `playlist` and the setting `account_cache_refreshed_at` in one transaction, so a failed write changes nothing.
 - The setting `account_cache_refreshed_at` holds the time of the last refresh as ISO text in UTC. `last_refresh` reads it.
 - The refresh never deletes a row, because a rule can still point at the row by its id.
 - A channel that left the subscriptions gets `is_subscribed` false and keeps its row, its `mark_date` and its `last_checked_at`.
 - The refresh never writes `channel.mark_date` or `channel.last_checked_at`. The sync engine owns them.
 - A playlist that left the library keeps its row and its old `playlist.last_synced_at`. A `last_synced_at` before `account_cache_refreshed_at` thus shows that the library lost the playlist, so the table needs no flag column. Only the refresh writes `last_synced_at`.
 - An empty title from YouTube keeps the stored title. A new row with an empty title stores its id as the title.
-- `is_cache_stale` treats a missing, unreadable or future refresh time as stale. A copy that is exactly `max_age` old is still fresh. The default `MAX_AGE` is 24 hours.
+- `is_cache_stale` treats a missing, unreadable or future refresh time as stale. A copy that is exactly `max_age` old is still fresh. The default `MAX_AGE` is 20 hours: a limit of 24 hours let a daily run find the copy of the run before a few seconds too young, so the copy refreshed only every second day.
 - `refresh_if_stale` calls `open_client` only for a stale copy, so a fresh copy needs no cookies and makes no request.
 - Two refreshes at the same time can fail on a duplicate key. The caller holds the sync lock.
 - The route `POST /api/account/refresh` calls `refresh_in_child`, which runs `python -m youtube_automanager refresh-account` through `SyncRunner.run_short_child`. This is the same child body that a run and a session check use, so the yt-dlp of the data folder applies, the web process never imports yt-dlp, and `SyncRunner.stop` stops the child.

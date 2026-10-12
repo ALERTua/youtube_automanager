@@ -26,8 +26,9 @@ LOG = logging.getLogger(__name__)
 
 # The key of the ``setting`` table that holds the time of the last refresh, as ISO text in UTC.
 REFRESHED_AT_KEY = "account_cache_refreshed_at"
-# A copy that is older than this is stale.
-MAX_AGE = timedelta(hours=24)
+# A copy that is older than this is stale. A daily run starts at about the same time each day, and a scheduled run can
+# wait up to 10 minutes for the sync lock. The limit thus stays well under one day, so each daily run refreshes the copy.
+MAX_AGE = timedelta(hours=20)
 
 
 class ChannelLike(Protocol):
@@ -86,9 +87,8 @@ def refresh_account_cache(
 ) -> RefreshResult:
     """Copy the subscriptions and the playlists of the account into the ``channel`` and ``playlist`` tables.
 
-    The refresh reads both lists first, so a failed read changes nothing. Then it writes each table in one transaction.
-    The time of the refresh goes into the transaction of the playlists, which comes last, so the time is stored only
-    when both tables are written.
+    The refresh reads both lists first, so a failed read changes nothing. Then it writes both tables and the time of the
+    refresh in one transaction, so a failed write changes nothing either.
 
     A subscribed channel gets its row, or its title, handle and thumbnail updated, and ``is_subscribed`` true. A channel
     row that the subscriptions do not list any more gets ``is_subscribed`` false. ``mark_date`` and
@@ -105,7 +105,6 @@ def refresh_account_cache(
     playlists = {playlist.playlist_id: playlist for playlist in client.playlists()}
     with sessions.begin() as session:
         channels_new, channels_updated, channels_unsubscribed = _write_channels(session, channels)
-    with sessions.begin() as session:
         playlists_new, playlists_updated = _write_playlists(session, playlists, now)
         _store_refresh_time(session, now)
     result = RefreshResult(
