@@ -41,6 +41,31 @@ metadata:
 - A rule needs `is_short` when it has `no_shorts` or its condition reads `is_short`. The engine reads the Shorts of a channel at most once in a run, and only when such a rule gives UNKNOWN.
 - A feed video without a channel id has no known `is_short`, so a rule with `no_shorts` defers it.
 
+## Account cache
+
+- `refresh_account_cache` in `account_cache.py` copies the subscriptions into `channel`. It copies the library playlists, with Watch Later as `WL`, into `playlist`.
+- The refresh reads both lists before it writes, so a failed read changes nothing.
+- The refresh writes `channel` in one transaction. It writes `playlist` and the setting `account_cache_refreshed_at` in a second transaction, so the time is stored only when both tables are written.
+- The setting `account_cache_refreshed_at` holds the time of the last refresh as ISO text in UTC. `last_refresh` reads it.
+- The refresh never deletes a row, because a rule can still point at the row by its id.
+- A channel that left the subscriptions gets `is_subscribed` false and keeps its row, its `mark_date` and its `last_checked_at`.
+- The refresh never writes `channel.mark_date` or `channel.last_checked_at`. The sync engine owns them.
+- A playlist that left the library keeps its row and its old `playlist.last_synced_at`. A `last_synced_at` before `account_cache_refreshed_at` thus shows that the library lost the playlist, so the table needs no flag column. Only the refresh writes `last_synced_at`.
+- An empty title from YouTube keeps the stored title. A new row with an empty title stores its id as the title.
+- `is_cache_stale` treats a missing, unreadable or future refresh time as stale. A copy that is exactly `max_age` old is still fresh. The default `MAX_AGE` is 24 hours.
+- `refresh_if_stale` calls `open_client` only for a stale copy, so a fresh copy needs no cookies and makes no request.
+- Two refreshes at the same time can fail on a duplicate key. The caller holds the sync lock.
+- The route `POST /api/account/refresh` runs `python -m youtube_automanager refresh-account` in a child process. It starts the child with `child_environment`, like a run, so the yt-dlp of the data folder applies and the web process never imports yt-dlp.
+- The route takes the sync lock without a wait and holds it while the child runs. It answers 409 while a run or a yt-dlp update holds the lock.
+- The child ends with exit code 0 and the counts as one JSON line at the end of stdout. The log of the child is on stdout too, so the parent reads the last line.
+- A failed child ends with exit code 3 (account not available), 4 (logged out) or 5 (another account error), and the cause is the last line of stderr. Another exit code is a crash, and the route does not show its stderr.
+- The route answers 409 for the exit codes 3 and 4. It answers 502 for the exit code 5, a crash, a timeout and a child without counts.
+- The child gets `REFRESH_TIMEOUT_SECONDS`, 300 s, and `subprocess.run` kills it after that. This is shorter than the wait of a scheduled run for the sync lock.
+- A stop of the service does not stop a refresh child. The child ends by itself, at the latest at its timeout.
+- The route does not write `account.session_state`. Only the sync engine marks the session `dead`.
+- The texts of `open_account` start with "The run needs the YouTube account", and the route gives them as they are.
+
 ## Processes
 
 - Only the child of a run imports yt-dlp. `run_once` imports the engine inside the function, and a test makes sure that the parent never imports `yt_dlp`.
+- The refresh of the account data follows the same rule: `refresh_once` imports the engine inside the function, and the web process only starts the child. A test makes sure that a refresh through the route leaves `yt_dlp` out of `sys.modules` of the web process.

@@ -1,9 +1,11 @@
-"""The command line of the service: ``serve`` starts the web service, and ``run-once`` is one sync in a child process."""
+"""The command line of the service: ``serve`` starts the web service. ``run-once`` is one sync, and ``refresh-account``
+is one refresh of the account data. The service starts each of these two in a child process."""
 
 import argparse
 import sys
 from collections.abc import Sequence
 
+from youtube_automanager.account_refresh import refresh_once
 from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.runner import run_once
 from youtube_automanager.settings import get_settings
@@ -19,6 +21,11 @@ def _parser() -> argparse.ArgumentParser:
         "run-once", help="do one sync; the service starts this command in a child process"
     )
     run_once_parser.add_argument("--run-id", type=int, required=True, help="the id of the run row of this sync")
+    commands.add_parser(
+        "refresh-account",
+        help="read the subscriptions and the playlists of the account once; the service starts this command in a "
+        "child process",
+    )
     return parser
 
 
@@ -45,10 +52,18 @@ def _run_once(run_id: int) -> int:
     return run_once(run_id, settings)
 
 
+def _refresh_account() -> int:
+    settings = get_settings()
+    setup_logging(settings.verbose)
+    return refresh_once(settings)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "serve":
         return _serve()
+    if args.command == "refresh-account":
+        return _refresh_account()
     return _run_once(args.run_id)
 
 
