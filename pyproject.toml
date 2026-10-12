@@ -5,6 +5,7 @@ description = "Adds videos to your YouTube playlists automatically based on rule
 readme = "README.md"
 requires-python = "==3.14.*"
 dependencies = [
+    "apprise",
     "fastapi",
     "packaging",
     "pendulum",
