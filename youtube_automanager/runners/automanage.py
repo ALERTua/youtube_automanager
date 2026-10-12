@@ -6,14 +6,13 @@ from datetime import datetime
 import pendulum
 
 from youtube_automanager.config import YoutubeAutoManagerConfig
-from youtube_automanager.db import DatabaseController
 
 LOG = logging.getLogger(__name__)
 
 
 class YoutubeAutoManager:
-    def __init__(self, db: DatabaseController, config: YoutubeAutoManagerConfig, yt_api):
-        self.db: DatabaseController = db
+    def __init__(self, db, config: YoutubeAutoManagerConfig, yt_api):
+        self.db = db
         self.config: YoutubeAutoManagerConfig = config
         self.yt_api = yt_api
         self._start_date = None
