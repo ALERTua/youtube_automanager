@@ -1,0 +1,12 @@
+{
+ "url": "https://www.youtube.com/channel/UCtXKDgv1AVoG88PLl8nGXmw/shorts",
+ "options": {},
+ "error": {
+  "message": "ERROR: [youtube:tab] UCtXKDgv1AVoG88PLl8nGXmw: This channel does not have a shorts tab",
+  "cause": "ExtractorError",
+  "orig_msg": "This channel does not have a shorts tab",
+  "expected": true,
+  "video_id": "UCtXKDgv1AVoG88PLl8nGXmw",
+  "ie": "youtube:tab"
+ }
+}

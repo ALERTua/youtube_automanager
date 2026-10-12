@@ -1,0 +1,108 @@
+{
+ "url": "https://www.youtube.com/@Epicurious",
+ "options": {
+  "playlist_items": "0"
+ },
+ "info": {
+  "id": "@Epicurious",
+  "channel": "Epicurious",
+  "channel_id": "UCcjhYlL1WRBjKaJsMH_h7Lg",
+  "title": "Epicurious",
+  "availability": "public",
+  "channel_follower_count": 6320000,
+  "description": "For people who love to eat.",
+  "tags": [
+   "epicurious.com",
+   "food",
+   "gourmet",
+   "bon",
+   "appetit",
+   "recipes",
+   "holidays",
+   "tanya",
+   "steel",
+   "chef",
+   "cookbooks",
+   "cooking",
+   "techniques",
+   "conde",
+   "nast"
+  ],
+  "thumbnails": [
+   {
+    "url": "https://yt3.googleusercontent.com/ytc/AIdro_lZx80-3cTYmxKt9xeXzUUkAP9RuDcDT6J0u_5RSRBYHQ=s900-c-k-c0x00ffffff-no-rj",
+    "height": 900,
+    "width": 900
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ytc/AIdro_lZx80-3cTYmxKt9xeXzUUkAP9RuDcDT6J0u_5RSRBYHQ=s0",
+    "id": "avatar_uncropped",
+    "preference": 1
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/eN1drOKwkUXRzlGNScUNKeDdZtoPwN890hkrouQXqpQH1hdsLducjAGerG1YD81PocAH8ox0=w1060-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 175,
+    "width": 1060,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/eN1drOKwkUXRzlGNScUNKeDdZtoPwN890hkrouQXqpQH1hdsLducjAGerG1YD81PocAH8ox0=w1138-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 188,
+    "width": 1138,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/eN1drOKwkUXRzlGNScUNKeDdZtoPwN890hkrouQXqpQH1hdsLducjAGerG1YD81PocAH8ox0=w1707-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 283,
+    "width": 1707,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/eN1drOKwkUXRzlGNScUNKeDdZtoPwN890hkrouQXqpQH1hdsLducjAGerG1YD81PocAH8ox0=w2120-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 351,
+    "width": 2120,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/eN1drOKwkUXRzlGNScUNKeDdZtoPwN890hkrouQXqpQH1hdsLducjAGerG1YD81PocAH8ox0=w2276-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 377,
+    "width": 2276,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/eN1drOKwkUXRzlGNScUNKeDdZtoPwN890hkrouQXqpQH1hdsLducjAGerG1YD81PocAH8ox0=w2560-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 424,
+    "width": 2560,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/eN1drOKwkUXRzlGNScUNKeDdZtoPwN890hkrouQXqpQH1hdsLducjAGerG1YD81PocAH8ox0=s0",
+    "id": "banner_uncropped",
+    "preference": -5
+   }
+  ],
+  "uploader_id": "@epicurious",
+  "uploader_url": "https://www.youtube.com/@epicurious",
+  "channel_is_verified": true,
+  "modified_date": null,
+  "view_count": null,
+  "playlist_count": null,
+  "uploader": "Epicurious",
+  "channel_url": "https://www.youtube.com/channel/UCcjhYlL1WRBjKaJsMH_h7Lg",
+  "_type": "playlist",
+  "entries": [],
+  "webpage_url": "https://www.youtube.com/@Epicurious",
+  "original_url": "https://www.youtube.com/@Epicurious",
+  "webpage_url_basename": "@Epicurious",
+  "webpage_url_domain": "youtube.com",
+  "extractor": "youtube:tab",
+  "extractor_key": "YoutubeTab",
+  "epoch": 1791747376,
+  "_version": {
+   "version": "2026.08.19",
+   "current_git_head": null,
+   "release_git_head": "594bd50c2c78ac432f81600d309fdc4e0a92d82c",
+   "repository": "yt-dlp/yt-dlp"
+  }
+ }
+}

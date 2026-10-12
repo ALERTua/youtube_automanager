@@ -11,6 +11,7 @@ dependencies = [
     "pyyaml",
     "sqlalchemy",
     "uvicorn",
+    "yt-dlp",
 ]
 
 [dependency-groups]
@@ -19,6 +20,9 @@ dev = [
     "pytest",
     "ruff",
 ]
+
+[tool.uv]
+exclude-newer = "1 week"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
