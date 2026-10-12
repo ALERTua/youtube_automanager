@@ -14,7 +14,8 @@ metadata:
 - A source that was read before has state, also without `seen_video` rows and without a mark. An empty channel thus gets no second baseline, and its first video gets an evaluation.
 - A source without stored state and without a read time gets a baseline: the engine stores the window of the mode as seen, with no evaluation and no add. An upcoming or live entry of a baseline is stored as deferred.
 - At the end of a finished run, a source that no enabled rule reads loses its `seen_video` rows, its mark and its read time. A channel that a rule reads again thus starts with a baseline.
-- An `added_video` row goes when the clean-up removes the last `seen_video` row of its video. A source that failed in the run keeps all its rows.
+- A source that failed in the run keeps all its `seen_video` rows.
+- The clean-up of a sync run never deletes an `added_video` row. The daily cleanup in `retention.py` runs at 03:30 and at the start of the service. It deletes a row only when its `added_at` is older than `ADDED_VIDEO_KEEP_DAYS` (732) days and no source keeps its video in `seen_video`. A row whose video a source keeps stays at any age, because a sync run can reach that video again.
 
 ## The order of the work
 
@@ -51,7 +52,8 @@ metadata:
 - The preview writes nothing. It runs in the child `preview-rule` through `run_short_child`, and only a rule that reads the feed needs the account. The draft of the editor goes to the child as ASCII JSON in one argument `--draft=<json>`.
 - The apply is a run with the trigger `rule_apply`: `apply_in_child` calls `SyncRunner.claim` without a wait and `SyncRunner.execute` with the command of the child `apply-rule`. It writes `added_video` rows and `added` actions, but never `seen_video`, a mark or a read time. It adds at most `APPLY_LIMIT` (100) videos, the oldest first, and a failed add stops it.
 - An add sends two requests with the cookies, a read of the page config and the change, 5 s or more apart. An apply of 100 videos thus takes more than 1000 s. `SCHEDULED_WAIT_S` is 1800 s, so a scheduled run that comes during such an apply starts late, but it is not lost.
-- The clean-up of a sync run removes an `added_video` row when it removes the last `seen_video` row of its video. A row that an apply wrote for a video that a source of the sync also stored can thus go, and a later apply over the same days adds that video again.
+- An apply reads back to the day that the user chose, at most `MAX_DAYS_BACK` (365) days. It thus reaches a video also after the sync removes its `seen_video` rows. The `added_video` row is the only record that stops a second add, so the row must stay longer than the state of the sync. `ADDED_VIDEO_KEEP_DAYS` must stay greater than `MAX_DAYS_BACK`, and a test makes sure of it.
+- yt-dlp gives a flat entry with the text "1 year ago" the date 12 months back, rounded to the nearest UTC midnight, 364 to 366 days back. The text can name a video that is almost 2 years old, because a relative age counts whole years, so an apply from the earliest day can reach videos up to 2 years old. "2 years ago" gets 729 days back, out of the reach of an apply. So `ADDED_VIDEO_KEEP_DAYS` is 732, more than 2 years, and a test makes sure that it stays above 730.
 - `engine.rule_preview` holds the limits, the draft and the result of a preview, and it imports no yt-dlp, so the web process uses it. `engine.rule_apply` imports yt-dlp through `engine.sync`, so only a child imports it.
 
 ## Account cache

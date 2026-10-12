@@ -1,29 +1,38 @@
-"""The retention of the run history: how many days of runs the service keeps, and the cleanup of the older runs.
+"""The retention of the run history: how many days of runs the service keeps, and the daily cleanup.
 
 The number of days lives in the ``setting`` table. The cleanup deletes each finished run that started before the
 retention period, together with its actions. It never deletes a run that is still ``running``.
+
+The same cleanup deletes each ``added_video`` row that is older than ADDED_VIDEO_KEEP_DAYS and whose video no source
+keeps in ``seen_video``. A younger row stays, so an apply of a rule does not add its video to the playlist again.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from youtube_automanager.db.models import Run, RunAction, RunStatus, Setting, utc_now
+from youtube_automanager.db.models import AddedVideo, Run, RunAction, RunStatus, SeenVideo, Setting, utc_now
 
 LOG = logging.getLogger(__name__)
 
 RETENTION_KEY = "history_retention_days"
 DEFAULT_RETENTION_DAYS = 90
 MIN_RETENTION_DAYS = 1
+# An ``added_video`` row whose video no source keeps stays this many days after its add. An apply of a rule reads the
+# videos of up to MAX_DAYS_BACK days back, the limit of the rules page. The date of an old flat entry comes from text
+# such as "1 year ago", which yt-dlp dates 364 days back, also for a video that is almost 2 years old. "2 years ago"
+# gets 729 days back, out of the reach of an apply, so a row stays 2 years and 2 days.
+ADDED_VIDEO_KEEP_DAYS = 732
 
 
 @dataclass(frozen=True)
 class CleanupResult:
     runs: int
     actions: int
+    added_videos: int = 0
 
 
 def _is_valid_days(value: object) -> bool:
@@ -76,12 +85,32 @@ def delete_old_runs(sessions: sessionmaker[Session], days: int, now: datetime | 
         return CleanupResult(runs=runs.rowcount, actions=actions.rowcount)
 
 
+def delete_old_added_videos(sessions: sessionmaker[Session], now: datetime | None = None) -> int:
+    """Delete each ``added_video`` row that is older than ADDED_VIDEO_KEEP_DAYS days before ``now`` and whose video no
+    source keeps in ``seen_video``. Return the number of deleted rows. This call blocks.
+
+    A row whose video a source keeps stays, however old it is, because a sync run can still reach that video.
+    """
+    cutoff = (now or utc_now()) - timedelta(days=ADDED_VIDEO_KEEP_DAYS)
+    kept = select(SeenVideo.video_id).where(SeenVideo.video_id == AddedVideo.video_id).exists()
+    with sessions.begin() as session:
+        return session.execute(delete(AddedVideo).where(AddedVideo.added_at < cutoff, ~kept)).rowcount
+
+
 def clean_history(sessions: sessionmaker[Session]) -> CleanupResult:
-    """Delete the runs that are older than the stored retention period. The scheduler calls this each day."""
+    """Delete the runs that are older than the stored retention period, and the old ``added_video`` rows that no source
+    keeps. The scheduler calls this each day."""
     days = get_retention_days(sessions)
     result = delete_old_runs(sessions, days)
     if result.runs:
         LOG.info(
             "Deleted %s run(s) and %s action(s) that started more than %s day(s) ago", result.runs, result.actions, days
         )
-    return result
+    added_videos = delete_old_added_videos(sessions)
+    if added_videos:
+        LOG.info(
+            "Deleted %s added video record(s) that are older than %s day(s) and whose video no source keeps",
+            added_videos,
+            ADDED_VIDEO_KEEP_DAYS,
+        )
+    return replace(result, added_videos=added_videos)

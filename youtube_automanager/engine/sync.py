@@ -220,8 +220,6 @@ class SyncRun:
         self._shorts: dict[str, frozenset[str] | None] = {}
         self._channel_titles: dict[str, str] = {}
         self._playlist_titles: dict[str, str] = {}
-        # The ids of the videos whose stored state a change of the processing mode removed.
-        self._dropped: set[str] = set()
         self.report = RunReport()
 
     def run(self) -> RunReport:
@@ -288,8 +286,7 @@ class SyncRun:
         the time of its last read.
 
         The state of one mode does not tell another mode which videos are new, so each source starts again with a
-        baseline. The ``added_video`` rows stay, and the clean-up at the end of the run removes those that no source
-        can reach.
+        baseline. The ``added_video`` rows stay.
         """
         value = processing.to_value()
         row = session.get(Setting, STATE_MODE_KEY)
@@ -303,7 +300,6 @@ class SyncRun:
             row.value,
             processing.describe(),
         )
-        self._dropped.update(session.scalars(select(SeenVideo.video_id)))
         session.execute(delete(SeenVideo))
         session.execute(update(Channel).values(mark_date=None, last_checked_at=None))
         session.execute(delete(Setting).where(Setting.key.in_([FEED_MARK_KEY, FEED_READ_KEY])))
@@ -654,18 +650,14 @@ class SyncRun:
         """Remove the stored state that no later run can reach.
 
         A source outside this run loses its whole state, also its mark and the time of its last read, so a rule that
-        reads it again starts with a baseline. A source
-        that the run read in full keeps what its mode can still reach. A source that failed keeps its state as it is.
-        An ``added_video`` row goes when no source keeps its video any more.
+        reads it again starts with a baseline. A source that the run read in full keeps what its mode can still reach.
+        A source that failed keeps its state as it is.
+
+        The ``added_video`` rows stay, because an apply of a rule reaches a video also after the sync removed its
+        state. The daily cleanup in ``retention`` deletes an old row whose video no source keeps.
         """
         with self._sessions.begin() as session:
-            dropped = set(self._dropped)
-            stale = session.execute(
-                select(SeenVideo.channel_id, SeenVideo.video_id).where(SeenVideo.channel_id.not_in(keys))
-            ).all()
-            if stale:
-                dropped.update(video_id for _, video_id in stale)
-                session.execute(delete(SeenVideo).where(SeenVideo.channel_id.not_in(keys)))
+            session.execute(delete(SeenVideo).where(SeenVideo.channel_id.not_in(keys)))
             session.execute(
                 update(Channel)
                 .where(
@@ -684,13 +676,6 @@ class SyncRun:
                 gone = set(known) - ids_to_keep(processing, outcome.read, known, outcome.mark)
                 for chunk in _chunks(gone):
                     session.execute(delete(SeenVideo).where(SeenVideo.channel_id == key, SeenVideo.video_id.in_(chunk)))
-                dropped |= gone
-
-            for chunk in _chunks(dropped):
-                still_seen = set(session.scalars(select(SeenVideo.video_id).where(SeenVideo.video_id.in_(chunk))))
-                orphans = set(chunk) - still_seen
-                if orphans:
-                    session.execute(delete(AddedVideo).where(AddedVideo.video_id.in_(orphans)))
 
 
 def run_with_youtube(sessions: sessionmaker[Session], run_id: int, settings: Settings) -> RunReport:
