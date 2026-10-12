@@ -66,6 +66,18 @@ class SessionState(enum.StrEnum):
     DEAD = "dead"
 
 
+class CookieOrigin(enum.StrEnum):
+    UPLOAD = "upload"
+    WRITE_BACK = "write_back"
+    ROTATION = "rotation"
+
+
+class CookieVersionState(enum.StrEnum):
+    UNCHECKED = "unchecked"
+    GOOD = "good"
+    DEAD = "dead"
+
+
 class SeenVideoState(enum.StrEnum):
     SEEN = "seen"
     DEFERRED = "deferred"
@@ -100,6 +112,13 @@ class Base(DeclarativeBase):
 
 
 class Account(Base):
+    """The YouTube account of the service. The table holds one row.
+
+    ``cookies`` holds a copy of the current cookie version, encrypted. ``earliest_cookie_expiry`` is the earliest
+    expiry date of the login cookies, and ``expiry_warning_days`` is the smallest number of days before that date for
+    which a warning already went out.
+    """
+
     __tablename__ = "account"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -113,6 +132,30 @@ class Account(Base):
     )
     last_checked_at: Mapped[datetime | None]
     earliest_cookie_expiry: Mapped[datetime | None]
+    expiry_warning_days: Mapped[int | None]
+
+
+class CookieVersion(Base):
+    """One stored state of the cookies of the account, encrypted like ``account.cookies``.
+
+    An upload starts a new chain of versions, and each accepted change of the cookies adds a version. A version that
+    passed a session check is ``good``. The current version is the newest version that is not ``dead``.
+
+    An id never comes back, also on SQLite after the rows with the highest ids went, so a write-back that started on a
+    version of an older upload never takes a version of a newer upload for its own.
+    """
+
+    __tablename__ = "cookie_version"
+    __table_args__ = ({"sqlite_autoincrement": True},)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    origin: Mapped[CookieOrigin] = mapped_column(_string_enum(CookieOrigin, "origin"))
+    state: Mapped[CookieVersionState] = mapped_column(
+        _string_enum(CookieVersionState, "state"), default=CookieVersionState.UNCHECKED
+    )
+    checked_at: Mapped[datetime | None]
+    cookies: Mapped[bytes] = mapped_column(LargeBinary)
 
 
 class Channel(Base):

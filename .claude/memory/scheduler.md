@@ -19,3 +19,6 @@ metadata:
 - Starlette 1.7 warns that its `TestClient` with `httpx` is deprecated, and it asks for `httpx2`.
 - In APScheduler 4.0.0a6, the import of `apscheduler[sqlalchemy]` fails with `ModuleNotFoundError: No module named 'sniffio'` until you add `sniffio`. Its default executor is `async`, so a synchronous job runs in the event loop thread and blocks it. Give `job_executor="threadpool"` to such a job. Its README forbids production use.
 - The service calls APScheduler only through its own async interface, so that a move to APScheduler 4 changes one module.
+- In APScheduler 3.11, a job that plans its successor at the end of its run still counts as a running instance. With `max_instances=1`, a successor that is due at once gets skipped with "maximum number of running instances reached", and the chain ends. The cookie rotation is such a chain, so its job has `max_instances=2`.
+- The cookie rotation, the session check on request and each sync run take the same sync lock, so only one of them works on the cookies at a time. The rotation skips its turn without a wait when the lock is taken.
+- A scheduled run waits up to `SCHEDULED_WAIT_S` for the sync lock, because a rotation turn or a session check keeps the lock for seconds. Without the wait, a scheduled run that fires during a rotation turn is lost. A stop of the service ends the wait.

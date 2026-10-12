@@ -1,9 +1,10 @@
-"""The HTTP API of the service: the health check, the status and the run history.
+"""The HTTP API of the service: the health check, the status, the run history and the session check.
 
 A blocking database call never runs on the event loop: a ``def`` route runs in the thread pool of FastAPI, and an
 ``async def`` route gives such a call to ``run_in_threadpool``.
 """
 
+import dataclasses
 import importlib.metadata
 import logging
 from datetime import datetime
@@ -19,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.db.models import Account, Run, RunStatus, RunTrigger, SessionState
+from youtube_automanager.runner import SessionCheckOutcome
 from youtube_automanager.scheduler import SchedulerState
 from youtube_automanager.web.services import Services, get_services
 from youtube_automanager.youtube.ytdlp_updater import DISTRIBUTION, installed_version
@@ -59,6 +61,16 @@ class StatusOut(BaseModel):
     ytdlp_version: str | None
     # "data_folder" for a release that the service installed, "image" for the copy that came with the service.
     ytdlp_source: Literal["data_folder", "image"]
+
+
+class SessionCheckOut(BaseModel):
+    outcome: SessionCheckOutcome
+    # None when the account row does not exist yet.
+    session_state: SessionState | None
+    last_checked_at: datetime | None
+    earliest_cookie_expiry: datetime | None
+    # The cause when the check found no usable cookies, failed or did not start.
+    detail: str | None
 
 
 @router.get("/health", response_model=HealthOut, responses={503: {"model": HealthOut}})
@@ -122,6 +134,16 @@ def runs(
             select(Run).order_by(Run.started_at.desc(), Run.id.desc()).limit(limit).offset(offset)
         ).all()
         return [RunOut.model_validate(row) for row in rows]
+
+
+@router.post("/api/session/check", response_model=SessionCheckOut, responses={409: {"model": SessionCheckOut}})
+async def check_session(services: ServicesDep):
+    """Check the session of the stored cookies now. The answer is 409 while a run holds the sync lock."""
+    result = await run_in_threadpool(services.runner.check_session)
+    answer = SessionCheckOut(**dataclasses.asdict(result))
+    if result.outcome is SessionCheckOutcome.BUSY:
+        return JSONResponse(status_code=409, content=answer.model_dump(mode="json"))
+    return answer
 
 
 # The pages answer each path that no route takes, with HTML. An API client gets the JSON 404 of FastAPI instead.

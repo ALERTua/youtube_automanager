@@ -10,8 +10,8 @@ from sqlalchemy import select
 
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.db.models import Account, Run, RunStatus, RunTrigger, Schedule, ScheduleKind, SessionState
-from youtube_automanager.runner import INTERRUPTED_ERROR
-from youtube_automanager.scheduler import RunNowOutcome
+from youtube_automanager.runner import INTERRUPTED_ERROR, UNAVAILABLE_EXIT_CODE
+from youtube_automanager.scheduler import ROTATION_DELAY_S, ROTATION_JOB_ID, RunNowOutcome
 from youtube_automanager.settings import Settings
 from youtube_automanager.web.app import create_app
 
@@ -202,6 +202,61 @@ def test_scheduled_run_appears_in_the_runs(settings, sessions, fake_starter):
     assert run["error_text"] is None
     assert run["finished_at"] is not None
     assert fake_starter.calls[0][0][-2:] == ["--run-id", str(run["id"])]
+
+
+def test_start_plans_the_first_turn_of_the_cookie_rotation(settings, fake_starter):
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        job = client.app.state.services.scheduler._scheduler.get_job(ROTATION_JOB_ID)
+
+    assert job is not None
+    assert datetime.now(UTC) < job.next_run_time <= datetime.now(UTC) + timedelta(seconds=ROTATION_DELAY_S)
+
+
+def test_session_check_runs_the_check_child_and_answers_with_the_state(settings, sessions, fake_starter):
+    checked_at = datetime(2026, 10, 12, 18, 0, tzinfo=UTC)
+    store(sessions, Account(session_state=SessionState.OK, last_checked_at=checked_at))
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        answer = client.post("/api/session/check")
+
+    assert answer.status_code == 200
+    assert answer.json() == {
+        "outcome": "checked",
+        "session_state": "ok",
+        "last_checked_at": "2026-10-12T18:00:00Z",
+        "earliest_cookie_expiry": None,
+        "detail": None,
+    }
+    assert fake_starter.calls[0][0][-1] == "check-session"
+
+
+def test_session_check_without_usable_cookies_answers_with_the_cause(settings, fake_starter):
+    fake_starter.plan.append({"exit_code": UNAVAILABLE_EXIT_CODE, "stderr": "No YouTube cookies are stored.\n"})
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        answer = client.post("/api/session/check")
+
+    assert answer.status_code == 200
+    assert (answer.json()["outcome"], answer.json()["detail"]) == ("unavailable", "No YouTube cookies are stored.")
+
+
+def test_session_check_while_a_run_is_active_answers_409(settings, sessions, fake_starter):
+    fake_starter.plan.append({"blocking": True})
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        client.portal.call(client.app.state.services.scheduler.run_now)
+        assert fake_starter.child_started.wait(WAIT_SECONDS)
+        answer = client.post("/api/session/check")
+        fake_starter.children[0].finish(0)
+
+    assert answer.status_code == 409
+    assert answer.json()["outcome"] == "busy"
+    assert len(fake_starter.calls) == 1
+
+
+def test_session_check_answers_only_a_post(settings, fake_starter):
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        assert client.get("/api/session/check").status_code in (404, 405)
 
 
 def test_shutdown_stops_the_active_run(settings, sessions, fake_starter):

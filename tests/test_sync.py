@@ -4,19 +4,17 @@ import datetime
 
 import pytest
 from apprise.decorators import notify as apprise_notify
-from sqlalchemy import select
 
 from youtube_automanager.db.models import (
-    Account,
     NotificationTarget,
     Run,
     RunActionKind,
     RunStatus,
     RunTrigger,
     SeenVideoState,
-    SessionState,
     Setting,
 )
+from youtube_automanager.engine.account_session import DEAD_SESSION_TEXT
 from youtube_automanager.engine.modes import MIN_CHECKED
 from youtube_automanager.engine.sync import (
     FEED_MARK_KEY,
@@ -26,15 +24,13 @@ from youtube_automanager.engine.sync import (
     STATE_MODE_KEY,
     AccountUnavailable,
     SyncAborted,
-    open_account,
     run_with_youtube,
 )
 from youtube_automanager.notify import Event
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube import public
-from youtube_automanager.youtube.account import AccountClient, AccountError, FeedVideo, NotLoggedInError
+from youtube_automanager.youtube.account import AccountError, FeedVideo, NotLoggedInError
 from youtube_automanager.youtube.public import PublicSourceError, VideoEntry
-from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
 A = "UCaaaaaaaaaaaaaaaaaaaaaa"
 B = "UCbbbbbbbbbbbbbbbbbbbbbb"
@@ -1024,35 +1020,58 @@ def test_a_failed_second_add_of_a_video_does_not_repeat_the_first_add(sync):
     assert sync.seen(A)["new"] is SEEN
 
 
-def test_a_dead_session_stops_the_run_and_marks_the_account(sync):
-    with sync.sessions.begin() as session:
-        session.add(Account(session_state=SessionState.OK))
-    sync.rule("all", ANY, channels=[A])
+# The mode without a session.
+
+
+def deferred_details(sync):
+    return [row.detail for row in sync.action_rows() if row.action is RunActionKind.DEFERRED]
+
+
+def test_a_session_that_dies_during_the_run_defers_each_matching_video_and_the_run_goes_on(sync):
+    sync.rule("all", ANY, channels=[A, B])
     old = entries("old", 30)
     sync.sources.uploads[A] = old
+    sync.sources.uploads[B] = entries("b", 25, B)
     sync.run()
 
     sync.sources.uploads[A] = [entry("new2"), entry("new1"), entry("new0"), *old]
-    sync.account.add_errors[("WL", "new1")] = NotLoggedInError("YouTube answered as to an anonymous user")
+    sync.sources.uploads[B] = [entry("bnew", B), *sync.sources.uploads[B]]
+    refused = NotLoggedInError("YouTube answered as to an anonymous user")
+    sync.account.add_errors[("WL", "new1")] = refused
+    report = sync.run()
 
-    with pytest.raises(SyncAborted, match="YouTube does not accept the stored cookies") as raised:
-        sync.run()
+    assert sync.session_deaths == [refused]
+    # After the refused add, the run tries no more adds.
+    assert sync.account.tried == wl("new0", "new1")
+    assert (sync.seen(A)["new0"], sync.seen(A)["new1"], sync.seen(A)["new2"]) == (SEEN, DEFERRED, DEFERRED)
+    assert sync.seen(B)["bnew"] is DEFERRED
+    assert deferred_details(sync) == [
+        f"Video {video_id}: It matches, but it waits for the YouTube account. {DEAD_SESSION_TEXT}"
+        for video_id in ("new1", "new2", "bnew")
+    ]
+    assert report.errors == [f"3 matching video(s) wait for the YouTube account: {DEAD_SESSION_TEXT}"]
+    assert sync.sent[-1].event is Event.RUN_SUMMARY
 
-    assert str(raised.value).endswith("Export new YouTube cookies from your browser and upload them to the service.")
-    with sync.sessions() as session:
-        assert session.scalars(select(Account)).one().session_state is SessionState.DEAD
-    assert sync.account.added == wl("new0")
-    assert "new0" in sync.seen(A)
-    assert "new1" not in sync.seen(A)
-    assert not any(notification.event is Event.RUN_SUMMARY for notification in sync.sent)
+    # A later run with a live session adds the waiting videos once.
+    del sync.account.add_errors[("WL", "new1")]
+    sync.run()
+
+    assert sync.account.added == wl("new0", "new1", "new2", "bnew")
+    assert (sync.seen(A)["new1"], sync.seen(A)["new2"], sync.seen(B)["bnew"]) == (SEEN, SEEN, SEEN)
 
 
-def test_a_dead_session_at_the_feed_stops_the_run(sync):
+def test_a_session_that_dies_at_the_feed_gives_the_feed_an_error_and_the_run_goes_on(sync):
     sync.rule("feed", ANY)
-    sync.account.feed_error = NotLoggedInError("YouTube sent the request to the Google sign-in page")
+    sync.rule("all", ANY, channels=[A])
+    sync.sources.uploads[A] = entries("a", 5)
+    refused = NotLoggedInError("YouTube sent the request to the Google sign-in page")
+    sync.account.feed_error = refused
 
-    with pytest.raises(SyncAborted, match="Google sign-in page"):
-        sync.run()
+    report = sync.run()
+
+    assert sync.session_deaths == [refused]
+    assert report.errors == [f"Cannot read the subscriptions feed: {DEAD_SESSION_TEXT}"]
+    assert len(sync.seen(A)) == 5
 
 
 def test_a_feed_error_is_reported_and_the_run_goes_on(sync):
@@ -1067,8 +1086,8 @@ def test_a_feed_error_is_reported_and_the_run_goes_on(sync):
     assert len(sync.seen(A)) == 5
 
 
-def test_the_run_reads_and_evaluates_without_the_account_until_it_needs_it(sync):
-    sync.account_error = AccountUnavailable("no cookies are stored")
+def test_without_the_account_the_run_reads_and_evaluates_but_a_matching_video_waits(sync):
+    sync.account_error = AccountUnavailable("No YouTube cookies are stored.")
     sync.rule("long", LONG, channels=[A])
     old = entries("old", 30)
     sync.sources.uploads[A] = old
@@ -1078,18 +1097,37 @@ def test_the_run_reads_and_evaluates_without_the_account_until_it_needs_it(sync)
     assert sync.account_opens == 0
     assert sync.seen(A)["tiny"] is SEEN
 
-    sync.sources.uploads[A] = [entry("new"), entry("tiny", duration_s=30), *old]
-    with pytest.raises(AccountUnavailable, match="no cookies are stored"):
-        sync.run()
-    assert "new" not in sync.seen(A)
+    sync.sources.uploads[A] = [entry("new1"), entry("new0"), entry("tiny", duration_s=30), *old]
+    report = sync.run()
+
+    # The run asks for the account once, and goes on without it.
+    assert sync.account_opens == 1
+    assert (sync.seen(A)["new0"], sync.seen(A)["new1"]) == (DEFERRED, DEFERRED)
+    assert deferred_details(sync) == [
+        f"Video {video_id}: It matches, but it waits for the YouTube account. No YouTube cookies are stored."
+        for video_id in ("new0", "new1")
+    ]
+    assert report.errors == ["2 matching video(s) wait for the YouTube account: No YouTube cookies are stored."]
+    assert sync.session_deaths == []
+
+    sync.account_error = None
+    sync.run()
+
+    assert sync.account.added == wl("new0", "new1")
+    assert (sync.seen(A)["new0"], sync.seen(A)["new1"]) == (SEEN, SEEN)
 
 
-def test_a_feed_rule_needs_the_account(sync):
+def test_a_feed_rule_without_the_account_gets_an_error_and_keeps_its_state(sync):
     sync.account_error = AccountUnavailable("COOKIES_KEY is not set")
     sync.rule("feed", ANY)
 
-    with pytest.raises(AccountUnavailable, match="COOKIES_KEY"):
-        sync.run()
+    report = sync.run()
+
+    assert report.errors == ["Cannot read the subscriptions feed: COOKIES_KEY is not set"]
+    assert sync.actions() == [(ERROR, None, None, None)]
+    assert sync.sent[-1].event is Event.RUN_SUMMARY
+    with sync.sessions() as session:
+        assert session.get(Setting, FEED_READ_KEY) is None
 
 
 # Notifications.
@@ -1160,52 +1198,6 @@ def test_the_real_wiring_reads_through_yt_dlp_functions_and_sends_to_the_stored_
     assert reads == [("uploads", A), ("shorts", A, SHORTS_LIMIT)]
     assert report.added == []
     assert DELIVERED == ["YouTube AutoManager: 0 videos added"]
-
-
-class TestOpenAccount:
-    COOKIES = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1893456000\tSID\tfakeSIDvalue\n"
-
-    @pytest.fixture
-    def key(self):
-        return generate_key()
-
-    def settings(self, tmp_path, key):
-        return Settings(home=tmp_path, database_url="sqlite://", tz="UTC", cookies_key=key)
-
-    def store(self, sessions, key, text):
-        with sessions.begin() as session:
-            save_cookies(session, CookieCipher(key), text)
-
-    def test_without_a_cookie_key(self, db_sessions, tmp_path):
-        with pytest.raises(AccountUnavailable, match="COOKIES_KEY is not set"):
-            open_account(db_sessions, self.settings(tmp_path, None))
-
-    def test_without_stored_cookies(self, db_sessions, tmp_path, key):
-        with pytest.raises(AccountUnavailable, match="no YouTube cookies are stored"):
-            open_account(db_sessions, self.settings(tmp_path, key))
-
-    def test_with_a_key_that_does_not_open_the_cookies(self, db_sessions, tmp_path, key):
-        self.store(db_sessions, generate_key(), self.COOKIES)
-
-        with pytest.raises(AccountUnavailable, match="cannot be opened: The cookie key does not open"):
-            open_account(db_sessions, self.settings(tmp_path, key))
-
-    def test_with_a_key_that_is_not_valid(self, db_sessions, tmp_path):
-        with pytest.raises(AccountUnavailable, match="A cookie key is not valid"):
-            open_account(db_sessions, self.settings(tmp_path, "not a key"))
-
-    def test_with_stored_text_that_is_not_a_cookie_file(self, db_sessions, tmp_path, key):
-        self.store(db_sessions, key, "SID=fakeSIDvalue")
-
-        with pytest.raises(AccountUnavailable, match="stored cookies are not valid") as raised:
-            open_account(db_sessions, self.settings(tmp_path, key))
-
-        assert "fakeSIDvalue" not in str(raised.value)
-
-    def test_with_valid_cookies(self, db_sessions, tmp_path, key):
-        self.store(db_sessions, key, self.COOKIES)
-
-        assert isinstance(open_account(db_sessions, self.settings(tmp_path, key)), AccountClient)
 
 
 def test_a_failing_notification_does_not_fail_the_run(sync):
