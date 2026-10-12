@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError, StatementError
 
-from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
+from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.db.models import (
     DEFAULT_CRON_EXPRESSION,
     Account,
@@ -32,9 +32,8 @@ KYIV_SUMMER = timezone(timedelta(hours=3))
 
 
 @pytest.fixture
-def engine(tmp_path):
-    url = f"sqlite:///{tmp_path / 'test.sqlite'}"
-    upgrade_to_head(url)
+def engine(tmp_path, new_database):
+    url = new_database(tmp_path / "test.sqlite")
     engine = make_engine(url)
     yield engine
     engine.dispose()

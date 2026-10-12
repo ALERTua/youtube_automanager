@@ -27,6 +27,7 @@ dev = [
     "httpx",
     "pre-commit-uv",
     "pytest",
+    "pytest-xdist",
     "ruff",
 ]
 
