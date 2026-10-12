@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-12 17:09+0300\n"
+"POT-Creation-Date: 2026-10-12 18:55+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1396,6 +1396,18 @@ msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "The yt-dlp settings did not change."
+msgstr ""
+
+#: youtube_automanager/web/ui/theme.py
+msgid "Theme: as the system of the device. Click for the dark theme."
+msgstr ""
+
+#: youtube_automanager/web/ui/theme.py
+msgid "Theme: dark. Click for the light theme."
+msgstr ""
+
+#: youtube_automanager/web/ui/theme.py
+msgid "Theme: light. Click for the theme of the system."
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
