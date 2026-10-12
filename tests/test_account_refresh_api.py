@@ -240,7 +240,7 @@ def test_a_stop_of_the_service_stops_a_refresh_child_and_the_route_answers_502(s
 
     assert fake_starter.children[0].terminated
     (answer,) = answers
-    assert (answer.status_code, answer.json()) == (502, {"detail": "The service stopped during the account refresh."})
+    assert (answer.status_code, answer.json()) == (502, {"detail": "The service stopped during the refresh."})
 
 
 def test_the_route_is_not_taken_by_the_json_404_of_unknown_api_paths(settings, starter):

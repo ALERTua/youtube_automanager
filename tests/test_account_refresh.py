@@ -482,7 +482,7 @@ def test_a_stop_of_the_service_stops_an_active_refresh_child(runner, fake_starte
     assert fake_starter.children[0].terminated
     (error,) = outcome
     assert isinstance(error, RefreshProcessError)
-    assert str(error) == "The service stopped during the account refresh."
+    assert str(error) == "The service stopped during the refresh."
 
 
 def test_a_refresh_after_the_stop_of_the_service_starts_no_child(runner, fake_starter):

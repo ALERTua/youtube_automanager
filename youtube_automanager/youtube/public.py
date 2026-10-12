@@ -108,6 +108,32 @@ def search_channels(query: str, limit: int = 20) -> list[ChannelInfo]:
     return [_channel_info(entry) for entry in itertools.islice(channels, limit)]
 
 
+def is_channel_reference(text: str) -> bool:
+    """Tell whether ``text`` names one channel: ``@handle``, a channel id or a channel URL.
+
+    A word without ``@`` is not a reference, because a person who types a word means a name.
+    """
+    text = text.strip()
+    if text.startswith("@"):
+        return _HANDLE.fullmatch(text) is not None
+    return CHANNEL_ID.fullmatch(text) is not None or _CHANNEL_URL.fullmatch(text) is not None
+
+
+def find_channels(text: str, limit: int = 20) -> list[ChannelInfo]:
+    """Find the channels for the text that a person typed, at most ``limit`` of them.
+
+    A reference (``@handle``, a channel id or a channel URL) gives its channel, or no channel when it does not exist.
+    Other text is a name, and it goes to the channel search of YouTube. Empty text finds nothing and sends no request.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    if is_channel_reference(text):
+        channel = resolve_channel(text)
+        return [] if channel is None else [channel]
+    return search_channels(text, limit)
+
+
 def resolve_channel(text: str) -> ChannelInfo | None:
     """Find a channel by a handle, a channel id or a channel URL. Return None when the channel does not exist.
 
