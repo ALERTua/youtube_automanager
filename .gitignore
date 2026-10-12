@@ -3,6 +3,7 @@
 /.idea/
 **/__pycache__
 /cookies*.txt
+/data/
 .claude/*
 !.claude/memory/
 plans
