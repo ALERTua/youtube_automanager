@@ -7,6 +7,15 @@ metadata:
 
 - The scheduler runs in one process only. One persistent job store for two or more processes gives duplicate runs.
 - Each sync runs in a child process, so that a yt-dlp update takes effect at the next run.
-- In APScheduler 3.11, `AsyncIOScheduler` runs a synchronous job in its thread pool and a coroutine job in the event loop. `reschedule_job`, `pause_job` and `resume_job` operate while the scheduler runs.
+- In APScheduler 3.11, `AsyncIOScheduler` runs a synchronous job in the default thread pool of the event loop (`loop.run_in_executor(None, ...)`) and a coroutine job in the event loop. `reschedule_job`, `pause_job` and `resume_job` operate while the scheduler runs.
+- In APScheduler 3.11, `AsyncIOScheduler.shutdown(wait=True)` does not wait for a job in a thread. The shutdown itself runs at the next turn of the event loop.
+- At its exit, `asyncio.run` waits up to 300 s for the threads of the default thread pool, so an active run thread holds back the exit of uvicorn. Stop the child of the run before you stop the scheduler.
+- In APScheduler 3.11, `reschedule_job` sets a new next run time, so it also resumes a paused job. To change the trigger of a paused job, use `modify_job(job_id, trigger=..., next_run_time=None)`.
+- APScheduler 3.11 skips a run that starts more than `misfire_grace_time` late, 1 s by default, and it makes this check in the worker thread. A skipped one-off job never releases a lock that its caller took, so each job of the service has `misfire_grace_time=None`.
+- In APScheduler 3.11, `CronTrigger.from_crontab` counts day of the week 0 as Monday, but standard cron counts 0 and 7 as Sunday. The service gives APScheduler the day names, which mean the same day in both.
+- When a cron expression sets both the day of the month and the day of the week, standard cron runs on a day that matches one of them, but an APScheduler 3.11 `CronTrigger` runs only on a day that matches both. The service uses an `OrTrigger` of two cron triggers for such an expression.
+- In APScheduler 3.11, `IntervalTrigger` changes an interval of 0 to 1 s without an error. Its first run time is its creation time plus the interval.
+- The child of a run imports the service from `SOURCE_ROOT` in `PYTHONPATH`, because the project is not installed as a package: `python -m` finds it only when the current folder is the repository root.
+- Starlette 1.7 warns that its `TestClient` with `httpx` is deprecated, and it asks for `httpx2`.
 - In APScheduler 4.0.0a6, the import of `apscheduler[sqlalchemy]` fails with `ModuleNotFoundError: No module named 'sniffio'` until you add `sniffio`. Its default executor is `async`, so a synchronous job runs in the event loop thread and blocks it. Give `job_executor="threadpool"` to such a job. Its README forbids production use.
 - The service calls APScheduler only through its own async interface, so that a move to APScheduler 4 changes one module.

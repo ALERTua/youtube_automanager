@@ -31,7 +31,7 @@ def database_url() -> str:
     url = config.attributes.get("url") or context.get_x_argument(as_dictionary=True).get("url")
     if url:
         return url
-    return f"sqlite:///{get_settings().db_filepath}"
+    return get_settings().database_url
 
 
 def run_migrations_offline() -> None:
