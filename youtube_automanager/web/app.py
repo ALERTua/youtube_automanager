@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import functools
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from sqlalchemy import make_url
 
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.log_setup import setup_logging
+from youtube_automanager.retention import clean_history
 from youtube_automanager.runner import ChildStarter, SyncRunner, mark_interrupted_runs, start_child
 from youtube_automanager.scheduler import Scheduler, load_schedule
 from youtube_automanager.settings import Settings, get_settings
@@ -55,7 +57,8 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
                 child_timeout_s=settings.child_timeout_s,
                 start=start,
             )
-            scheduler = Scheduler(runner)
+            # The scheduler runs the cleanup of the old history once now, and then each day.
+            scheduler = Scheduler(runner, cleanup=functools.partial(clean_history, sessions))
             await scheduler.start(spec)
             app.state.services = Services(settings, engine, sessions, runner, scheduler)
             try:

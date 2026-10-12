@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-12 11:05+0300\n"
+"POT-Creation-Date: 2026-10-12 11:33+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,23 +17,85 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "A run is already active, so no new run started."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Action"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Actions"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid "Actions of run {id}"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Added"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "All"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Channel"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Cookie session"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Cron"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Cron expression"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Current schedule"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Dashboard"
 msgstr ""
 
+#: youtube_automanager/web/ui/history_page.py
+msgid "Days of history to keep"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Dead"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Deferred"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Detail"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Earliest cookie expiry"
 msgstr ""
 
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Enabled"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Enter a whole number of days, 1 or more."
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
 msgid "Error"
 msgstr ""
 
@@ -45,8 +107,34 @@ msgstr ""
 msgid "Failed"
 msgstr ""
 
+#: youtube_automanager/web/ui/history_page.py
+msgid "Finished"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid ""
+"Five fields: minute, hour, day, month, weekday. Example: 0 18 * * * is "
+"18:00 each day."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "From"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "History"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "In progress"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Interval"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Interval in seconds"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -69,6 +157,14 @@ msgstr ""
 msgid "Next run"
 msgstr ""
 
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Next runs"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Next runs of this schedule"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "No cookies are stored yet."
 msgstr ""
@@ -78,7 +174,12 @@ msgid "No expiry date"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/scheduler_page.py
 msgid "No run is planned"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "No run matches the filters."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -89,31 +190,87 @@ msgstr ""
 msgid "OK"
 msgstr ""
 
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Pause"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Paused"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Playlist"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Refresh"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Resume"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Retention"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Run"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Run now"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+#, python-brace-format
+msgid "Run {id} started."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Running"
 msgstr ""
 
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid "Runs {first}-{last} of {total}"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Save"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/scheduler_page.py
 msgid "Schedule"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/scheduler_page.py
 msgid "Scheduler"
 msgstr ""
 
+#: youtube_automanager/web/ui/history_page.py
+msgid "Skipped"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
 msgid "Started"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/scheduler_page.py
 msgid "State"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
 msgid "Status"
 msgstr ""
 
@@ -125,11 +282,52 @@ msgstr ""
 msgid "Succeeded"
 msgstr ""
 
-#: youtube_automanager/web/ui/dashboard.py
-msgid "Time zone"
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "The interval must be a whole number of seconds."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "The retention is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "The schedule has no run time."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "The schedule is off. No run starts until you turn it on."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "The schedule is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid ""
+"The service deletes older runs with their actions at its start and each "
+"day at {time} ({zone})."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "This run has no actions."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Time"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Time zone"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "To"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
 msgid "Trigger"
 msgstr ""
 
@@ -137,11 +335,17 @@ msgstr ""
 msgid "Unknown"
 msgstr ""
 
+#: youtube_automanager/web/ui/history_page.py
+msgid "Video"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
 msgid "Videos added"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
 msgid "Videos seen"
 msgstr ""
 
