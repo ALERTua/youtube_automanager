@@ -1,0 +1,249 @@
+"""Notifications through Apprise: events with levels, targets that pick their events, and one send for each target."""
+
+import logging
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import IntEnum, StrEnum
+
+import apprise
+
+LOG = logging.getLogger(__name__)
+
+# Apprise logs the target URL with its tokens at TRACE and DEBUG for each send, and parts of it at WARNING
+# and ERROR when it refuses a URL. Its loggers stay silent, and this module logs a target by its name only.
+logging.getLogger(apprise.LOGGER_NAME).setLevel(logging.CRITICAL + 1)
+
+APP_NAME = "YouTube AutoManager"
+MAX_LISTED_ITEMS = 20
+
+
+class Level(IntEnum):
+    INFO = 0
+    SUCCESS = 1
+    WARNING = 2
+    FAILURE = 3
+
+    @property
+    def notify_type(self) -> apprise.NotifyType:
+        return apprise.NotifyType[self.name]
+
+
+class Event(StrEnum):
+    COOKIE_SESSION_DEAD = "cookie_session_dead"
+    COOKIE_EXPIRY_WARNING = "cookie_expiry_warning"
+    RUN_SUMMARY = "run_summary"
+    RUN_FAILED = "run_failed"
+    CHANNEL_ERROR = "channel_error"
+    YTDLP_UPDATE_RESULT = "ytdlp_update_result"
+    VIDEO_ADDED = "video_added"
+    SCHEDULER_STATE = "scheduler_state"
+
+
+EVENT_LEVELS: dict[Event, Level] = {
+    Event.COOKIE_SESSION_DEAD: Level.FAILURE,
+    Event.COOKIE_EXPIRY_WARNING: Level.WARNING,
+    Event.RUN_SUMMARY: Level.SUCCESS,
+    Event.RUN_FAILED: Level.FAILURE,
+    Event.CHANNEL_ERROR: Level.WARNING,
+    Event.YTDLP_UPDATE_RESULT: Level.INFO,
+    Event.VIDEO_ADDED: Level.INFO,
+    Event.SCHEDULER_STATE: Level.INFO,
+}
+
+DEFAULT_EVENTS: frozenset[Event] = frozenset(
+    {
+        Event.COOKIE_SESSION_DEAD,
+        Event.COOKIE_EXPIRY_WARNING,
+        Event.RUN_SUMMARY,
+        Event.RUN_FAILED,
+        Event.CHANNEL_ERROR,
+        Event.YTDLP_UPDATE_RESULT,
+    }
+)
+
+
+@dataclass(frozen=True)
+class Target:
+    name: str
+    url: str = field(repr=False)
+    min_level: Level = Level.INFO
+    events: frozenset[Event] = DEFAULT_EVENTS
+    enabled: bool = True
+
+    def accepts(self, event: Event) -> bool:
+        return self.enabled and event in self.events and EVENT_LEVELS[event] >= self.min_level
+
+
+@dataclass(frozen=True)
+class Notification:
+    event: Event
+    title: str
+    body: str
+
+    @property
+    def level(self) -> Level:
+        return EVENT_LEVELS[self.event]
+
+
+@dataclass(frozen=True)
+class SendReport:
+    succeeded: tuple[str, ...] = ()
+    failed: tuple[str, ...] = ()
+    skipped: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AddedVideo:
+    video_title: str
+    playlist_title: str
+    video_url: str
+
+
+class Notifier:
+    def __init__(self, targets: Iterable[Target]):
+        self._targets = tuple(targets)
+
+    def send(self, notification: Notification) -> SendReport:
+        succeeded, failed, skipped = [], [], []
+        for target in self._targets:
+            if not target.accepts(notification.event):
+                skipped.append(target.name)
+            elif _deliver(target, notification.title, notification.body, notification.level, notification.event):
+                succeeded.append(target.name)
+            else:
+                failed.append(target.name)
+        return SendReport(tuple(succeeded), tuple(failed), tuple(skipped))
+
+    @staticmethod
+    def send_test(target: Target) -> bool:
+        title = f"{APP_NAME}: test notification"
+        body = f"This is a test notification for the target {target.name}. If you can read it, the target works."
+        return _deliver(target, title, body, Level.INFO, "test notification")
+
+    @staticmethod
+    def is_valid_url(url: str) -> bool:
+        return apprise.Apprise.instantiate(url) is not None
+
+
+def _deliver(target: Target, title: str, body: str, level: Level, what: str) -> bool:
+    try:
+        sender = apprise.Apprise()
+        if not sender.add(target.url):
+            LOG.warning("Cannot send %s to target %r: Apprise does not accept its URL", what, target.name)
+            return False
+        with sender.notify(
+            body=body,
+            title=title,
+            notify_type=level.notify_type,
+            body_format=apprise.NotifyFormat.TEXT,
+        ) as result:
+            status = result.status
+    except Exception as error:  # noqa: BLE001
+        # One broken target must not stop the others. The text of the exception can hold the URL,
+        # so only its type goes into the log.
+        LOG.warning("Cannot send %s to target %r: %s", what, target.name, type(error).__name__)
+        return False
+    if status != apprise.AppriseResultStatus.SUCCESS:
+        LOG.warning("Cannot send %s to target %r: Apprise reports %s", what, target.name, status.name)
+        return False
+    LOG.info("Sent %s to target %r", what, target.name)
+    return True
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
+
+
+def _limited(lines: Sequence[str]) -> list[str]:
+    shown = list(lines[:MAX_LISTED_ITEMS])
+    if len(lines) > MAX_LISTED_ITEMS:
+        shown.append(f"and {len(lines) - MAX_LISTED_ITEMS} more")
+    return shown
+
+
+def run_summary(added: Sequence[AddedVideo], errors: Sequence[str]) -> Notification:
+    title = f"{APP_NAME}: {_count(len(added), 'video')} added"
+    if errors:
+        title += f", {_count(len(errors), 'error')}"
+    parts = []
+    if added:
+        items = [f"- {item.video_title} -> {item.playlist_title}\n  {item.video_url}" for item in added]
+        parts.append("\n".join([f"Added {_count(len(added), 'video')}:", *_limited(items)]))
+    else:
+        parts.append("The run added no videos.")
+    if errors:
+        items = [f"- {error}" for error in errors]
+        parts.append("\n".join([f"{_count(len(errors), 'error')}:", *_limited(items)]))
+    return Notification(Event.RUN_SUMMARY, title, "\n\n".join(parts))
+
+
+def run_failed(error_text: str) -> Notification:
+    return Notification(
+        Event.RUN_FAILED,
+        f"{APP_NAME}: the run failed",
+        f"The run stopped with an error and added no more videos.\n\n{error_text}",
+    )
+
+
+def cookie_session_dead() -> Notification:
+    return Notification(
+        Event.COOKIE_SESSION_DEAD,
+        f"{APP_NAME}: YouTube does not accept the cookies",
+        "YouTube no longer accepts the cookies of the service. The service cannot read your subscriptions "
+        "or change your playlists. Export new YouTube cookies from your browser and upload them to the service.",
+    )
+
+
+def cookie_expiry(days_left: int, expires_at: datetime) -> Notification:
+    if days_left < 0:
+        raise ValueError(f"days_left must not be negative, got {days_left}")
+    when = "today" if days_left == 0 else f"in {_count(days_left, 'day')}"
+    return Notification(
+        Event.COOKIE_EXPIRY_WARNING,
+        f"{APP_NAME}: the YouTube cookies expire {when}",
+        f"The cookie file gives {expires_at.isoformat(sep=' ', timespec='minutes')} as the expiry time. "
+        "Export new YouTube cookies from your browser and upload them to the service before that time.",
+    )
+
+
+def channel_error(channel_title: str, error_text: str) -> Notification:
+    return Notification(
+        Event.CHANNEL_ERROR,
+        f"{APP_NAME}: cannot read the channel {channel_title}",
+        f"yt-dlp failed to read the channel {channel_title}. The run continues with the other channels."
+        f"\n\n{error_text}",
+    )
+
+
+def ytdlp_update(old_version: str, new_version: str, ok: bool, error_text: str | None = None) -> Notification:
+    if not ok:
+        title = f"{APP_NAME}: the yt-dlp update failed"
+        body = f"yt-dlp did not update from {old_version} to {new_version}. The service keeps {old_version}."
+        if error_text:
+            body += f"\n\n{error_text}"
+    elif old_version == new_version:
+        title = f"{APP_NAME}: yt-dlp is up to date"
+        body = f"yt-dlp {old_version} is the newest version."
+    else:
+        title = f"{APP_NAME}: yt-dlp updated to {new_version}"
+        body = f"yt-dlp updated from {old_version} to {new_version}. The next run uses the new version."
+    return Notification(Event.YTDLP_UPDATE_RESULT, title, body)
+
+
+def video_added(video_title: str, playlist_title: str, video_url: str) -> Notification:
+    return Notification(
+        Event.VIDEO_ADDED,
+        f"{APP_NAME}: video added to {playlist_title}",
+        f"Added {video_title} to the playlist {playlist_title}.\n{video_url}",
+    )
+
+
+def scheduler_state(paused: bool) -> Notification:
+    if paused:
+        title = f"{APP_NAME}: the schedule is paused"
+        body = "The service starts no runs until you resume the schedule."
+    else:
+        title = f"{APP_NAME}: the schedule is resumed"
+        body = "The service starts the runs by the schedule again."
+    return Notification(Event.SCHEDULER_STATE, title, body)
