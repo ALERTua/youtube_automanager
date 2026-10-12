@@ -1,0 +1,24 @@
+{
+ "ep": "browse/edit_playlist",
+ "query": {
+  "playlistId": "WL",
+  "actions": [
+   {
+    "action": "ACTION_ADD_VIDEO",
+    "addedVideoId": "SKOJfQG3qis"
+   }
+  ]
+ },
+ "response": {
+  "responseContext": {},
+  "status": "STATUS_SUCCEEDED",
+  "playlistEditResults": [
+   {
+    "playlistEditVideoAddedResultData": {
+     "videoId": "SKOJfQG3qis",
+     "setVideoId": "FAKE0000SETVIDEO"
+    }
+   }
+  ]
+ }
+}

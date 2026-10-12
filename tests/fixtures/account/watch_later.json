@@ -1,0 +1,185 @@
+{
+ "url": "https://www.youtube.com/playlist?list=WL",
+ "info": {
+  "_type": "playlist",
+  "id": "WL",
+  "title": "Watch later",
+  "channel_id": "UCfakeAccount00000000001",
+  "extractor_key": "YoutubeTab",
+  "webpage_url": "https://www.youtube.com/playlist?list=WL",
+  "entries": [
+   {
+    "_type": "url",
+    "ie_key": "Youtube",
+    "id": "SKOJfQG3qis",
+    "url": "https://www.youtube.com/watch?v=SKOJfQG3qis",
+    "title": "Fake video 1",
+    "description": null,
+    "duration": 607,
+    "channel_id": "UCfakeChannel00000000006",
+    "channel": "Fake channel 6",
+    "channel_url": "https://www.youtube.com/channel/UCfakeChannel00000000006",
+    "uploader": "Fake channel 6",
+    "uploader_id": "@fakehandle4",
+    "uploader_url": "https://www.youtube.com/@fakehandle4",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/SKOJfQG3qis/hqdefault0.jpg",
+      "height": 94,
+      "width": 168
+     },
+     {
+      "url": "https://i.ytimg.com/vi/SKOJfQG3qis/hqdefault1.jpg",
+      "height": 110,
+      "width": 196
+     },
+     {
+      "url": "https://i.ytimg.com/vi/SKOJfQG3qis/hqdefault2.jpg",
+      "height": 138,
+      "width": 246
+     },
+     {
+      "url": "https://i.ytimg.com/vi/SKOJfQG3qis/hqdefault3.jpg",
+      "height": 188,
+      "width": 336
+     }
+    ],
+    "timestamp": 1791590400,
+    "release_timestamp": null,
+    "availability": null,
+    "view_count": 1000,
+    "live_status": null,
+    "channel_is_verified": null
+   },
+   {
+    "_type": "url",
+    "ie_key": "Youtube",
+    "id": "fakeVideo01",
+    "url": "https://www.youtube.com/watch?v=fakeVideo01",
+    "title": "Fake video 2",
+    "description": null,
+    "duration": 1214,
+    "channel_id": "UCfakeChannel00000000006",
+    "channel": "Fake channel 6",
+    "channel_url": "https://www.youtube.com/channel/UCfakeChannel00000000006",
+    "uploader": "Fake channel 6",
+    "uploader_id": "@fakehandle4",
+    "uploader_url": "https://www.youtube.com/@fakehandle4",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo01/hqdefault0.jpg",
+      "height": 94,
+      "width": 168
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo01/hqdefault1.jpg",
+      "height": 110,
+      "width": 196
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo01/hqdefault2.jpg",
+      "height": 138,
+      "width": 246
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo01/hqdefault3.jpg",
+      "height": 188,
+      "width": 336
+     }
+    ],
+    "timestamp": 1791504000,
+    "release_timestamp": null,
+    "availability": null,
+    "view_count": 2000,
+    "live_status": null,
+    "channel_is_verified": null
+   },
+   {
+    "_type": "url",
+    "ie_key": "Youtube",
+    "id": "fakeVideo02",
+    "url": "https://www.youtube.com/watch?v=fakeVideo02",
+    "title": "Fake video 3",
+    "description": null,
+    "duration": 1821,
+    "channel_id": "UCfakeChannel00000000007",
+    "channel": "Fake channel 7",
+    "channel_url": "https://www.youtube.com/channel/UCfakeChannel00000000007",
+    "uploader": "Fake channel 7",
+    "uploader_id": "@fakehandle5",
+    "uploader_url": "https://www.youtube.com/@fakehandle5",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo02/hqdefault0.jpg",
+      "height": 94,
+      "width": 168
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo02/hqdefault1.jpg",
+      "height": 110,
+      "width": 196
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo02/hqdefault2.jpg",
+      "height": 138,
+      "width": 246
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo02/hqdefault3.jpg",
+      "height": 188,
+      "width": 336
+     }
+    ],
+    "timestamp": 1791417600,
+    "release_timestamp": null,
+    "availability": null,
+    "view_count": 3000,
+    "live_status": "was_live",
+    "channel_is_verified": null
+   },
+   {
+    "_type": "url",
+    "ie_key": "Youtube",
+    "id": "fakeVideo03",
+    "url": "https://www.youtube.com/watch?v=fakeVideo03",
+    "title": "Fake video 4",
+    "description": null,
+    "duration": 2428,
+    "channel_id": null,
+    "channel": "Fake channel A and Fake channel B 1",
+    "channel_url": null,
+    "uploader": "Fake channel A and Fake channel B 1",
+    "uploader_id": null,
+    "uploader_url": null,
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo03/hqdefault0.jpg",
+      "height": 94,
+      "width": 168
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo03/hqdefault1.jpg",
+      "height": 110,
+      "width": 196
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo03/hqdefault2.jpg",
+      "height": 138,
+      "width": 246
+     },
+     {
+      "url": "https://i.ytimg.com/vi/fakeVideo03/hqdefault3.jpg",
+      "height": 188,
+      "width": 336
+     }
+    ],
+    "timestamp": 1791331200,
+    "release_timestamp": null,
+    "availability": null,
+    "view_count": 4000,
+    "live_status": null,
+    "channel_is_verified": null
+   }
+  ]
+ }
+}

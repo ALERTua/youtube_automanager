@@ -1,0 +1,49 @@
+{
+ "ep": "account/account_menu",
+ "query": {},
+ "response": {
+  "responseContext": {},
+  "actions": [
+   {
+    "openPopupAction": {
+     "popupType": "DROPDOWN",
+     "popup": {
+      "multiPageMenuRenderer": {
+       "header": {
+        "activeAccountHeaderRenderer": {
+         "accountName": {
+          "simpleText": "Fake account"
+         },
+         "accountPhoto": {
+          "thumbnails": [
+           {
+            "url": "https://yt3.ggpht.com/fake-account-photo"
+           }
+          ]
+         },
+         "channelHandle": {
+          "simpleText": "@fakeaccount"
+         },
+         "manageAccountTitle": {
+          "runs": [
+           {
+            "text": "View your channel",
+            "navigationEndpoint": {
+             "browseEndpoint": {
+              "browseId": "UCfakeAccount00000000001",
+              "canonicalBaseUrl": "/@fakeaccount"
+             }
+            }
+           }
+          ]
+         }
+        }
+       },
+       "sections": []
+      }
+     }
+    }
+   }
+  ]
+ }
+}
