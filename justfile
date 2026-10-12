@@ -3,8 +3,11 @@ set dotenv-load
 set shell := ["powershell", "-c"]
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
+# The folder of this file with forward slashes. A single-quoted string of just has no escapes, so '\\' would be two
+# backslashes, and only the double-quoted "\\" is one.
+project_dir := replace(justfile_directory(), "\\", "/")
 # The local service keeps its database and its yt-dlp releases in the folder data next to this file.
-data_dir := replace(justfile_directory(), "\\", "/") + "/data"
+data_dir := project_dir + "/data"
 database_url := env("DATABASE_URL", "sqlite:///" + data_dir + "/youtube_automanager.sqlite")
 ytdlp_dir := env("YTDLP_DIR", data_dir + "/yt-dlp")
 image := "youtube_automanager"
@@ -69,7 +72,7 @@ build:
 # Run the image with wslc: the settings come from .env, and the data folder is mounted on /data
 run PORT=env("PORT", "8080"):
     New-Item -ItemType Directory -Force "{{data_dir}}" | Out-Null; \
-    wslc run -d --name {{container}} -p "{{PORT}}:8080" --env-file "{{replace(justfile_directory(), '\\', '/')}}/.env" \
+    wslc run -d --name {{container}} -p "{{PORT}}:8080" --env-file "{{project_dir}}/.env" \
     -v "{{data_dir}}:/data" {{image}}
 
 # Stop and remove the container
