@@ -1,0 +1,157 @@
+# Translations template for PROJECT.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the PROJECT project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PROJECT VERSION\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-10-12 11:05+0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Cookie session"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Dashboard"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Dead"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Earliest cookie expiry"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Error"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Expiring"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Failed"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "In progress"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Last check"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Last run"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Manual"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Never"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Next run"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "No cookies are stored yet."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "No expiry date"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "No run is planned"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "No run yet."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "OK"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Paused"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Running"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Schedule"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Scheduler"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Started"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "State"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Status"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Stopped"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Succeeded"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Time zone"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Trigger"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Unknown"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Videos added"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Videos seen"
+msgstr ""
+
+#: youtube_automanager/web/ui/__init__.py youtube_automanager/web/ui/layout.py
+msgid "YouTube AutoManager"
+msgstr ""
+
+#. Translators: the title of the browser tab. {page} is the name of the page,
+#. for example "Dashboard".
+#: youtube_automanager/web/ui/layout.py
+#, python-brace-format
+msgid "{page} - YouTube AutoManager"
+msgstr ""

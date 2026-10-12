@@ -122,3 +122,10 @@ def runs(
             select(Run).order_by(Run.started_at.desc(), Run.id.desc()).limit(limit).offset(offset)
         ).all()
         return [RunOut.model_validate(row) for row in rows]
+
+
+# The pages answer each path that no route takes, with HTML. An API client gets the JSON 404 of FastAPI instead.
+# This route comes last, so each API route above it matches first.
+@router.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+def unknown_api_path(path: str) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": "Not Found"})
