@@ -1,8 +1,9 @@
-"""The settings page: the YouTube cookies, the cookie rotation and the processing mode.
+"""The settings page: the YouTube cookies, the cookie rotation, the processing mode, yt-dlp and the notifications.
 
 The web UI has no login, so anybody who can open the page can read it. The page therefore never shows a cookie value
-or a stored notification URL. No log line of the page holds a cookie value or a target URL. The block of the
-notification targets is in the module ``notifications_section``, and the page shows it last.
+or a stored notification URL. No log line of the page holds a cookie value or a target URL. The block of yt-dlp is in
+the module ``ytdlp_section``. The block of the notification targets is in the module ``notifications_section``, and
+the page shows it last.
 
 The session check runs in a child process of the runner, and a test notification can take up to a minute, so the page
 waits for both in a thread. The page reads and writes the database in a thread, never on the event loop. Each time
@@ -46,6 +47,7 @@ from youtube_automanager.web.ui.service_settings import (
     save_processing,
     save_rotation,
 )
+from youtube_automanager.web.ui.ytdlp_section import ytdlp_section
 from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES
 from youtube_automanager.youtube.session import CookieCipher, CookieKeyError
 
@@ -456,4 +458,5 @@ async def settings_page(services: Services) -> None:
     await _cookies_section(services)
     await _rotation_section(services, writes)
     await _processing_section(services, writes)
+    await ytdlp_section(services, writes)
     await notifications_section(services, writes)

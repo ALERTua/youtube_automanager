@@ -1,3 +1,4 @@
+import importlib.metadata
 import re
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -131,6 +132,23 @@ async def test_paused_schedule_has_no_next_run_and_shows_its_own_time_zone(
         assert text_of(user, "run-started") == "2026-01-04 19:00 EST"
 
 
+async def test_dashboard_shows_the_ytdlp_of_the_image_without_a_release_in_the_data_folder(user):
+    await user.open("/")
+
+    assert text_of(user, "ytdlp-version") == importlib.metadata.version("yt-dlp")
+    assert text_of(user, "ytdlp-source") == "Image of the service"
+
+
+async def test_dashboard_shows_the_ytdlp_of_the_data_folder_after_an_update(user, settings, ytdlp_install, monkeypatch):
+    monkeypatch.setattr(dashboard, "REFRESH_SECONDS", 0.1)
+    await user.open("/")
+
+    ytdlp_install.write_release(settings.ytdlp_dir, "2099.1.2")
+
+    await user.should_see("Data folder", retries=50)
+    assert text_of(user, "ytdlp-version") == "2099.1.2"
+
+
 async def test_dashboard_refreshes_itself(user, sessions, monkeypatch):
     monkeypatch.setattr(dashboard, "REFRESH_SECONDS", 0.1)
     await user.open("/")
@@ -185,7 +203,7 @@ async def test_each_text_of_the_dashboard_goes_through_the_translation(
         Account(cookies=b"encrypted", last_checked_at=datetime(2026, 10, 1, tzinfo=UTC)),
         Run(status=RunStatus.FAILED, trigger=RunTrigger.MANUAL, added_count=2, seen_count=7, error_text="boom"),
     )
-    data = {"Europe/Kyiv", "2", "7", "boom"}
+    data = {"Europe/Kyiv", "2", "7", "boom", importlib.metadata.version("yt-dlp")}
 
     async with running_service(settings, fake_starter) as user:
         await user.open("/")

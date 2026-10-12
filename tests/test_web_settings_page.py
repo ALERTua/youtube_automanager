@@ -3,6 +3,7 @@ for each notification service, so no test reads YouTube or sends a real notifica
 
 import asyncio
 import datetime
+import importlib.metadata
 import logging
 import re
 import subprocess
@@ -175,7 +176,7 @@ async def test_the_settings_page_is_the_last_page_of_the_drawer(user):
     user.find(marker="nav:/settings").click()
 
     await user.should_see(marker="cookies-card")
-    for marker in ("rotation-card", "mode-card", "targets-card"):
+    for marker in ("rotation-card", "mode-card", "ytdlp-card", "targets-card"):
         await user.should_see(marker=marker)
 
 
@@ -889,7 +890,7 @@ async def test_each_text_of_the_settings_page_goes_through_the_translation(
         Schedule(enabled=True, kind=ScheduleKind.CRON, timezone="Europe/Kyiv"),
         target(1, "Phone"),
     )
-    data = {"Phone", "settingsok://…", KEY_COMMAND, COMPOSE_KEY_COMMAND}
+    data = {"Phone", "settingsok://…", KEY_COMMAND, COMPOSE_KEY_COMMAND, importlib.metadata.version("yt-dlp")}
     texts = []
 
     async with running_service(settings.model_copy(update={"cookies_key": None}), fake_starter) as user:
@@ -906,6 +907,8 @@ async def test_each_text_of_the_settings_page_goes_through_the_translation(
     assert "<<Settings>>" in texts
     assert "<<Info>>" in texts
     assert "<<Stop at a seen video (default)>>" in texts
+    assert "<<Nightly>>" in texts
+    assert "<<Time of the update>>" in texts
     untranslated = [
         text
         for text in texts

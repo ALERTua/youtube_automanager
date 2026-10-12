@@ -1,7 +1,7 @@
-"""The dashboard: the state of the cookie session, of the scheduler and of the last run.
+"""The dashboard: the state of the cookie session, of the scheduler and of the last run, and the version of yt-dlp.
 
-The page reads the database in a thread, never on the event loop, and reads it again each ``REFRESH_SECONDS``.
-Each date shows in the time zone of the schedule.
+The page reads the database and the yt-dlp folder in a thread, never on the event loop, and reads them again each
+``REFRESH_SECONDS``. Each date shows in the time zone of the schedule.
 """
 
 import asyncio
@@ -18,6 +18,7 @@ from youtube_automanager.i18n import N_, _
 from youtube_automanager.scheduler import SchedulerState
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.layout import register_page
+from youtube_automanager.youtube.ytdlp_updater import Source, active_version
 
 REFRESH_SECONDS = 10.0
 TIME_FORMAT = "%Y-%m-%d %H:%M %Z"
@@ -42,6 +43,10 @@ RUN_TRIGGERS = {
     RunTrigger.SCHEDULE: N_("Schedule"),
     RunTrigger.MANUAL: N_("Manual"),
     RunTrigger.RULE_APPLY: N_("Rule apply"),
+}
+YTDLP_SOURCES: dict[Source, str] = {
+    "data_folder": N_("Data folder"),
+    "image": N_("Image of the service"),
 }
 
 
@@ -77,6 +82,9 @@ class Snapshot:
     stored: StoredState
     scheduler_state: SchedulerState
     next_run_at: datetime | None
+    # The yt-dlp that the next run imports, and where it comes from.
+    ytdlp_version: str | None
+    ytdlp_source: Source
 
 
 def read_stored_state(sessions: sessionmaker[Session], default_timezone: str) -> StoredState:
@@ -114,11 +122,14 @@ async def take_snapshot(services: Services) -> Snapshot:
     # Not run.io_bound of NiceGUI: it returns None instead of the CancelledError of a cancelled call. A timer
     # whose callback swallows the cancel goes on, and the stop of the service waits 2 s for it and logs an error.
     stored = await asyncio.to_thread(read_stored_state, services.sessions, services.settings.tz)
+    ytdlp_version, ytdlp_source = await asyncio.to_thread(active_version, services.settings.ytdlp_dir)
     next_run_times = await services.scheduler.next_run_times(1)
     return Snapshot(
         stored=stored,
         scheduler_state=await services.scheduler.state(),
         next_run_at=next_run_times[0] if next_run_times else None,
+        ytdlp_version=ytdlp_version,
+        ytdlp_source=ytdlp_source,
     )
 
 
@@ -194,6 +205,16 @@ def _last_run_card(last_run: LastRun | None, zone: ZoneInfo) -> None:
             )
 
 
+def _ytdlp_card(version: str | None, source: Source) -> None:
+    with ui.card().classes("flex-1 min-w-72").mark("ytdlp-card"):
+        ui.label(_("yt-dlp")).classes("text-h6")
+        with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-center"):
+            with _field(_("Version")):
+                _value(version or _("Unknown"), "ytdlp-version")
+            with _field(_("Source")):
+                _value(_(YTDLP_SOURCES[source]), "ytdlp-source")
+
+
 @register_page("/", label=N_("Dashboard"), icon="dashboard")
 async def dashboard_page(services: Services) -> None:
     @ui.refreshable
@@ -203,6 +224,7 @@ async def dashboard_page(services: Services) -> None:
             _session_card(snapshot.stored.session, zone)
             _scheduler_card(snapshot.scheduler_state, snapshot.next_run_at, zone)
             _last_run_card(snapshot.stored.last_run, zone)
+            _ytdlp_card(snapshot.ytdlp_version, snapshot.ytdlp_source)
 
     async def refresh() -> None:
         cards.refresh(await take_snapshot(services))

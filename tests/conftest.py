@@ -1,6 +1,7 @@
 import datetime
 import io
 import logging
+import shutil
 import subprocess
 import threading
 
@@ -25,7 +26,67 @@ from youtube_automanager.db.models import (
     Setting,
 )
 from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, SyncRun
+from youtube_automanager.runner import SYNC_LOCK
 from youtube_automanager.settings import Settings
+from youtube_automanager.youtube.ytdlp_updater import UpdateResult, installed_version
+
+
+class FakeYtdlpInstall:
+    """Replaces the install of a yt-dlp release, so no test reads PyPI or runs uv. Records each call.
+
+    Each call takes its outcome from ``plan``: ``{"version": ...}`` puts a fake release of that version into the folder,
+    and ``{"error": ..., "version": ...}`` fails the update and leaves the folder as it is. With an empty plan, the
+    folder stays as it is and counts as up to date. A set ``release`` event holds each call until it is set.
+    """
+
+    def __init__(self):
+        self.plan = []
+        self.calls = []
+        # The sync lock of the runner, and whether it was taken at each call.
+        self.lock = SYNC_LOCK
+        self.lock_taken = []
+        self.started = threading.Event()
+        self.release = None
+
+    def __call__(self, target_dir, channel):
+        self.calls.append((target_dir, channel))
+        self.lock_taken.append(self.lock.locked())
+        self.started.set()
+        if self.release is not None:
+            self.release.wait(10)
+        old_version = installed_version(target_dir)
+        outcome = self.plan.pop(0) if self.plan else {"version": old_version}
+        new_version = outcome.get("version")
+        if "error" in outcome:
+            return UpdateResult(False, channel, old_version, new_version, outcome["error"])
+        if new_version != old_version:
+            self.write_release(target_dir, new_version)
+        return UpdateResult(True, channel, old_version, new_version, None)
+
+    @staticmethod
+    def write_release(target_dir, version):
+        """Put a fake release of ``version`` into ``target_dir``: the metadata and a module with that version."""
+        shutil.rmtree(target_dir, ignore_errors=True)
+        dist_info = target_dir / f"yt_dlp-{version}.dist-info"
+        dist_info.mkdir(parents=True)
+        (dist_info / "METADATA").write_text(
+            f"Metadata-Version: 2.4\nName: yt-dlp\nVersion: {version}\n", encoding="utf-8"
+        )
+        package = target_dir / "yt_dlp"
+        package.mkdir()
+        (package / "__init__.py").write_text("", encoding="utf-8")
+        (package / "version.py").write_text(f"__version__ = {version!r}\n", encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def ytdlp_install(monkeypatch):
+    """Replaces the install of a yt-dlp release in the service with a ``FakeYtdlpInstall``, and returns the fake.
+
+    The service plans a daily update, so a test that runs the service at that time would read PyPI and run uv.
+    """
+    fake = FakeYtdlpInstall()
+    monkeypatch.setattr("youtube_automanager.web.app.update_ytdlp", fake)
+    return fake
 
 
 @pytest.fixture(autouse=True)

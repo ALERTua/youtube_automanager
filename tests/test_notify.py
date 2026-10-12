@@ -408,3 +408,36 @@ def test_ytdlp_update_tells_a_new_version_from_the_same_version_and_a_failure():
     assert "up to date" in same.title
     assert "failed" in failed.title
     assert "no space left" in failed.body
+
+
+@pytest.mark.parametrize(
+    ("image_version", "image"),
+    [("2026.8.19", "the yt-dlp 2026.8.19 of the image"), (None, "the yt-dlp of the image")],
+)
+def test_ytdlp_update_without_an_old_version_names_the_yt_dlp_of_the_image(image_version, image):
+    installed = notify.ytdlp_update(None, "2026.10.01", ok=True, image_version=image_version)
+    failed = notify.ytdlp_update(None, "2026.10.01", ok=False, error_text="no space left", image_version=image_version)
+    no_answer = notify.ytdlp_update(None, None, ok=False, error_text="network is down", image_version=image_version)
+
+    assert installed.title.endswith("yt-dlp updated to 2026.10.01")
+    assert installed.body == (
+        f"yt-dlp 2026.10.01 is now in the data folder, which held no yt-dlp before. Until now, the service used {image}. "
+        "The next run uses the new version."
+    )
+    assert failed.body == (
+        f"yt-dlp did not update to 2026.10.01. The data folder holds no yt-dlp, so the service keeps {image}."
+        "\n\nno space left"
+    )
+    assert no_answer.body.startswith(
+        f"yt-dlp did not update. The data folder holds no yt-dlp, so the service keeps {image}."
+    )
+    for notification in (installed, failed, no_answer):
+        assert "None" not in notification.body
+
+
+def test_ytdlp_update_without_the_latest_version_keeps_the_old_one():
+    notification = notify.ytdlp_update("2026.09.01", None, ok=False, error_text="network is down")
+
+    assert (
+        notification.body == "yt-dlp did not update from 2026.09.01. The service keeps 2026.09.01.\n\nnetwork is down"
+    )

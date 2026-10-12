@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.scheduler import Scheduler
 from youtube_automanager.settings import Settings
+from youtube_automanager.ytdlp_job import YtdlpUpdates
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class Services:
     sessions: sessionmaker[Session]
     runner: SyncRunner
     scheduler: Scheduler
+    ytdlp: YtdlpUpdates
 
 
 def get_services(request: Request) -> Services:

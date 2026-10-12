@@ -569,7 +569,8 @@ async def test_a_found_channel_goes_into_a_rule_with_a_new_channel_row(user, ses
     await user.should_see("Rule Science now reads Found Channel.")
     await channels_are(user, [ALPHA, FOUND])
     assert rows_of(user, "channels-table")[1]["rules"] == "Science"
-    assert text_of(user, "channel-rules") == "Science"
+    # The dialog rebuilds a moment after the table, so the test waits for its text.
+    await eventually(lambda: text_of(user, "channel-rules") == "Science", "The rules of the channel in the dialog")
     # The page writes the database itself, and starts no child for it.
     assert commands(fake_starter) == [["find-channels", "--query=query"]]
 

@@ -249,10 +249,26 @@ def channel_error(channel_title: str, error_text: str) -> Notification:
     )
 
 
-def ytdlp_update(old_version: str, new_version: str, ok: bool, error_text: str | None = None) -> Notification:
+def ytdlp_update(
+    old_version: str | None,
+    new_version: str | None,
+    ok: bool,
+    error_text: str | None = None,
+    image_version: str | None = None,
+) -> Notification:
+    """Tell the result of a yt-dlp update.
+
+    ``old_version`` is None when the data folder held no yt-dlp, so the service used the copy of the image, which has
+    ``image_version``. ``new_version`` is None when the service could not get the latest version.
+    """
+    image = f"the yt-dlp {image_version} of the image" if image_version else "the yt-dlp of the image"
     if not ok:
         title = f"{APP_NAME}: the yt-dlp update failed"
-        body = f"yt-dlp did not update from {old_version} to {new_version}. The service keeps {old_version}."
+        target = f" to {new_version}" if new_version else ""
+        if old_version is None:
+            body = f"yt-dlp did not update{target}. The data folder holds no yt-dlp, so the service keeps {image}."
+        else:
+            body = f"yt-dlp did not update from {old_version}{target}. The service keeps {old_version}."
         if error_text:
             body += f"\n\n{error_text}"
     elif old_version == new_version:
@@ -260,7 +276,14 @@ def ytdlp_update(old_version: str, new_version: str, ok: bool, error_text: str |
         body = f"yt-dlp {old_version} is the newest version."
     else:
         title = f"{APP_NAME}: yt-dlp updated to {new_version}"
-        body = f"yt-dlp updated from {old_version} to {new_version}. The next run uses the new version."
+        if old_version is None:
+            body = (
+                f"yt-dlp {new_version} is now in the data folder, which held no yt-dlp before. "
+                f"Until now, the service used {image}."
+            )
+        else:
+            body = f"yt-dlp updated from {old_version} to {new_version}."
+        body += " The next run uses the new version."
     return Notification(Event.YTDLP_UPDATE_RESULT, title, body)
 
 

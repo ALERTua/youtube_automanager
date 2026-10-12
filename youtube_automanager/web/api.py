@@ -6,10 +6,8 @@ A blocking database call never runs on the event loop: a ``def`` route runs in t
 """
 
 import dataclasses
-import importlib.metadata
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -33,7 +31,7 @@ from youtube_automanager.db.models import Account, Run, RunStatus, RunTrigger, S
 from youtube_automanager.runner import SessionCheckOutcome
 from youtube_automanager.scheduler import SchedulerState
 from youtube_automanager.web.services import Services, get_services
-from youtube_automanager.youtube.ytdlp_updater import DISTRIBUTION, installed_version
+from youtube_automanager.youtube.ytdlp_updater import Source, active_version
 
 LOG = logging.getLogger(__name__)
 
@@ -74,7 +72,7 @@ class StatusOut(BaseModel):
     session_state: SessionState | None
     ytdlp_version: str | None
     # "data_folder" for a release that the service installed, "image" for the copy that came with the service.
-    ytdlp_source: Literal["data_folder", "image"]
+    ytdlp_source: Source
 
 
 class SessionCheckOut(BaseModel):
@@ -111,21 +109,11 @@ def _read_status_rows(sessions: sessionmaker[Session]) -> tuple[RunOut | None, S
         )
 
 
-def _ytdlp_version(ytdlp_dir: Path) -> tuple[str | None, Literal["data_folder", "image"]]:
-    version = installed_version(ytdlp_dir)
-    if version:
-        return version, "data_folder"
-    try:
-        return importlib.metadata.version(DISTRIBUTION), "image"
-    except importlib.metadata.PackageNotFoundError:
-        return None, "image"
-
-
 @router.get("/api/status", response_model=StatusOut)
 async def status(services: ServicesDep) -> StatusOut:
     next_run_times = await services.scheduler.next_run_times(1)
     last_run, session_state = await run_in_threadpool(_read_status_rows, services.sessions)
-    ytdlp_version, ytdlp_source = await run_in_threadpool(_ytdlp_version, services.settings.ytdlp_dir)
+    ytdlp_version, ytdlp_source = await run_in_threadpool(active_version, services.settings.ytdlp_dir)
     return StatusOut(
         scheduler_state=await services.scheduler.state(),
         next_run_at=next_run_times[0] if next_run_times else None,

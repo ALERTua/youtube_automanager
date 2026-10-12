@@ -30,6 +30,8 @@ LOG = logging.getLogger(__name__)
 _PYPI_ERRORS = (OSError, http.client.HTTPException, ValueError, LookupError, TypeError, AttributeError)
 
 Channel = Literal["stable", "nightly"]
+# Where the yt-dlp of the next child process comes from: the data folder, or the copy that came with the service.
+Source = Literal["data_folder", "image"]
 
 DISTRIBUTION = "yt-dlp"
 PYPI_URL = "https://pypi.org/pypi/yt-dlp/json"
@@ -69,6 +71,30 @@ def installed_version(target_dir: Path) -> str | None:
         LOG.warning("Cannot read the yt-dlp metadata in %s: %s", target_dir, error)
         return None
     return version or None
+
+
+def image_version() -> str | None:
+    """Return the version of the yt-dlp that came with the service, or None when the service has none.
+
+    The version comes from the metadata on the import path of this process, which does not hold the data folder, so
+    ``yt_dlp`` is not imported.
+    """
+    try:
+        return importlib.metadata.version(DISTRIBUTION)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def active_version(target_dir: Path) -> tuple[str | None, Source]:
+    """Return the version of the yt-dlp that the next child process imports, and where it comes from.
+
+    A release in ``target_dir`` comes first on the import path of the child. Without one, the child imports the copy
+    that came with the service.
+    """
+    version = installed_version(target_dir)
+    if version:
+        return version, "data_folder"
+    return image_version(), "image"
 
 
 def installed_channel(target_dir: Path) -> str | None:
