@@ -2,6 +2,8 @@
 
 Read this index from the top. A line with no link is the full rule.
 
+- A new value of an enumeration column needs a hand-written Alembic revision. The revision changes the CHECK constraint and the length of the column, because the column is as long as its longest value: PostgreSQL refuses a longer value, and `compare_type` reports the old length. On SQLite, `batch_alter_table` with `drop_constraint(..., type_="check")`, `alter_column` and `create_check_constraint` copies the table and keeps its rows. `test_check_constraints_of_models_and_migrations_agree` compares the result with `create_all`.
+
 - [YouTube access](youtube-access.md) — before you write code that reads or writes YouTube data, or that handles the cookie session, read this file.
 - [Scheduler](scheduler.md) — before you change the scheduler, or the way a sync job runs, read this file.
 - [Rule conditions](rule-conditions.md) — before you change the rule format, the rule evaluator or the rule editor, read this file.
