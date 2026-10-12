@@ -7,6 +7,7 @@ import pytest
 from apprise.decorators import notify as apprise_notify
 
 from youtube_automanager import notify
+from youtube_automanager.db.models import NotificationTarget
 from youtube_automanager.notify import (
     DEFAULT_EVENTS,
     EVENT_LEVELS,
@@ -276,6 +277,58 @@ def test_no_log_line_holds_a_part_of_a_target_url(monkeypatch, all_logs, sent):
     assert report == SendReport(succeeded=("capture",), failed=("false", "raise", "refused", "crash"))
     for name in ("capture", "false", "raise", "refused", "crash"):
         assert any(f"'{name}'" in line for line in all_logs), name
+    assert [line for line in all_logs if SECRET in line] == []
+
+
+def test_stored_targets_read_the_table(db_sessions):
+    with db_sessions.begin() as session:
+        session.add_all(
+            [
+                NotificationTarget(
+                    name="phone",
+                    url="testcapture://phone",
+                    min_level=Level.WARNING,
+                    events=["run_failed", "no_such_event"],
+                    enabled=True,
+                ),
+                NotificationTarget(name="loud", url="testcapture://loud", min_level=20, events=[], enabled=False),
+                NotificationTarget(
+                    name="all", url="testcapture://all", min_level=-3, events=["run_summary"], enabled=True
+                ),
+            ]
+        )
+
+    with db_sessions() as session:
+        targets = notify.stored_targets(session)
+
+    assert targets == [
+        Target("phone", "testcapture://phone", Level.WARNING, frozenset({Event.RUN_FAILED}), True),
+        Target("loud", "testcapture://loud", Level.FAILURE, frozenset(), False),
+        Target("all", "testcapture://all", Level.INFO, frozenset({Event.RUN_SUMMARY}), True),
+    ]
+
+
+def test_send_to_stored_targets_sends_to_each_target_that_takes_the_event(db_sessions, sent):
+    with db_sessions.begin() as session:
+        session.add_all(
+            [
+                NotificationTarget(name="a", url="testcapture://a", min_level=0, events=["run_failed"], enabled=True),
+                NotificationTarget(name="b", url="testcapture://b", min_level=0, events=["run_summary"], enabled=True),
+            ]
+        )
+
+    report = notify.send_to_stored_targets(db_sessions, notify.run_failed("boom"))
+
+    assert report == SendReport(succeeded=("a",), skipped=("b",))
+    assert [message["host"] for message in sent] == ["a"]
+
+
+def test_send_to_stored_targets_never_raises(all_logs):
+    def broken_sessions():
+        raise RuntimeError(f"cannot connect to postgresql://user:{SECRET}@db")
+
+    assert notify.send_to_stored_targets(broken_sessions, notify.run_failed("boom")) is None
+    assert any("Cannot send run_failed: RuntimeError" in line for line in all_logs)
     assert [line for line in all_logs if SECRET in line] == []
 
 

@@ -6,10 +6,8 @@ from pydantic import ValidationError
 from youtube_automanager.settings import HOME_DEFAULT, Settings, get_settings
 
 VARIABLES = [
-    "USERNAME",
     "HOME",
     "DB_FILENAME",
-    "CONFIG_FILENAME",
     "VERBOSE",
     "HOST",
     "PORT",
@@ -37,10 +35,8 @@ def test_variables_cover_each_field():
 def test_defaults_with_an_empty_environment(env):
     settings = Settings()
 
-    assert settings.username == "user"
     assert settings.home == Path("/app/config")
     assert settings.db_filename == "youtube_automanager.sqlite"
-    assert settings.config_filename == "youtube_automanager.yaml"
     assert settings.verbose is False
     assert settings.host == "0.0.0.0"
     assert settings.port == 8080
@@ -67,10 +63,8 @@ def test_cookies_key_is_secret(env, value):
 @pytest.mark.parametrize(
     ("variable", "value", "field", "expected"),
     [
-        ("USERNAME", "alice", "username", "alice"),
         ("HOME", "/data", "home", Path("/data")),
         ("DB_FILENAME", "my.sqlite", "db_filename", "my.sqlite"),
-        ("CONFIG_FILENAME", "my.yaml", "config_filename", "my.yaml"),
         ("VERBOSE", "True", "verbose", True),
         ("HOST", "127.0.0.1", "host", "127.0.0.1"),
         ("PORT", "9000", "port", 9000),
@@ -102,22 +96,25 @@ def test_empty_home_gives_the_default(env):
     assert Settings().home == HOME_DEFAULT == Path("/app/config")
 
 
-def test_derived_paths(env):
+def test_derived_path(env):
     env.setenv("HOME", "/data")
     env.setenv("DB_FILENAME", "my.sqlite")
-    env.setenv("CONFIG_FILENAME", "my.yaml")
+
+    assert Settings().db_filepath == Path("/data/my.sqlite")
+
+
+def test_derived_path_with_the_default_file_name(env):
+    assert Settings().db_filepath == Path("/app/config/youtube_automanager.sqlite")
+
+
+@pytest.mark.parametrize("variable", ["USERNAME", "CONFIG_FILENAME"])
+def test_a_removed_variable_is_ignored(env, variable):
+    env.setenv(variable, "anything")
 
     settings = Settings()
 
-    assert settings.db_filepath == Path("/data/my.sqlite")
-    assert settings.config_filepath == Path("/data/my.yaml")
-
-
-def test_derived_paths_with_default_file_names(env):
-    settings = Settings()
-
-    assert settings.db_filepath == Path("/app/config/youtube_automanager.sqlite")
-    assert settings.config_filepath == Path("/app/config/youtube_automanager.yaml")
+    assert variable.lower() not in Settings.model_fields
+    assert not hasattr(settings, variable.lower())
 
 
 def test_database_url_and_ytdlp_dir_follow_home_and_db_filename(env):
@@ -165,13 +162,13 @@ def test_out_of_range_numbers_are_refused(env, variable, value):
 
 
 def test_get_settings_reads_the_environment_once_until_the_cache_is_cleared(env):
-    env.setenv("USERNAME", "first")
+    env.setenv("HOST", "127.0.0.1")
     first = get_settings()
-    env.setenv("USERNAME", "second")
+    env.setenv("HOST", "127.0.0.2")
 
     assert get_settings() is first
-    assert get_settings().username == "first"
+    assert get_settings().host == "127.0.0.1"
 
     get_settings.cache_clear()
 
-    assert get_settings().username == "second"
+    assert get_settings().host == "127.0.0.2"

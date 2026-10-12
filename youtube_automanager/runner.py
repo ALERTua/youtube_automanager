@@ -1,10 +1,12 @@
 """Runs each sync in a child process and keeps the history of the runs in the ``run`` table.
 
 The parent writes the ``run`` row: ``running`` at the start, and the end time with ``succeeded`` or ``failed`` at the
-end. The child does the sync itself, so a yt-dlp update in the data folder takes effect at the next run.
+end, and it sends the ``run_failed`` notification. The child does the sync itself, so a yt-dlp update in the data
+folder takes effect at the next run.
 """
 
 import collections
+import functools
 import logging
 import os
 import subprocess
@@ -19,6 +21,7 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session, sessionmaker
 
 import youtube_automanager
+from youtube_automanager import notify
 from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.db.models import Run, RunStatus, RunTrigger, utc_now
 from youtube_automanager.settings import Settings
@@ -143,8 +146,11 @@ class SyncRunner:
         child_timeout_s: float,
         start: ChildStarter = start_child,
         lock: threading.Lock = SYNC_LOCK,
+        send: Callable[[notify.Notification], object] | None = None,
     ):
+        """``send`` sends a notification. By default it sends to the targets of the database."""
         self._sessions = sessions
+        self._send = send or functools.partial(notify.send_to_stored_targets, sessions)
         self._ytdlp_dir = ytdlp_dir
         self._database_url = database_url
         self._child_timeout_s = child_timeout_s
@@ -291,8 +297,15 @@ class SyncRunner:
             run.error_text = error_text
         if status is RunStatus.SUCCEEDED:
             LOG.info("Run %s succeeded", run_id)
-        else:
-            LOG.warning("Run %s failed: %s", run_id, error_text)
+            return
+        LOG.warning("Run %s failed: %s", run_id, error_text)
+        # A run that the stop of the service ended needs no message: the user stopped the service.
+        if error_text != INTERRUPTED_ERROR:
+            try:
+                self._send(notify.run_failed(error_text or "The run failed without an error text."))
+            except Exception as error:  # noqa: BLE001
+                # A failed notification must never change the result of the run.
+                LOG.warning("Run %s: cannot send the failure notification: %s", run_id, type(error).__name__)
 
 
 def mark_interrupted_runs(sessions: sessionmaker[Session]) -> int:
@@ -316,15 +329,25 @@ def run_once(run_id: int, settings: Settings) -> int:
     """The body of one sync in the child process. Return the exit code of the child.
 
     The parent owns the status of the ``run`` row. The child writes only what the sync finds: the ``run_action`` rows
-    and the counts of the run.
+    and the counts of the run. When the run cannot go on, the child writes the cause as the last line of its stderr,
+    because the parent takes the error text of the run from there.
     """
+    # The sync engine imports yt-dlp, so only the child loads it, and a yt-dlp update takes effect at the next run.
+    from youtube_automanager.engine.sync import SyncAborted, run_with_youtube
+
     engine = make_engine(settings.database_url)
     try:
-        with make_session_factory(engine)() as session:
+        sessions = make_session_factory(engine)
+        with sessions() as session:
             if session.get(Run, run_id) is None:
                 LOG.error("Run %s is not in the database", run_id)
                 return 1
-        LOG.info("Run %s: the sync engine is not written yet, so the run changes nothing", run_id)
+        try:
+            run_with_youtube(sessions, run_id, settings)
+        except SyncAborted as error:
+            LOG.error("Run %s stopped: %s", run_id, error)
+            print(error, file=sys.stderr, flush=True)
+            return 1
         return 0
     finally:
         engine.dispose()

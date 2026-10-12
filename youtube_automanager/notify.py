@@ -7,6 +7,10 @@ from datetime import datetime
 from enum import IntEnum, StrEnum
 
 import apprise
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from youtube_automanager.db.models import NotificationTarget
 
 LOG = logging.getLogger(__name__)
 
@@ -124,6 +128,35 @@ class Notifier:
     @staticmethod
     def is_valid_url(url: str) -> bool:
         return apprise.Apprise.instantiate(url) is not None
+
+
+def stored_targets(session: Session) -> list[Target]:
+    """Return the targets of the ``notification_target`` table.
+
+    An unknown event name is left out, and a level outside the known levels becomes the nearest known level.
+    """
+    known_events = {event.value for event in Event}
+    targets = []
+    for row in session.scalars(select(NotificationTarget).order_by(NotificationTarget.id)):
+        events = frozenset(Event(name) for name in row.events or () if name in known_events)
+        min_level = Level(min(max(row.min_level, Level.INFO), Level.FAILURE))
+        targets.append(Target(row.name, row.url, min_level=min_level, events=events, enabled=row.enabled))
+    return targets
+
+
+def send_to_stored_targets(sessions: sessionmaker[Session], notification: Notification) -> SendReport | None:
+    """Send ``notification`` to each target of the database. Never raise, so a notification never fails a run.
+
+    Return None when the targets cannot be read.
+    """
+    try:
+        with sessions() as session:
+            targets = stored_targets(session)
+        return Notifier(targets).send(notification)
+    except Exception as error:  # noqa: BLE001
+        # The text of the error can hold a target URL, so only its type goes into the log.
+        LOG.warning("Cannot send %s: %s", notification.event.value, type(error).__name__)
+        return None
 
 
 def _deliver(target: Target, title: str, body: str, level: Level, what: str) -> bool:
