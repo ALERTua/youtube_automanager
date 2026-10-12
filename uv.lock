@@ -169,6 +169,22 @@ wheels = [
 ]
 
 [[package]]
+name = "datalogic-py"
+version = "5.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/53/2a4a125cab08db091dd48128b557d816b725528ea1f9e6ad4583974a0a16/datalogic_py-5.7.1.tar.gz", hash = "sha256:2ea3374334e19b6df783af9417cd376d2b49e73780f809df85d875f3d1fa8bb7", size = 463540, upload-time = "2026-10-01T05:16:14.262Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/c6/5f119e51150afb54ccd0352b9c63d0e76e8e4c1e3ee076ed0da0d00ba152/datalogic_py-5.7.1-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:cd127f255aac68284db720ed5b2ad453c5ae4d2364d85705f41c8ca1ee3bfe43", size = 1641943, upload-time = "2026-10-01T05:16:01.416Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/8d/ec3e0e9f16edb72792267f03f56736430163957d5ed2eb8e034cca2f49b9/datalogic_py-5.7.1-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:6025b64ea4c347b8f61fd73793e61e14e4821d031e03e6672091963c07004828", size = 1382488, upload-time = "2026-10-01T05:16:03.273Z" },
+    { url = "https://files.pythonhosted.org/packages/74/7b/52481a6e9774bccaae77b2ff3ef019cde5688262001ad17db37823822403/datalogic_py-5.7.1-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1d69ea73ad4c4134dcf635807bc110368c149e29643513c79bba37e07b93d565", size = 1446442, upload-time = "2026-10-01T05:16:04.88Z" },
+    { url = "https://files.pythonhosted.org/packages/22/60/326ae0e602021559bc652c84d15fdb2dd4bf43c5dd59dd7d236793347bf5/datalogic_py-5.7.1-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b839fb46dd858d4433bf74069a7f2279022e2182bd860effdb34291bbb6a3d24", size = 1702473, upload-time = "2026-10-01T05:16:06.559Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/50/4f8979da1346651fac17074f508866ae3c2dc48c63d15b3846bd6ea5e5ca/datalogic_py-5.7.1-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:69f3e6382d39e294c2ebcfd5fa7bcb59129d0c9e57132155ea8b07f49fcc20ea", size = 1624974, upload-time = "2026-10-01T05:16:08.014Z" },
+    { url = "https://files.pythonhosted.org/packages/11/0e/1a3aad6f3d0ee1d18f72abf38bea1d49283836fc597d26cdf1035ddfba4e/datalogic_py-5.7.1-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:f8bd986733495bbdaadba957b6c766b85f6059cc131d8836486791f3585ed4cd", size = 1918721, upload-time = "2026-10-01T05:16:09.539Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/67/d94a288215c78d5035896802ea1f0f9677bde4848f53f982bf9adbc03fd0/datalogic_py-5.7.1-cp310-abi3-win_amd64.whl", hash = "sha256:da29ac3fb787e245919b94bebf1f517d0211ec4188047acded793c165b4ff891", size = 1630796, upload-time = "2026-10-01T05:16:10.86Z" },
+    { url = "https://files.pythonhosted.org/packages/53/9b/cab8ceb38406e307c4c9fb4c20fbef516aff41ce33171680dfccd5ff8787/datalogic_py-5.7.1-cp310-abi3-win_arm64.whl", hash = "sha256:7794492988b3fae8cb2d047e4f2fe3db390d34c68732b199785b329c77abf762", size = 1398374, upload-time = "2026-10-01T05:16:12.585Z" },
+]
+
+[[package]]
 name = "distlib"
 version = "0.4.3"
 source = { registry = "https://pypi.org/simple" }
@@ -808,6 +824,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
     { name = "apprise" },
+    { name = "datalogic-py" },
     { name = "fastapi" },
     { name = "packaging" },
     { name = "pendulum" },
@@ -830,6 +847,7 @@ dev = [
 requires-dist = [
     { name = "alembic" },
     { name = "apprise" },
+    { name = "datalogic-py" },
     { name = "fastapi" },
     { name = "packaging" },
     { name = "pendulum" },
