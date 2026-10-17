@@ -9,6 +9,7 @@ from youtube_automanager.web.ui.rule_form import (
     FIELDS,
     LIVE_STATUSES,
     OPERATORS,
+    DurationInput,
     Group,
     GroupKind,
     Leaf,
@@ -18,6 +19,9 @@ from youtube_automanager.web.ui.rule_form import (
     condition_from_json,
     condition_of,
     describe,
+    duration_fields,
+    duration_value,
+    format_duration,
     from_tree,
     json_text,
     leaf_error,
@@ -32,6 +36,7 @@ TITLE = {"var": "title"}
 DURATION = {"var": "duration_s"}
 DATE = {"var": "upload_date"}
 LONG = {">=": [DURATION, 120]}
+DURATION_ERROR = "Enter whole minutes, 0 or more, and whole seconds from 0 to 59."
 LEVELS = {"regex": [TITLE, "Levels of", "i"]}
 FROM_A = {"==": [{"var": "channel_id"}, A]}
 
@@ -352,6 +357,58 @@ def test_the_live_rule_of_epicurious_in_the_model():
     )
 
 
+class TestDuration:
+    @pytest.mark.parametrize(
+        ("value", "fields"),
+        [(0, (0, 0)), (59, (0, 59)), (60, (1, 0)), (125, (2, 5)), (3600, (60, 0)), (None, (None, None))],
+    )
+    def test_the_two_fields_of_a_stored_duration(self, value, fields):
+        assert duration_fields(value) == fields
+
+    @pytest.mark.parametrize("value", [-1, 1.5, True, "120"])
+    def test_a_value_that_is_no_duration_shows_empty_fields(self, value):
+        assert duration_fields(value) == (None, None)
+
+    def test_the_fields_of_a_wrong_input_show_again(self):
+        assert duration_fields(DurationInput(1.5, 60)) == (1.5, 60)
+
+    @pytest.mark.parametrize(
+        ("minutes", "seconds", "value"),
+        [
+            (2.0, 0.0, 120),
+            (2.0, None, 120),
+            (None, 30.0, 30),
+            (0.0, 0.0, 0),
+            (0.0, 59.0, 59),
+            (60.0, 0.0, 3600),
+            (None, None, None),
+        ],
+    )
+    def test_the_fields_give_the_total_of_the_seconds(self, minutes, seconds, value):
+        assert duration_value(minutes, seconds) == value
+
+    @pytest.mark.parametrize(
+        ("minutes", "seconds"),
+        [(0.0, 60.0), (1.0, 61.0), (1.5, 0.0), (0.0, 0.5), (-1.0, 0.0), (0.0, -1.0)],
+    )
+    def test_a_field_without_a_whole_number_in_its_range_gives_no_duration(self, minutes, seconds):
+        value = duration_value(minutes, seconds)
+
+        assert value == DurationInput(minutes, seconds)
+        assert leaf_error(Leaf("duration_s", ">=", value)) == DURATION_ERROR
+
+    @pytest.mark.parametrize("value", [0, 1, 59, 60, 61, 125, 3600, 7322])
+    def test_a_stored_duration_comes_back_unchanged_from_its_fields(self, value):
+        assert duration_value(*map(float, duration_fields(value))) == value
+
+    @pytest.mark.parametrize(
+        ("value", "text"), [(0, "0:00"), (5, "0:05"), (59, "0:59"), (60, "1:00"), (125, "2:05"), (3600, "60:00")]
+    )
+    def test_the_text_of_a_duration(self, value, text):
+        assert format_duration(value) == text
+        assert describe({"and": [{">=": [DURATION, value]}]}, {}) == f"Duration is at least {text}"
+
+
 class TestLeafErrors:
     @pytest.mark.parametrize(
         ("leaf", "error"),
@@ -363,9 +420,10 @@ class TestLeafErrors:
             (Leaf("channel_id", "==", None), "Choose a channel."),
             (Leaf("channel_id", "in", []), "Choose at least one channel."),
             (Leaf("channel_id", "in", [A, ""]), "Choose at least one channel."),
-            (Leaf("duration_s", ">=", None), "Enter a whole number of seconds, 0 or more."),
-            (Leaf("duration_s", ">=", 1.5), "Enter a whole number of seconds, 0 or more."),
-            (Leaf("duration_s", ">=", -1), "Enter a whole number of seconds, 0 or more."),
+            (Leaf("duration_s", ">=", None), DURATION_ERROR),
+            (Leaf("duration_s", ">=", 1.5), DURATION_ERROR),
+            (Leaf("duration_s", ">=", -1), DURATION_ERROR),
+            (Leaf("duration_s", ">=", DurationInput(1.5, None)), DURATION_ERROR),
             (Leaf("upload_date", "<", None), "Enter a date."),
             (Leaf("upload_date", "<", "2026-02-30"), "Enter a date."),
             (Leaf("live_status", "==", None), "Choose a live status."),
@@ -485,12 +543,12 @@ class TestDescription:
         [
             (MATCH_ALL, "Each video"),
             ({"and": []}, "Custom JSON condition"),
-            (HOME_RULE, "Channel is one of 15 channels and Duration in seconds is at least 120"),
+            (HOME_RULE, "Channel is one of 15 channels and Duration is at least 2:00"),
             (
                 EPICURIOUS_LEVELS_RULE,
                 (
                     'Channel is one of Epicurious and Title matches the pattern ".* Levels of .*" and '
-                    "Duration in seconds is at least 120"
+                    "Duration is at least 2:00"
                 ),
             ),
             (
@@ -505,10 +563,10 @@ class TestDescription:
                 {"and": [{"or": [{"regex": [TITLE, "Levels"]}, {"<": [DATE, "2026-10-01"]}]}, LONG]},
                 (
                     '(Title matches the pattern "Levels" (case-sensitive) or Upload date is before 2026-10-01) and '
-                    "Duration in seconds is at least 120"
+                    "Duration is at least 2:00"
                 ),
             ),
-            ({"and": [{"or": [LONG]}]}, "Duration in seconds is at least 120"),
+            ({"and": [{"or": [LONG]}]}, "Duration is at least 2:00"),
             ({"or": [{"!=": [{"var": "live_status"}, "was_live"]}]}, "Live status is not a past live stream"),
             ({"or": [{"==": [{"var": "video_id"}, "vid1"]}]}, 'Video id is "vid1"'),
         ],

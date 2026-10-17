@@ -3,7 +3,8 @@
 The visual editor shows a condition as groups and leaves. The root is always a group. A group is "all of" (``and``),
 "any of" (``or``) or "none of" (``{"!": [{"or": [...]}]}``), and groups can nest. A leaf compares one video field
 with a value, always in the form ``{operator: [{"var": field}, value]}``. A pattern leaf (``regex``) also has the flag
-``i``, unless it is case-sensitive.
+``i``, unless it is case-sensitive. The editor shows a duration as minutes and seconds, and the tree keeps the total of
+the seconds.
 
 ``from_tree`` returns None for each tree that the editor cannot show, and the page shows such a tree as JSON text. A
 tree that ``from_tree`` accepts comes back unchanged from ``to_tree``. A condition without leaves is ``MATCH_ALL``,
@@ -52,7 +53,7 @@ GROUP_KINDS = {
 FIELDS = {
     "title": N_("Title"),
     "channel_id": N_("Channel"),
-    "duration_s": N_("Duration in seconds"),
+    "duration_s": N_("Duration"),
     "upload_date": N_("Upload date"),
     "live_status": N_("Live status"),
     "is_short": N_("Shorts"),
@@ -99,6 +100,8 @@ SHORT_CHOICES = {True: N_("is a Short"), False: N_("is not a Short")}
 # Above this number of channels, the description of a leaf gives the number and not the names.
 MAX_NAMED_CHANNELS = 3
 
+SECONDS_PER_MINUTE = 60
+
 
 @dataclasses.dataclass
 class Leaf:
@@ -113,6 +116,53 @@ class Leaf:
 class Group:
     kind: GroupKind = GroupKind.ALL
     items: list[Group | Leaf] = dataclasses.field(default_factory=list)
+
+
+@dataclasses.dataclass(frozen=True)
+class DurationInput:
+    """The two fields of a duration while they give no valid duration, so a rebuild of the editor shows them again."""
+
+    minutes: float | None
+    seconds: float | None
+
+
+def duration_fields(value: Any) -> tuple[float | None, float | None]:
+    """Return the minutes and the seconds that the two fields of a duration show for the value of a leaf."""
+    if isinstance(value, DurationInput):
+        return value.minutes, value.seconds
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return divmod(value, SECONDS_PER_MINUTE)
+    return None, None
+
+
+def _whole(number: float | None) -> int | None:
+    """Return the number of a field as a whole number of 0 or more, with 0 for an empty field, else None."""
+    if number is None:
+        return 0
+    # ``ui.number`` gives a float, and its limits act only in the browser.
+    if isinstance(number, bool) or not float(number).is_integer() or number < 0:
+        return None
+    return int(number)
+
+
+def duration_value(minutes: float | None, seconds: float | None) -> int | DurationInput | None:
+    """Return the value of a leaf for the two fields of a duration: the total of the seconds.
+
+    An empty field counts as 0, and two empty fields give None. Return a ``DurationInput`` when a field holds no whole
+    number in its range, minutes 0 or more and seconds from 0 to 59. ``leaf_error`` refuses both None and the input.
+    """
+    if minutes is None and seconds is None:
+        return None
+    whole_minutes, whole_seconds = _whole(minutes), _whole(seconds)
+    if whole_minutes is None or whole_seconds is None or whole_seconds >= SECONDS_PER_MINUTE:
+        return DurationInput(minutes, seconds)
+    return whole_minutes * SECONDS_PER_MINUTE + whole_seconds
+
+
+def format_duration(total: int) -> str:
+    """Return a number of seconds as minutes and seconds, for example 2:05 for 125."""
+    minutes, seconds = divmod(total, SECONDS_PER_MINUTE)
+    return f"{minutes}:{seconds:02d}"
 
 
 def value_kind(field: str, operator: str) -> ValueKind:
@@ -194,7 +244,7 @@ def leaf_error(leaf: Leaf) -> str | None:
                 return _("Choose at least one channel.")
         case ValueKind.SECONDS:
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                return _("Enter a whole number of seconds, 0 or more.")
+                return _("Enter whole minutes, 0 or more, and whole seconds from 0 to 59.")
         case ValueKind.DATE:
             if not _is_date(value):
                 return _("Enter a date.")
@@ -407,5 +457,7 @@ def _describe_value(leaf: Leaf, channel_titles: Mapping[str, str]) -> str:
             return ", ".join(channel_titles.get(channel_id, channel_id) for channel_id in leaf.value)
         case ValueKind.LIVE_STATUS:
             return _(LIVE_STATUSES[leaf.value])
-    # The number of seconds, or the date.
+        case ValueKind.SECONDS:
+            return format_duration(leaf.value)
+    # The date.
     return str(leaf.value)

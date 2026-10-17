@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-17 12:17+0300\n"
+"POT-Creation-Date: 2026-10-17 12:30+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -356,7 +356,7 @@ msgid "Disabled"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
-msgid "Duration in seconds"
+msgid "Duration"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -427,10 +427,6 @@ msgstr ""
 msgid "Enter a whole number of days, 1 or more."
 msgstr ""
 
-#: youtube_automanager/web/ui/rule_form.py
-msgid "Enter a whole number of seconds, 0 or more."
-msgstr ""
-
 #: youtube_automanager/web/ui/settings_page.py
 msgid "Enter a whole number of videos, 1 or more."
 msgstr ""
@@ -441,6 +437,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Enter the time as HH:MM, from 00:00 to 23:59."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Enter whole minutes, 0 or more, and whole seconds from 0 to 59."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -583,6 +583,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Matches now"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Minutes"
 msgstr ""
 
 #: youtube_automanager/web/ui/notifications_section.py
@@ -770,6 +774,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Preview"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Preview of the next run"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -1140,6 +1148,10 @@ msgid ""
 "and upload them."
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+msgid "The next run finds no new video that this rule matches."
+msgstr ""
+
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid ""
 "The nightly builds get the fixes for the changes of YouTube first, and "
@@ -1158,15 +1170,23 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid ""
-"The preview lists each video of the rule sources since the day for which "
-"your changes change the result: a video that the rule matches now, or no "
-"longer matches. It adds nothing."
+"The preview lists the videos of the next run for which your changes "
+"change the result: a video that the rule matches now, or no longer "
+"matches. A run checks only the videos that came since the last run, as "
+"far as the processing mode reads. It adds nothing."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid ""
-"The preview lists each video of the rule sources since the day that this "
-"rule matches or cannot decide yet. It adds nothing."
+"The preview lists the videos of the next run that this rule matches or "
+"cannot decide yet. A run checks only the videos that came since the last "
+"run, as far as the processing mode reads. It adds nothing."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid ""
+"The processing mode changed, so the next run starts each source again: it"
+" stores the newest videos of each source as seen and adds none of them."
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -1213,6 +1233,12 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "The rule is deleted."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid ""
+"The rule is off, so no run uses it. The preview shows what the next run "
+"does with the rule on."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -1282,6 +1308,13 @@ msgstr ""
 msgid ""
 "The service deletes older runs with their actions at its start and each "
 "day at {time} ({zone})."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
+msgid ""
+"The service has not read these sources yet, so the next run stores their "
+"newest videos as seen and adds none of them: {sources}"
 msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
@@ -1656,7 +1689,7 @@ msgid "YouTube found no channel for this text."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
-msgid "Your changes change the result for no video since this day."
+msgid "Your changes change the result for no new video of the next run."
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py

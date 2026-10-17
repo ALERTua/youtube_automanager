@@ -44,13 +44,13 @@ refresh-account:
 key:
     uv run python -c "from youtube_automanager.youtube.session import generate_key; print(generate_key())"
 
-# Run the tests, for example: just test -k sync
+# Run the tests on each core of the machine, for example: just test -k sync
 test *ARGS:
-    uv run pytest -q {{ARGS}}
-
-# Run the tests on each core of the machine. Use it only when the machine has nothing else to do
-test-fast *ARGS:
     uv run pytest -q -n auto {{ARGS}}
+
+# Run the tests in one process, for example to measure the durations: just test-serial --durations=0
+test-serial *ARGS:
+    uv run pytest -q {{ARGS}}
 
 # Format the code and fix the lint findings
 lint:
