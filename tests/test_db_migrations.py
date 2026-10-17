@@ -8,8 +8,8 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import create_engine, inspect, make_url, text
+from sqlalchemy.exc import DataError, IntegrityError
 
 from youtube_automanager.db import alembic_config, upgrade_to_head
 from youtube_automanager.db.models import Base
@@ -74,14 +74,35 @@ def sqlite_url(tmp_path):
     return f"sqlite:///{tmp_path / 'test.sqlite'}"
 
 
+@pytest.fixture(scope="session")
+def postgres_database(worker_id):
+    """A database of its own on the server of TEST_POSTGRES_URL for each worker of a parallel run, and its URL.
+
+    Each test empties its database before and after it, so two workers of ``pytest -n`` must not share one.
+    """
+    server = make_url(POSTGRES_URL)
+    name = f"youtube_automanager_test_{worker_id}"
+    admin = create_engine(server, isolation_level="AUTOCOMMIT")
+    try:
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+            connection.execute(text(f'CREATE DATABASE "{name}"'))
+        yield server.set(database=name).render_as_string(hide_password=False)
+        with admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+    finally:
+        admin.dispose()
+
+
 @pytest.fixture
-def postgres_url():
-    """The database of TEST_POSTGRES_URL, emptied of the tables of the service before and after the test."""
-    config = alembic_config(POSTGRES_URL)
+def postgres_url(postgres_database):
+    """The database of the worker on the server of TEST_POSTGRES_URL, emptied of the tables of the service before and
+    after the test."""
+    config = alembic_config(postgres_database)
     command.downgrade(config, "base")
-    yield POSTGRES_URL
+    yield postgres_database
     command.downgrade(config, "base")
-    engine = create_engine(POSTGRES_URL)
+    engine = create_engine(postgres_database)
     try:
         with engine.begin() as connection:
             connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
@@ -240,7 +261,9 @@ def test_the_rule_apply_trigger_keeps_the_runs_and_their_actions_and_downgrade_m
             runs = connection.execute(text('SELECT id, "trigger", added_count FROM run ORDER BY id')).all()
             assert runs == [(1, "schedule", 2), (2, "manual", 0)]
             assert connection.execute(text("SELECT run_id FROM run_action")).scalars().all() == [1]
-        with pytest.raises(IntegrityError), engine.begin() as connection:
+        # The column of the older schema is as long as its longest value, so PostgreSQL refuses the longer value by its
+        # length before the CHECK constraint, and SQLite refuses it by the CHECK constraint.
+        with pytest.raises((IntegrityError, DataError)), engine.begin() as connection:
             connection.execute(
                 text(
                     'INSERT INTO run (id, started_at, status, "trigger", added_count, seen_count) '

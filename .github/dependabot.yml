@@ -5,6 +5,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # a release must be a week old first, so a broken or hostile release can be withdrawn
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
