@@ -2,7 +2,7 @@
 
 A target URL holds the token of its service. The page shows a stored URL only in the edit form of its target, because
 the user needs to see the URL to change it. The web UI has no login, so the deployer must protect the access to the
-UI. A record of this module holds only the scheme of the URL, for example ``tgram://…``, for the table of the targets.
+UI. A record of this module holds only the scheme of the URL, for example ``tgram://…``, for the cards of the targets.
 Only ``load_target`` reads the URL itself, for a test notification and for the edit form. A change of a target keeps
 the stored URL when it gets no new URL. This module imports no NiceGUI, so its functions have tests of their own. Each
 function that reads or writes the database blocks.
@@ -53,7 +53,7 @@ class SaveOutcome(enum.Enum):
 
 @dataclass(frozen=True)
 class TargetChoices:
-    """The choices of a target in the table of the page: its events, its lowest level and its switch."""
+    """The choices of a target in its card on the page: its events, its lowest level and its switch."""
 
     events: frozenset[Event]
     min_level: Level

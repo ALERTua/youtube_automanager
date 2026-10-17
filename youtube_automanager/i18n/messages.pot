@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-17 12:39+0300\n"
+"POT-Creation-Date: 2026-10-17 13:06+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -49,8 +49,8 @@ msgstr ""
 #: youtube_automanager/web/ui/notifications_section.py
 msgid ""
 "A target gets an event when the target is on, the event is checked, and "
-"the level of the event is at least the lowest level of the target. The "
-"table shows only the start of each URL, because a URL holds the token of "
+"the level of the event is at least the lowest level of the target. Each "
+"target shows only the start of its URL, because a URL holds the token of "
 "its service."
 msgstr ""
 
@@ -1498,10 +1498,6 @@ msgstr ""
 msgid "Trigger"
 msgstr ""
 
-#: youtube_automanager/web/ui/notifications_section.py
-msgid "URL"
-msgstr ""
-
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Undecided"
 msgstr ""
@@ -1803,6 +1799,13 @@ msgstr ""
 #: youtube_automanager/web/ui/rule_form.py
 #, python-brace-format
 msgid "{count} channels"
+msgstr ""
+
+#. Translators: The label of the checkbox of an event, for example "Run summary
+#. · Success".
+#: youtube_automanager/web/ui/notifications_section.py
+#, python-brace-format
+msgid "{event} · {level}"
 msgstr ""
 
 #. Translators: one condition of a rule, for example: Title matches the pattern

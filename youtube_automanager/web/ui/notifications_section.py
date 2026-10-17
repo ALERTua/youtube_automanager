@@ -1,14 +1,14 @@
-"""The notification targets block of the settings page: the table of the targets and the form that edits a target.
+"""The notification targets block of the settings page: a card for each target and the form that edits a target.
 
-The table shows only the scheme of each URL, because a URL holds the token of its service. The form that changes a
+Each card shows only the scheme of its URL, because a URL holds the token of its service. The form that changes a
 target shows its stored URL, because the user needs to see the URL to change it. The web UI has no login, so the
 deployer must protect the access to the UI. No log line of the block holds a target URL.
 
-The events, the lowest level and the switch of each target in the table are part of the draft of the page, and the
-floating Save of the page writes only the choices that changed. The form adds or changes a target at once, and a delete
-acts at once too. After each of them and after a save, the table reads the targets again. It keeps each choice of the
-draft that differs from the choices that the page read or saved before, and each other choice takes the new value from
-the database. The draft of a target that went goes with it.
+The events, the lowest level and the switch of each card are part of the draft of the page, and the floating Save
+of the page writes only the choices that changed. The form adds or changes a target at once, and a delete acts at once
+too. After each of them and after a save, the block reads the targets again. It keeps each choice of the draft that
+differs from the choices that the page read or saved before, and each other choice takes the new value from the
+database. The draft of a target that went goes with it.
 
 A test notification can take up to a minute, so the block sends it in a thread. The block reads and writes the database
 in a thread, never on the event loop. Each write holds the lock of the page, so one write runs at a time.
@@ -148,21 +148,22 @@ class TargetEditor:
 @dataclass
 class TargetsState:
     targets: list[TargetRecord]
-    # The choices of each target as the controls of the table show them, by the id of the target.
+    # The choices of each target as the controls of its card show them, by the id of the target.
     edited: dict[int, TargetChoices]
     # The ids of the targets whose test notification is on its way.
     sending: set[int] = field(default_factory=set)
-    # The "Send a test" button of each target in the table of this moment.
+    # The "Send a test" button of each card of this moment.
     test_buttons: dict[int, ui.button] = field(default_factory=dict)
 
     def changes(self) -> list[tuple[TargetRecord, TargetChoices]]:
-        """Return each target whose choices in the table differ from its stored choices, with those choices."""
+        """Return each target whose choices in its card differ from its stored choices, with those choices."""
         return [(target, self.edited[target.id]) for target in self.targets if self.edited[target.id] != target.choices]
 
 
-def _header(text: str) -> None:
-    with ui.element("th").classes("text-left"):
-        ui.label(text)
+def _event_label(event: Event) -> str:
+    """Return the label of the checkbox of ``event``: the name of the event and the level that it has."""
+    # Translators: The label of the checkbox of an event, for example "Run summary · Success".
+    return _("{event} · {level}").format(event=_(EVENT_LABELS[event]), level=_(LEVEL_LABELS[EVENT_LEVELS[event]]))
 
 
 async def notifications_section(services: Services, draft: SettingsDraft) -> None:
@@ -189,7 +190,7 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
         """Change the choices of a target in the draft only."""
         edited = state.edited.get(target_id)
         if edited is None:
-            # The row of a target that went, before the table shows without it.
+            # The card of a target that went, before the block shows without it.
             return
         state.edited[target_id] = dataclasses.replace(edited, **choices)
         draft.update()
@@ -217,7 +218,7 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
         async def after() -> None:
             if gone:
                 ui.notify(_("The target does not exist any more."), type="warning")
-            # A choice that this page did not change can hold the value of another page, and the table shows it.
+            # A choice that this page did not change can hold the value of another page, and its card shows it.
             await reload()
 
         return Write(run, after=after)
@@ -308,50 +309,55 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
         with ui.card().classes("w-full max-w-lg gap-2").mark("target-editor"):
             editor.build()
 
-    def target_row(target: TargetRecord) -> None:
+    def target_card(target: TargetRecord) -> None:
         marker = f"target-{target.id}"
         choices = state.edited[target.id]
-        with ui.element("tr").mark(marker):
-            with ui.element("td"):
-                ui.label(target.name).mark(f"{marker}-name")
-            with ui.element("td"):
-                ui.label(target.url_scheme).classes("font-mono").mark(f"{marker}-url")
-            for event in Event:
-                with ui.element("td").classes("text-center"):
-                    ui.checkbox(
-                        value=event in choices.events,
-                        on_change=lambda change_event, target_id=target.id, item=event: choose_event(
-                            target_id, item, bool(change_event.value)
-                        ),
-                    ).props("dense").mark(f"{marker}-event-{event.value}")
-            with ui.element("td"):
+        with ui.card().props("flat bordered").classes("w-full gap-2").mark(marker):
+            # Each row wraps on a narrow screen, so no control goes past the right edge.
+            with ui.row().classes("w-full items-center gap-x-4 gap-y-2"):
+                ui.label(target.name).classes("text-subtitle1 text-weight-medium").mark(f"{marker}-name")
+                ui.label(target.url_scheme).classes("font-mono text-grey-7").mark(f"{marker}-url")
+                ui.space()
                 ui.select(
                     {level: _(label) for level, label in LEVEL_LABELS.items()},
+                    label=_("Lowest level"),
                     value=choices.min_level,
                     on_change=lambda change_event, target_id=target.id: choose(
                         target_id, min_level=Level(change_event.value)
                     ),
-                ).props("outlined dense options-dense").classes("w-32").mark(f"{marker}-level")
-            with ui.element("td"):
+                ).props("outlined dense options-dense").classes("w-36").mark(f"{marker}-level")
                 ui.switch(
+                    _("Enabled"),
                     value=choices.enabled,
                     on_change=lambda change_event, target_id=target.id: choose(
                         target_id, enabled=bool(change_event.value)
                     ),
                 ).props("dense").mark(f"{marker}-enabled")
-            with ui.element("td"), ui.row().classes("no-wrap items-center gap-1"):
-                state.test_buttons[target.id] = (
-                    ui.button(_("Send a test"), icon="send", on_click=lambda target_id=target.id: send_test(target_id))
-                    .props("flat dense no-caps no-wrap")
-                    .mark(f"{marker}-test")
-                )
-                show_sending(target.id)
-                ui.button(icon="edit", on_click=lambda record=target: open_editor(record)).props(
-                    "flat round dense"
-                ).tooltip(_("Change the name or the URL")).mark(f"{marker}-edit")
-                ui.button(icon="delete", on_click=lambda record=target: ask_delete(record)).props(
-                    "flat round dense color=negative"
-                ).tooltip(_("Delete the target")).mark(f"{marker}-delete")
+                buttons_row(target, marker)
+            with ui.row().classes("w-full gap-x-6 gap-y-1").mark(f"{marker}-events"):
+                for event in Event:
+                    ui.checkbox(
+                        _event_label(event),
+                        value=event in choices.events,
+                        on_change=lambda change_event, target_id=target.id, item=event: choose_event(
+                            target_id, item, bool(change_event.value)
+                        ),
+                    ).props("dense").mark(f"{marker}-event-{event.value}")
+
+    def buttons_row(target: TargetRecord, marker: str) -> None:
+        with ui.row().classes("no-wrap items-center gap-1"):
+            state.test_buttons[target.id] = (
+                ui.button(_("Send a test"), icon="send", on_click=lambda target_id=target.id: send_test(target_id))
+                .props("flat dense no-caps no-wrap")
+                .mark(f"{marker}-test")
+            )
+            show_sending(target.id)
+            ui.button(icon="edit", on_click=lambda record=target: open_editor(record)).props(
+                "flat round dense"
+            ).tooltip(_("Change the name or the URL")).mark(f"{marker}-edit")
+            ui.button(icon="delete", on_click=lambda record=target: ask_delete(record)).props(
+                "flat round dense color=negative"
+            ).tooltip(_("Delete the target")).mark(f"{marker}-delete")
 
     @ui.refreshable
     def targets_view() -> None:
@@ -359,33 +365,17 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
         if not state.targets:
             ui.label(_("No notification target yet. The button Add a target creates one.")).mark("no-targets")
             return
-        # A wide table scrolls inside its card, and the page keeps its width.
-        with (
-            ui.element("div").classes("w-full overflow-x-auto"),
-            ui.element("q-markup-table").props("flat bordered dense").mark("targets-table"),
-        ):
-            with ui.element("thead"), ui.element("tr"):
-                _header(_("Name"))
-                _header(_("URL"))
-                for event in Event:
-                    # A Quasar table keeps each cell on one line. The name of an event may take two lines.
-                    with ui.element("th").classes("text-center").style("white-space: normal; min-width: 6rem"):
-                        ui.label(_(EVENT_LABELS[event]))
-                        ui.label(_(LEVEL_LABELS[EVENT_LEVELS[event]])).classes("text-caption text-grey-7")
-                _header(_("Lowest level"))
-                _header(_("Enabled"))
-                _header("")
-            with ui.element("tbody"):
-                for target in state.targets:
-                    target_row(target)
+        with ui.column().classes("w-full gap-2").mark("targets-list"):
+            for target in state.targets:
+                target_card(target)
 
     with ui.card().classes("w-full").mark("targets-card"):
         ui.label(_("Notifications")).classes("text-h6")
         ui.label(
             _(
                 "A target gets an event when the target is on, the event is checked, and the level of the event is at "
-                "least the lowest level of the target. The table shows only the start of each URL, because a URL holds "
-                "the token of its service."
+                "least the lowest level of the target. Each target shows only the start of its URL, because a URL "
+                "holds the token of its service."
             )
         ).classes("text-grey-7")
         targets_view()
