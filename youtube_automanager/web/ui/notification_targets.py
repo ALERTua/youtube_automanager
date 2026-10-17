@@ -1,9 +1,11 @@
 """The notification targets of the settings page: the reads and the writes of the ``notification_target`` table.
 
-A target URL holds the token of its service, and the web UI has no login, so the page never shows a stored URL. A
-record of this module holds only the scheme of the URL, for example ``tgram://…``, and only ``load_target`` reads the
-URL itself, for a test notification. A change of a target keeps the stored URL when it gets no new URL. This module
-imports no NiceGUI, so its functions have tests of their own. Each function blocks.
+A target URL holds the token of its service. The page shows a stored URL only in the edit form of its target, because
+the user needs to see the URL to change it. The web UI has no login, so the deployer must protect the access to the
+UI. A record of this module holds only the scheme of the URL, for example ``tgram://…``, for the table of the targets.
+Only ``load_target`` reads the URL itself, for a test notification and for the edit form. A change of a target keeps
+the stored URL when it gets no new URL. This module imports no NiceGUI, so its functions have tests of their own. Each
+function that reads or writes the database blocks.
 """
 
 import enum
@@ -19,7 +21,7 @@ from youtube_automanager.i18n import N_
 from youtube_automanager.notify import DEFAULT_EVENTS, Event, Level, Target
 
 # The list of the services and of their URLs.
-APPRISE_URLS = "https://github.com/caronc/apprise/wiki"
+APPRISE_URLS = "https://appriseit.com/services/"
 HIDDEN = "…"
 _SCHEME = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]{0,31})://")
 
@@ -50,6 +52,15 @@ class SaveOutcome(enum.Enum):
 
 
 @dataclass(frozen=True)
+class TargetChoices:
+    """The choices of a target in the table of the page: its events, its lowest level and its switch."""
+
+    events: frozenset[Event]
+    min_level: Level
+    enabled: bool
+
+
+@dataclass(frozen=True)
 class TargetRecord:
     """A target as the page shows it, without its URL."""
 
@@ -60,6 +71,25 @@ class TargetRecord:
     min_level: Level
     events: frozenset[Event]
     enabled: bool
+
+    @property
+    def choices(self) -> TargetChoices:
+        return TargetChoices(self.events, self.min_level, self.enabled)
+
+
+def keep_edits(stored: TargetChoices, edited: TargetChoices, read: TargetChoices) -> TargetChoices:
+    """Return the choices ``read`` from the database with each choice of ``edited`` that differs from ``stored``.
+
+    ``stored`` holds the choices that the page read or saved before, and ``edited`` holds the choices of the controls.
+    So a new read keeps each change of the user, and each other choice takes the value that the read gave.
+    """
+    added = edited.events - stored.events
+    removed = stored.events - edited.events
+    return TargetChoices(
+        events=(read.events - removed) | added,
+        min_level=edited.min_level if edited.min_level != stored.min_level else read.min_level,
+        enabled=edited.enabled if edited.enabled != stored.enabled else read.enabled,
+    )
 
 
 def url_scheme(url: str) -> str:
@@ -104,7 +134,7 @@ def read_targets(sessions: sessionmaker[Session]) -> list[TargetRecord]:
 
 
 def load_target(sessions: sessionmaker[Session], target_id: int) -> Target | None:
-    """Return the target with its URL, for a test notification. Return None when the target does not exist."""
+    """Return the target with its URL, for a test notification or the edit form. Return None when it does not exist."""
     with sessions() as session:
         row = session.get(NotificationTarget, target_id)
         if row is None:
@@ -158,37 +188,24 @@ def delete_target(sessions: sessionmaker[Session], target_id: int) -> None:
             session.delete(row)
 
 
-def set_event(sessions: sessionmaker[Session], target_id: int, event: Event, on: bool) -> bool:
-    """Turn one event of the target on or off. Keep each other stored name. Return False when the target is gone."""
+def save_choices(sessions: sessionmaker[Session], target_id: int, stored: TargetChoices, edited: TargetChoices) -> bool:
+    """Write each choice of ``edited`` that differs from ``stored``, the choices that the page read or saved before.
+
+    Each other stored value stays, also a stored event name that this version does not know. Return False when the
+    target is gone.
+    """
     with sessions.begin() as session:
         row = session.get(NotificationTarget, target_id)
         if row is None:
             return False
-        names = set(row.events or ())
-        if on:
-            names.add(event.value)
-        else:
-            names.discard(event.value)
-        # A new list, so the change tracking sees the change.
-        row.events = _ordered(names)
-        return True
-
-
-def set_min_level(sessions: sessionmaker[Session], target_id: int, level: Level) -> bool:
-    """Write the lowest level of the events that the target gets. Return False when the target is gone."""
-    with sessions.begin() as session:
-        row = session.get(NotificationTarget, target_id)
-        if row is None:
-            return False
-        row.min_level = Level(level).value
-        return True
-
-
-def set_enabled(sessions: sessionmaker[Session], target_id: int, enabled: bool) -> bool:
-    """Turn the target on or off. Return False when the target is gone."""
-    with sessions.begin() as session:
-        row = session.get(NotificationTarget, target_id)
-        if row is None:
-            return False
-        row.enabled = bool(enabled)
+        if edited.events != stored.events:
+            names = set(row.events or ())
+            names |= {event.value for event in edited.events - stored.events}
+            names -= {event.value for event in stored.events - edited.events}
+            # A new list, so the change tracking sees the change.
+            row.events = _ordered(names)
+        if edited.min_level != stored.min_level:
+            row.min_level = Level(edited.min_level).value
+        if edited.enabled != stored.enabled:
+            row.enabled = bool(edited.enabled)
         return True

@@ -1,13 +1,21 @@
 """The notification targets block of the settings page: the table of the targets and the form that edits a target.
 
-The web UI has no login, so the block never shows a stored target URL. A target shows only the scheme of its URL, and
-the form keeps the stored URL while its URL field stays empty. No log line of the block holds a target URL.
+The table shows only the scheme of each URL, because a URL holds the token of its service. The form that changes a
+target shows its stored URL, because the user needs to see the URL to change it. The web UI has no login, so the
+deployer must protect the access to the UI. No log line of the block holds a target URL.
+
+The events, the lowest level and the switch of each target in the table are part of the draft of the page, and the
+floating Save of the page writes only the choices that changed. The form adds or changes a target at once, and a delete
+acts at once too. After each of them and after a save, the table reads the targets again. It keeps each choice of the
+draft that differs from the choices that the page read or saved before, and each other choice takes the new value from
+the database. The draft of a target that went goes with it.
 
 A test notification can take up to a minute, so the block sends it in a thread. The block reads and writes the database
 in a thread, never on the event loop. Each write holds the lock of the page, so one write runs at a time.
 """
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -22,33 +30,39 @@ from youtube_automanager.web.ui.notification_targets import (
     EVENT_LABELS,
     LEVEL_LABELS,
     SaveOutcome,
+    TargetChoices,
     TargetRecord,
     delete_target,
+    keep_edits,
     load_target,
     read_targets,
+    save_choices,
     save_target,
-    set_enabled,
-    set_event,
-    set_min_level,
 )
+from youtube_automanager.web.ui.settings_draft import DraftPart, SettingsDraft, Write
 
 LOG = logging.getLogger(__name__)
 
 
 class TargetEditor:
-    """The form that creates a target, or changes the name and the URL of a target. ``done`` runs after a save."""
+    """The form that creates a target, or changes the name and the URL of a target. ``done`` runs after a save.
+
+    ``url`` is the stored URL of the target, or None for a new target.
+    """
 
     def __init__(
         self,
         services: Services,
         writes: asyncio.Lock,
         target: TargetRecord | None,
+        url: str | None,
         close: Callable[[], None],
         done: Callable[[], Awaitable[None]],
     ) -> None:
         self.services = services
         self.writes = writes
         self.target = target
+        self.url = url
         self.close = close
         self.done = done
         self.saving = False
@@ -62,21 +76,25 @@ class TargetEditor:
             .classes("w-full")
             .mark("target-name")
         )
-        # A password field, so the token of a typed URL does not show on the screen.
-        self.url_input = (
-            ui.input(_("Apprise URL"), password=True, password_toggle_button=True)
-            .props("outlined dense autocomplete=new-password")
-            .classes("w-full")
-            .mark("target-url")
-        )
         if target:
-            hint = _(
-                "The stored URL stays when this field is empty. It starts with {scheme}. A URL in this field "
-                "replaces it."
-            ).format(scheme=target.url_scheme)
+            # The stored URL shows in plain text, so the user can see it and change it.
+            self.url_input = (
+                ui.input(_("Apprise URL"), value=self.url or "")
+                .props("outlined dense autocomplete=off")
+                .classes("w-full")
+                .mark("target-url")
+            )
         else:
-            hint = _("The URL names the service and its token, for example tgram://bottoken/ChatID for Telegram.")
-        ui.label(hint).classes("text-grey-7").mark("target-url-hint")
+            # A password field, so the token of a typed URL does not show on the screen.
+            self.url_input = (
+                ui.input(_("Apprise URL"), password=True, password_toggle_button=True)
+                .props("outlined dense autocomplete=new-password")
+                .classes("w-full")
+                .mark("target-url")
+            )
+        ui.label(
+            _("The URL names the service and its token, for example tgram://bottoken/ChatID for Telegram.")
+        ).classes("text-grey-7").mark("target-url-hint")
         ui.link(_("The services of Apprise and their URLs"), APPRISE_URLS, new_tab=True).mark("target-url-link")
         self.error_label = ui.label().classes("text-negative").mark("target-error")
         self.error_label.set_visibility(False)
@@ -96,19 +114,21 @@ class TargetEditor:
         if not name:
             self.show_error(_("Enter a name."))
             return
-        if self.target is None and not url:
+        if not url:
             self.show_error(_("Enter the Apprise URL of the target."))
             return
+        # The stored URL stays as it is when the field still holds it, so a change of the URL on another page stays.
+        new_url = None if url == self.url else url
         self.saving = True
         self.save_button.disable()
         try:
-            if url and not await asyncio.to_thread(Notifier.is_valid_url, url):
+            if new_url and not await asyncio.to_thread(Notifier.is_valid_url, new_url):
                 # The text never repeats the URL, because the URL holds a token.
                 self.show_error(_("Apprise does not accept this URL. The link below lists the URL of each service."))
                 return
             async with self.writes:
                 outcome = await asyncio.to_thread(
-                    save_target, self.services.sessions, self.target.id if self.target else None, name, url or None
+                    save_target, self.services.sessions, self.target.id if self.target else None, name, new_url
                 )
         finally:
             self.saving = False
@@ -128,10 +148,16 @@ class TargetEditor:
 @dataclass
 class TargetsState:
     targets: list[TargetRecord]
+    # The choices of each target as the controls of the table show them, by the id of the target.
+    edited: dict[int, TargetChoices]
     # The ids of the targets whose test notification is on its way.
     sending: set[int] = field(default_factory=set)
     # The "Send a test" button of each target in the table of this moment.
     test_buttons: dict[int, ui.button] = field(default_factory=dict)
+
+    def changes(self) -> list[tuple[TargetRecord, TargetChoices]]:
+        """Return each target whose choices in the table differ from its stored choices, with those choices."""
+        return [(target, self.edited[target.id]) for target in self.targets if self.edited[target.id] != target.choices]
 
 
 def _header(text: str) -> None:
@@ -139,22 +165,66 @@ def _header(text: str) -> None:
         ui.label(text)
 
 
-async def notifications_section(services: Services, writes: asyncio.Lock) -> None:
-    state = TargetsState(await asyncio.to_thread(read_targets, services.sessions))
+async def notifications_section(services: Services, draft: SettingsDraft) -> None:
+    writes = draft.writes
+    targets = await asyncio.to_thread(read_targets, services.sessions)
+    state = TargetsState(targets, {target.id: target.choices for target in targets})
 
     async def reload() -> None:
         # The read waits for the writes of the page, so it sees each change that came before it.
         async with writes:
-            state.targets = await asyncio.to_thread(read_targets, services.sessions)
+            targets = await asyncio.to_thread(read_targets, services.sessions)
+            before = {target.id: target.choices for target in state.targets}
+            state.edited = {
+                target.id: keep_edits(before[target.id], state.edited[target.id], target.choices)
+                if target.id in before and target.id in state.edited
+                else target.choices
+                for target in targets
+            }
+            state.targets = targets
         await targets_view.refresh()
+        draft.update()
 
-    async def change(write: Callable[..., bool], target_id: int, *values: object) -> None:
-        """Write one change of the table at once. A target that went shows a warning, and the table reads again."""
-        async with writes:
-            done = await asyncio.to_thread(write, services.sessions, target_id, *values)
-        if not done:
-            ui.notify(_("The target does not exist any more."), type="warning")
+    def choose(target_id: int, **choices: object) -> None:
+        """Change the choices of a target in the draft only."""
+        edited = state.edited.get(target_id)
+        if edited is None:
+            # The row of a target that went, before the table shows without it.
+            return
+        state.edited[target_id] = dataclasses.replace(edited, **choices)
+        draft.update()
+
+    def choose_event(target_id: int, event: Event, on: bool) -> None:
+        edited = state.edited.get(target_id)
+        if edited is not None:
+            choose(target_id, events=(edited.events | {event}) if on else (edited.events - {event}))
+
+    def prepare() -> Write:
+        changes = state.changes()
+        gone: list[TargetRecord] = []
+
+        async def run() -> None:
+            for target, edited in changes:
+                if not await asyncio.to_thread(save_choices, services.sessions, target.id, target.choices, edited):
+                    gone.append(target)
+                    continue
+                saved = dataclasses.replace(
+                    target, events=edited.events, min_level=edited.min_level, enabled=edited.enabled
+                )
+                state.targets = [saved if other.id == target.id else other for other in state.targets]
+                LOG.info("Saved the events, the lowest level and the switch of the notification target %r", target.name)
+
+        async def after() -> None:
+            if gone:
+                ui.notify(_("The target does not exist any more."), type="warning")
+            # A choice that this page did not change can hold the value of another page, and the table shows it.
             await reload()
+
+        return Write(run, after=after)
+
+    def discard() -> None:
+        state.edited = {target.id: target.choices for target in state.targets}
+        targets_view.refresh()
 
     def show_sending(target_id: int) -> None:
         button = state.test_buttons.get(target_id)
@@ -218,8 +288,17 @@ async def notifications_section(services: Services, writes: asyncio.Lock) -> Non
         editor_view.refresh(None)
 
     async def open_editor(target: TargetRecord | None) -> None:
+        url = None
+        if target is not None:
+            stored = await asyncio.to_thread(load_target, services.sessions, target.id)
+            if stored is None:
+                ui.notify(_("The target does not exist any more."), type="warning")
+                await reload()
+                return
+            # Another page can have changed the name.
+            target, url = dataclasses.replace(target, name=stored.name), stored.url
         # The form is ready before the dialog opens.
-        await editor_view.refresh(TargetEditor(services, writes, target, close_editor, reload))
+        await editor_view.refresh(TargetEditor(services, writes, target, url, close_editor, reload))
         editor_dialog.open()
 
     @ui.refreshable
@@ -231,6 +310,7 @@ async def notifications_section(services: Services, writes: asyncio.Lock) -> Non
 
     def target_row(target: TargetRecord) -> None:
         marker = f"target-{target.id}"
+        choices = state.edited[target.id]
         with ui.element("tr").mark(marker):
             with ui.element("td"):
                 ui.label(target.name).mark(f"{marker}-name")
@@ -239,24 +319,24 @@ async def notifications_section(services: Services, writes: asyncio.Lock) -> Non
             for event in Event:
                 with ui.element("td").classes("text-center"):
                     ui.checkbox(
-                        value=event in target.events,
-                        on_change=lambda change_event, target_id=target.id, item=event: change(
-                            set_event, target_id, item, bool(change_event.value)
+                        value=event in choices.events,
+                        on_change=lambda change_event, target_id=target.id, item=event: choose_event(
+                            target_id, item, bool(change_event.value)
                         ),
                     ).props("dense").mark(f"{marker}-event-{event.value}")
             with ui.element("td"):
                 ui.select(
                     {level: _(label) for level, label in LEVEL_LABELS.items()},
-                    value=target.min_level,
-                    on_change=lambda change_event, target_id=target.id: change(
-                        set_min_level, target_id, Level(change_event.value)
+                    value=choices.min_level,
+                    on_change=lambda change_event, target_id=target.id: choose(
+                        target_id, min_level=Level(change_event.value)
                     ),
                 ).props("outlined dense options-dense").classes("w-32").mark(f"{marker}-level")
             with ui.element("td"):
                 ui.switch(
-                    value=target.enabled,
-                    on_change=lambda change_event, target_id=target.id: change(
-                        set_enabled, target_id, bool(change_event.value)
+                    value=choices.enabled,
+                    on_change=lambda change_event, target_id=target.id: choose(
+                        target_id, enabled=bool(change_event.value)
                     ),
                 ).props("dense").mark(f"{marker}-enabled")
             with ui.element("td"), ui.row().classes("no-wrap items-center gap-1"):
@@ -314,3 +394,4 @@ async def notifications_section(services: Services, writes: asyncio.Lock) -> Non
     # A user can close the form only with its buttons, so a click outside it does not lose an edit.
     with ui.dialog().props("persistent").mark("target-dialog") as editor_dialog:
         editor_view(None)
+    draft.add(DraftPart(changed=lambda: bool(state.changes()), prepare=prepare, discard=discard))

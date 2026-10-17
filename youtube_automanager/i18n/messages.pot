@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-17 12:37+0300\n"
+"POT-Creation-Date: 2026-10-17 12:39+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -353,6 +353,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Disabled"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_draft.py
+msgid "Discard"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
@@ -884,9 +888,8 @@ msgstr ""
 #: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
-#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/settings_draft.py
 #: youtube_automanager/web/ui/subscriptions_page.py
-#: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Save"
 msgstr ""
 
@@ -1089,14 +1092,6 @@ msgid "The condition is not valid JSON: {error}"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
-msgid "The cookie rotation is off."
-msgstr ""
-
-#: youtube_automanager/web/ui/settings_page.py
-msgid "The cookie rotation is on."
-msgstr ""
-
-#: youtube_automanager/web/ui/settings_page.py
 msgid "The cookies work and are stored."
 msgstr ""
 
@@ -1189,14 +1184,6 @@ msgid ""
 " stores the newest videos of each source as seen and adds none of them."
 msgstr ""
 
-#: youtube_automanager/web/ui/settings_page.py
-msgid "The processing mode did not change."
-msgstr ""
-
-#: youtube_automanager/web/ui/settings_page.py
-msgid "The processing mode is saved. The next run uses it."
-msgstr ""
-
 #: youtube_automanager/web/ui/rules_page.py
 #, python-brace-format
 msgid ""
@@ -1212,9 +1199,8 @@ msgstr ""
 #, python-brace-format
 msgid ""
 "The rotation renews the session of the stored cookies about each "
-"{minutes} minutes, the way an open YouTube tab does. It is off by "
-"default, and this default can change after a measurement that still runs."
-" A change acts at the next turn of the rotation, without a restart."
+"{minutes} minutes, the way an open YouTube tab does. It is on by default."
+" A saved change acts at the next turn of the rotation, without a restart."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -1361,11 +1347,8 @@ msgstr ""
 msgid "The session check failed: {cause}"
 msgstr ""
 
-#: youtube_automanager/web/ui/notifications_section.py
-#, python-brace-format
-msgid ""
-"The stored URL stays when this field is empty. It starts with {scheme}. A"
-" URL in this field replaces it."
+#: youtube_automanager/web/ui/settings_draft.py
+msgid "The settings are saved."
 msgstr ""
 
 #. Translators: {cause} is the English cause from the service.
@@ -1450,14 +1433,6 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "The visual editor cannot show this condition. Edit it as JsonLogic."
-msgstr ""
-
-#: youtube_automanager/web/ui/ytdlp_section.py
-msgid "The yt-dlp settings are saved."
-msgstr ""
-
-#: youtube_automanager/web/ui/ytdlp_section.py
-msgid "The yt-dlp settings did not change."
 msgstr ""
 
 #: youtube_automanager/web/ui/theme.py

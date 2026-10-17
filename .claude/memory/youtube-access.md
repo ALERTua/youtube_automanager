@@ -83,7 +83,7 @@ metadata:
 - When a version dies, each newer version dies with it, and the newest good version becomes current. A version is good after it passed a session check. A rotation does not make a version good.
 - A run checks the session at its start when cookies are stored, and that check costs one request with cookies. A session that dies during a run kills the version and the session. The next check tries the newest good version.
 - The store keeps the 10 newest versions, the current version and the newest good version. A rotation every 10 minutes makes many versions between two runs, so the newest good version must stay outside the 10.
-- The rotation is the setting `cookie_rotation` (true or false), off by default. The setting `cookie_rotation_next_at` keeps the time of the next rotation across a restart.
+- The rotation is the setting `cookie_rotation` (true or false), on by default. Only a missing row gives the default: a stored `false` stays off, and a value that is not true or false also keeps the rotation off. The setting `cookie_rotation_next_at` keeps the time of the next rotation across a restart.
 - `POST https://accounts.google.com/RotateCookies` with the cookies of `.youtube.com` returns HTTP 401, because those cookies belong to another domain.
 - The YouTube Terms of Service forbid access by automated means. The yt-dlp wiki warns that an account that yt-dlp uses can get a temporary or permanent ban.
 - Music Assistant and Youtarr do not refresh cookies. When the session ends, each one needs a new export from the user.

@@ -68,6 +68,8 @@ TIME = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+")
 # How long a test waits for a click that must change nothing. A click that does change something shows it within ms.
 SETTLE_SECONDS = 0.3
 BUSY_TEXT = "Another task works with YouTube now"
+SAVED_TEXT = "The settings are saved."
+GONE_TEXT = "The target does not exist any more."
 CHECKED_AT = datetime.datetime(2026, 10, 12, 15, 30, tzinfo=datetime.UTC)
 
 SENT = []
@@ -268,6 +270,23 @@ async def paste(user, text: str) -> None:
 
 async def result_is(user, expected: str) -> None:
     await eventually(lambda: text_of(user, "cookie-result") == expected, f"The cookie result {expected!r}")
+
+
+def draft_shown(user) -> bool:
+    """True while the floating Save and Discard show."""
+    return element_of(user, "settings-draft").visible
+
+
+async def save(user) -> None:
+    """Click the floating Save, and wait for its message and for the end of the draft."""
+    count = user.notify.messages.count(SAVED_TEXT)
+    user.find(marker="settings-save").click()
+    await eventually(lambda: user.notify.messages.count(SAVED_TEXT) > count, "The message of the save")
+    await eventually(lambda: not draft_shown(user), "No buttons of the draft")
+
+
+async def confirmation_opens(user) -> None:
+    await eventually(lambda: element_of(user, "mode-confirm-dialog").value, "The open confirmation of the mode")
 
 
 # The page.
@@ -697,18 +716,22 @@ async def test_the_controls_are_off_while_the_session_check_runs(user, sessions,
 # The cookie rotation.
 
 
-async def test_the_rotation_is_off_by_default_and_its_switch_stores_json_booleans(user, sessions):
+async def test_the_rotation_is_on_by_default_and_a_save_stores_json_booleans(user, sessions, caplog):
+    caplog.set_level(logging.INFO)
     await user.open("/settings")
-    assert element_of(user, "rotation").value is False
+    assert element_of(user, "rotation").value is True
     assert "about each 10 minutes" in text_of(user, "rotation-help")
+    assert "It is on by default." in text_of(user, "rotation-help")
 
     user.find(marker="rotation").click()
-    await user.should_see("The cookie rotation is on.")
+    await save(user)
+    assert setting(sessions, ROTATION_KEY) is False
+    assert "The cookie rotation is now off" in caplog.messages
+
+    user.find(marker="rotation").click()
+    await save(user)
     assert setting(sessions, ROTATION_KEY) is True
-
-    user.find(marker="rotation").click()
-    await eventually(lambda: setting(sessions, ROTATION_KEY) is False, "The rotation off")
-    await user.should_see("The cookie rotation is off.")
+    assert "The cookie rotation is now on" in caplog.messages
 
 
 @pytest.mark.parametrize(("value", "shown"), [(True, True), (False, False), (1, False)])
@@ -731,7 +754,7 @@ async def test_the_rotation_switch_replaces_a_stored_value_of_another_type(
     async with running_service(settings, fake_starter) as user:
         await user.open("/settings")
         user.find(marker="rotation").click()
-        await user.should_see("The cookie rotation is on.")
+        await save(user)
 
     assert setting(sessions, ROTATION_KEY) is True
 
@@ -762,48 +785,67 @@ async def test_the_help_text_and_the_count_follow_the_chosen_mode(user):
     assert "upload day" in text_of(user, "mode-help")
 
 
-async def test_a_change_of_the_mode_asks_first_and_a_cancel_stores_nothing(user, sessions):
+async def test_a_change_of_the_mode_asks_first_and_a_cancel_writes_nothing_and_keeps_the_draft(user, sessions):
     await user.open("/settings")
     set_value(user, "mode", ProcessingMode.MARK_DATE)
+    user.find(marker="rotation").click()
 
-    user.find(marker="mode-save").click()
+    user.find(marker="settings-save").click()
 
-    await eventually(lambda: element_of(user, "mode-confirm-dialog").value, "The open confirmation")
+    await confirmation_opens(user)
     assert "the videos that came since the last run are not checked" in text_of(user, "mode-confirm-text")
     user.find(marker="mode-cancel").click()
     await eventually(lambda: not element_of(user, "mode-confirm-dialog").value, "The closed confirmation")
     await asyncio.sleep(SETTLE_SECONDS)
-    assert setting(sessions, "processing_mode") is None
+    # The cancel stops the whole save, also of the other changed settings.
+    assert (setting(sessions, "processing_mode"), setting(sessions, ROTATION_KEY)) == (None, None)
+    assert draft_shown(user)
+    assert element_of(user, "mode").value is ProcessingMode.MARK_DATE
+    assert element_of(user, "rotation").value is False
+
+    user.find(marker="settings-save").click()
+    await confirmation_opens(user)
+    user.find(marker="mode-confirm").click()
+
+    await eventually(lambda: setting(sessions, "processing_mode") == {"mode": "mark_date"}, "The save of the mode")
+    assert setting(sessions, ROTATION_KEY) is False
+    await eventually(lambda: not draft_shown(user), "No buttons of the draft")
 
 
-async def test_a_confirmed_change_stores_the_mode(user, sessions):
+async def test_a_confirmed_change_stores_the_mode(user, sessions, caplog):
+    caplog.set_level(logging.INFO)
     await user.open("/settings")
     set_value(user, "mode", ProcessingMode.NEWEST)
     set_value(user, "mode-count", 45.0)
 
-    user.find(marker="mode-save").click()
-    await eventually(lambda: element_of(user, "mode-confirm-dialog").value, "The open confirmation")
+    user.find(marker="settings-save").click()
+    await confirmation_opens(user)
     user.find(marker="mode-confirm").click()
 
-    await user.should_see("The processing mode is saved. The next run uses it.")
+    await user.should_see("The settings are saved.")
     assert setting(sessions, "processing_mode") == {"mode": "newest", "count": 45}
     assert isinstance(setting(sessions, "processing_mode")["count"], int)
     assert not element_of(user, "mode-confirm-dialog").value
+    assert "The processing mode is now newest 45" in caplog.messages
 
-    set_value(user, "mode", ProcessingMode.MARK_DATE)
-    user.find(marker="mode-save").click()
-    await eventually(lambda: element_of(user, "mode-confirm-dialog").value, "The second confirmation")
+    # A change of the count is a change of the mode too.
+    set_value(user, "mode-count", 46.0)
+    user.find(marker="settings-save").click()
+    await confirmation_opens(user)
     user.find(marker="mode-confirm").click()
-    await eventually(lambda: setting(sessions, "processing_mode") == {"mode": "mark_date"}, "The second save")
+    await eventually(lambda: setting(sessions, "processing_mode") == {"mode": "newest", "count": 46}, "The new count")
 
 
-async def test_a_save_of_the_same_mode_asks_nothing_and_writes_nothing(user, sessions):
+async def test_a_form_that_equals_the_stored_mode_has_nothing_to_save(user, sessions):
     await user.open("/settings")
+    set_value(user, "mode", ProcessingMode.NEWEST)
+    set_value(user, "mode-count", 45.0)
+    await eventually(lambda: draft_shown(user), "The buttons of the draft")
 
-    user.find(marker="mode-save").click()
+    # The count of mode NEWEST does not count for another mode.
+    set_value(user, "mode", ProcessingMode.STOP_AT_SEEN)
 
-    await user.should_see("The processing mode did not change.")
-    assert not element_of(user, "mode-confirm-dialog").value
+    await eventually(lambda: not draft_shown(user), "No buttons of the draft")
     assert setting(sessions, "processing_mode") is None
 
 
@@ -815,9 +857,10 @@ async def test_the_stored_mode_shows_on_the_page(nicegui_globals, settings, sess
 
         assert element_of(user, "mode").value is ProcessingMode.NEWEST
         assert element_of(user, "mode-count").value == 7
+        set_value(user, "mode-count", 8.0)
+        await eventually(lambda: draft_shown(user), "The buttons of the draft")
         set_value(user, "mode-count", 7.0)
-        user.find(marker="mode-save").click()
-        await user.should_see("The processing mode did not change.")
+        await eventually(lambda: not draft_shown(user), "No buttons of the draft")
 
 
 @pytest.mark.parametrize("count", [None, 0, -3, 2.5])
@@ -825,16 +868,19 @@ async def test_a_wrong_count_shows_the_error_and_stores_nothing(user, sessions, 
     await user.open("/settings")
     set_value(user, "mode", ProcessingMode.NEWEST)
     set_value(user, "mode-count", count)
+    user.find(marker="rotation").click()
 
-    user.find(marker="mode-save").click()
+    user.find(marker="settings-save").click()
 
     await eventually(lambda: text_of(user, "mode-error") == "Enter a whole number of videos, 1 or more.", "The error")
+    await asyncio.sleep(SETTLE_SECONDS)
     assert not element_of(user, "mode-confirm-dialog").value
-    assert setting(sessions, "processing_mode") is None
+    # The error stops the whole save, also of the other changed settings.
+    assert (setting(sessions, "processing_mode"), setting(sessions, ROTATION_KEY)) == (None, None)
 
     set_value(user, "mode-count", 1)
-    user.find(marker="mode-save").click()
-    await eventually(lambda: element_of(user, "mode-confirm-dialog").value, "The confirmation")
+    user.find(marker="settings-save").click()
+    await confirmation_opens(user)
     await user.should_not_see(marker="mode-error")
 
 
@@ -850,11 +896,14 @@ async def test_a_stored_mode_that_is_not_valid_shows_its_cause_until_a_save(
             "The stored mode is not valid, so each run stops with an error: unknown mode 'fastest'"
         )
         assert element_of(user, "mode").value is ProcessingMode.STOP_AT_SEEN
-        user.find(marker="mode-save").click()
-        await eventually(lambda: element_of(user, "mode-confirm-dialog").value, "The confirmation")
+        # The default mode of the form differs from the stored value, so the page offers to save it at once.
+        assert draft_shown(user)
+        user.find(marker="settings-save").click()
+        await confirmation_opens(user)
         user.find(marker="mode-confirm").click()
-        await user.should_see("The processing mode is saved. The next run uses it.")
+        await user.should_see("The settings are saved.")
         await user.should_not_see(marker="mode-invalid")
+        assert not draft_shown(user)
 
     assert setting(sessions, "processing_mode") == {"mode": "stop_at_seen"}
 
@@ -889,6 +938,7 @@ async def test_a_new_target_gets_the_default_events_and_the_table_shows_only_its
     await open_editor(user, "target-add")
     assert text_of(user, "target-editor-title") == "New target"
     assert element_of(user, "target-url").props["type"] == "password"
+    assert element_of(user, "target-url-link").props["href"] == "https://appriseit.com/services/"
 
     user.find(marker="target-name").type("Phone")
     user.find(marker="target-url").type(f"settingsok://{TOKEN}/chat")
@@ -938,16 +988,19 @@ async def test_the_editor_refuses_a_target_that_cannot_work(user, sessions, name
     assert element_of(user, "target-dialog").value
 
 
-async def test_a_change_keeps_the_stored_url_while_the_field_stays_empty(user, sessions):
+async def test_the_edit_form_shows_the_stored_url_and_a_new_url_replaces_it(user, sessions):
     store(sessions, target(1, "Phone"))
     await user.open("/settings")
     await open_editor(user, "target-1-edit")
     assert text_of(user, "target-editor-title") == "Change the target"
     assert element_of(user, "target-name").value == "Phone"
-    assert element_of(user, "target-url").value == ""
+    url_field = element_of(user, "target-url")
+    assert url_field.value == f"settingsok://{TOKEN}"
+    assert url_field.props.get("type") != "password"
     assert text_of(user, "target-url-hint") == (
-        "The stored URL stays when this field is empty. It starts with settingsok://…. A URL in this field replaces it."
+        "The URL names the service and its token, for example tgram://bottoken/ChatID for Telegram."
     )
+    assert element_of(user, "target-url-link").props["href"] == "https://appriseit.com/services/"
 
     user.find(marker="target-name").clear()
     user.find(marker="target-name").type("Desk")
@@ -958,10 +1011,65 @@ async def test_a_change_keeps_the_stored_url_while_the_field_stays_empty(user, s
     await eventually(lambda: text_of(user, "target-1-name") == "Desk", "The new name in the table")
 
     await open_editor(user, "target-1-edit")
+    assert element_of(user, "target-url").value == f"settingsok://{TOKEN}"
+    user.find(marker="target-url").clear()
     user.find(marker="target-url").type("settingsfail://other")
     user.find(marker="target-save").click()
     await eventually(lambda: targets(sessions)[0].url == "settingsfail://other", "The new URL")
     await eventually(lambda: text_of(user, "target-1-url") == "settingsfail://…", "The new scheme in the table")
+
+
+async def test_the_edit_form_refuses_an_empty_url(user, sessions):
+    store(sessions, target(1, "Phone"))
+    await user.open("/settings")
+    await open_editor(user, "target-1-edit")
+
+    user.find(marker="target-url").clear()
+    user.find(marker="target-url").type("  ")
+    user.find(marker="target-save").click()
+
+    await editor_error_is(user, "Enter the Apprise URL of the target.")
+    assert [(row.name, row.url) for row in targets(sessions)] == [("Phone", f"settingsok://{TOKEN}")]
+    assert element_of(user, "target-dialog").value
+
+
+async def test_a_name_change_keeps_the_stored_url_without_a_new_check(user, sessions):
+    # Apprise does not accept this URL, but only a new URL gets the check.
+    store(sessions, target(1, "Phone", url=f"https://example.com/{TOKEN}"), target(2, "Desk"))
+    await user.open("/settings")
+    await open_editor(user, "target-1-edit")
+    user.find(marker="target-name").type(" 2")
+    user.find(marker="target-save").click()
+    await user.should_see("The target Phone 2 is saved.")
+    assert targets(sessions)[0].url == f"https://example.com/{TOKEN}"
+
+    # Another page renames the target before the form opens, and the form shows the new name.
+    with sessions.begin() as session:
+        session.get(NotificationTarget, 2).name = "Office"
+    await open_editor(user, "target-2-edit")
+    assert element_of(user, "target-name").value == "Office"
+    # Another page changes the URL while the form is open. A save of the name keeps that URL.
+    with sessions.begin() as session:
+        session.get(NotificationTarget, 2).url = "settingsfail://other"
+    user.find(marker="target-name").type(" 2")
+    user.find(marker="target-save").click()
+
+    await user.should_see("The target Office 2 is saved.")
+    assert [(row.name, row.url) for row in targets(sessions)][1] == ("Office 2", "settingsfail://other")
+
+
+async def test_the_edit_of_a_target_that_went_tells_so(user, sessions):
+    store(sessions, target(1, "Phone"), target(2, "Desk"))
+    await user.open("/settings")
+    with sessions.begin() as session:
+        session.delete(session.get(NotificationTarget, 1))
+
+    user.find(marker="target-1-edit").click()
+
+    await user.should_see(GONE_TEXT)
+    await eventually(lambda: not elements_of(user, "target-1"), "The row of the gone target goes")
+    assert not element_of(user, "target-dialog").value
+    assert not elements_of(user, "target-name")
 
 
 async def test_the_cancel_of_the_editor_saves_nothing(user, sessions):
@@ -997,7 +1105,12 @@ async def test_a_delete_asks_first(user, sessions):
     assert elements_of(user, "target-2")
 
 
-async def test_the_table_stores_each_change_at_once(user, sessions):
+def choices_of(row: NotificationTarget) -> tuple:
+    return row.events, row.min_level, row.enabled
+
+
+async def test_the_table_changes_only_the_draft_until_a_save(user, sessions, caplog):
+    caplog.set_level(logging.INFO)
     store(sessions, target(1, "Phone"), target(2, "Desk", events=["video_added", "no_such_event"]))
     await user.open("/settings")
     assert element_of(user, "target-2-event-video_added").value is True
@@ -1009,26 +1122,105 @@ async def test_the_table_stores_each_change_at_once(user, sessions):
     set_value(user, "target-2-level", Level.WARNING)
     user.find(marker="target-2-enabled").click()
 
-    def desk():
-        return targets(sessions)[1]
+    await eventually(lambda: draft_shown(user), "The buttons of the draft")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert choices_of(targets(sessions)[1]) == (["video_added", "no_such_event"], 0, True)
 
-    await eventually(lambda: not desk().enabled, "The switch off")
-    assert desk().events == ["run_failed", "scheduler_state", "no_such_event"]
-    assert desk().min_level == Level.WARNING
-    assert (targets(sessions)[0].events, targets(sessions)[0].min_level) == (["run_failed"], 0)
+    await save(user)
+
+    assert choices_of(targets(sessions)[1]) == (
+        ["run_failed", "scheduler_state", "no_such_event"],
+        Level.WARNING,
+        False,
+    )
+    assert choices_of(targets(sessions)[0]) == (["run_failed"], 0, True)
+    assert "Saved the events, the lowest level and the switch of the notification target 'Desk'" in caplog.messages
+    assert not [message for message in caplog.messages if "'Phone'" in message]
 
 
-async def test_a_change_of_a_target_that_went_tells_so_and_reads_the_table_again(user, sessions):
+async def test_a_save_of_a_target_that_went_tells_so_and_saves_the_other_changes(user, sessions):
     store(sessions, target(1, "Phone"), target(2, "Desk"))
     await user.open("/settings")
+    user.find(marker="target-1-enabled").click()
+    user.find(marker="rotation").click()
     with sessions.begin() as session:
         session.delete(session.get(NotificationTarget, 1))
 
-    user.find(marker="target-1-enabled").click()
+    await save(user)
 
-    await user.should_see("The target does not exist any more.")
+    await user.should_see(GONE_TEXT)
     await eventually(lambda: not elements_of(user, "target-1"), "The row of the gone target goes")
     assert [row.name for row in targets(sessions)] == ["Desk"]
+    assert setting(sessions, ROTATION_KEY) is False
+
+
+async def test_a_delete_keeps_the_draft_of_the_other_targets_and_blocks(user, sessions):
+    store(sessions, target(1, "Phone"), target(2, "Desk"), target(3, "Lamp"))
+    await user.open("/settings")
+    user.find(marker="target-1-event-video_added").click()
+    set_value(user, "target-2-level", Level.WARNING)
+    user.find(marker="rotation").click()
+    # Another page changes the choices that this page did not change.
+    with sessions.begin() as session:
+        session.get(NotificationTarget, 1).min_level = Level.FAILURE.value
+        session.get(NotificationTarget, 3).enabled = False
+
+    user.find(marker="target-2-delete").click()
+    await eventually(lambda: elements_of(user, "target-delete-confirm"), "The question")
+    user.find(marker="target-delete-confirm").click()
+
+    await eventually(lambda: not elements_of(user, "target-2"), "The row of the deleted target goes")
+    assert element_of(user, "target-1-event-video_added").value is True
+    assert element_of(user, "target-1-level").value is Level.FAILURE
+    assert element_of(user, "target-3-enabled").value is False
+    assert element_of(user, "rotation").value is False
+    assert draft_shown(user)
+
+    await save(user)
+
+    assert [choices_of(row) for row in targets(sessions)] == [
+        (["run_failed", "video_added"], Level.FAILURE, True),
+        (["run_failed"], 0, False),
+    ]
+    assert setting(sessions, ROTATION_KEY) is False
+    # The draft of the deleted target went with it, so no warning came.
+    assert GONE_TEXT not in user.notify.messages
+
+
+async def test_the_delete_of_the_only_changed_target_ends_the_draft(user, sessions):
+    store(sessions, target(1, "Phone"), target(2, "Desk"))
+    await user.open("/settings")
+    user.find(marker="target-1-enabled").click()
+    await eventually(lambda: draft_shown(user), "The buttons of the draft")
+
+    user.find(marker="target-1-delete").click()
+    await eventually(lambda: elements_of(user, "target-delete-confirm"), "The question")
+    user.find(marker="target-delete-confirm").click()
+
+    await eventually(lambda: not draft_shown(user), "No buttons of the draft")
+    assert [row.name for row in targets(sessions)] == ["Desk"]
+
+
+async def test_an_added_or_changed_target_keeps_the_draft_of_the_table(user, sessions):
+    store(sessions, target(1, "Phone"))
+    await user.open("/settings")
+    user.find(marker="target-1-enabled").click()
+
+    await open_editor(user, "target-1-edit")
+    user.find(marker="target-name").type(" 2")
+    user.find(marker="target-save").click()
+    await eventually(lambda: text_of(user, "target-1-name") == "Phone 2", "The new name in the table")
+    await open_editor(user, "target-add")
+    user.find(marker="target-name").type("Desk")
+    user.find(marker="target-url").type("settingsok://desk")
+    user.find(marker="target-save").click()
+    await eventually(lambda: elements_of(user, "target-2"), "The row of the new target")
+
+    assert element_of(user, "target-1-enabled").value is False
+    assert element_of(user, "target-2-enabled").value is True
+    assert draft_shown(user)
+    await save(user)
+    assert [(row.name, row.enabled) for row in targets(sessions)] == [("Phone 2", False), ("Desk", True)]
 
 
 async def test_a_test_notification_goes_to_the_target(user, sessions, sent):
@@ -1082,23 +1274,123 @@ async def test_the_test_of_a_target_that_went_tells_so(user, sessions, sent):
     assert sent == []
 
 
-async def test_no_page_text_and_no_log_line_holds_a_target_url(user, sessions, sent, caplog):
+async def test_only_the_edit_form_shows_a_target_url_and_no_log_line_holds_one(user, sessions, sent, caplog):
     caplog.set_level(logging.DEBUG)
     store(sessions, target(1, "Fails", url=f"settingsfail://{TOKEN}"), target(2, "Bad", url=f"https://{TOKEN}.example"))
     await user.open("/settings")
+    assert TOKEN not in page_dump(user)
 
     user.find(marker="target-1-test").click()
     await user.should_see("The test notification to Fails failed. The log of the service names the cause.")
     user.find(marker="target-2-test").click()
     await user.should_see("The test notification to Bad failed. The log of the service names the cause.")
     await open_editor(user, "target-1-edit")
+    assert TOKEN in page_dump(user)
+    user.find(marker="target-url").clear()
     user.find(marker="target-url").type(f"settingsok://{TOKEN}/new")
     user.find(marker="target-save").click()
     await user.should_see("The target Fails is saved.")
 
+    # The form goes after the save, and the page holds no URL any more.
+    await eventually(lambda: not elements_of(user, "target-url"), "The end of the form")
     assert TOKEN not in page_dump(user)
     assert [record.getMessage() for record in caplog.records if TOKEN in record.getMessage()] == []
     assert text_of(user, "target-2-url") == "https://…"
+
+
+# The draft of the page.
+
+
+async def test_a_change_of_each_setting_shows_save_and_discard_until_the_user_puts_it_back(user, sessions):
+    store(sessions, target(1, "Phone"))
+    await user.open("/settings")
+    assert not draft_shown(user)
+    assert texts_of(user, "settings-save") == ["Save"]
+    assert texts_of(user, "settings-discard") == ["Discard"]
+    changes = [
+        ("rotation", False, True),
+        ("mode", ProcessingMode.MARK_DATE, ProcessingMode.STOP_AT_SEEN),
+        ("ytdlp-enabled", False, True),
+        ("ytdlp-channel", "nightly", "stable"),
+        ("ytdlp-time", "05:30", "04:00"),
+        ("target-1-event-video_added", True, False),
+        ("target-1-level", Level.WARNING, Level.INFO),
+        ("target-1-enabled", False, True),
+    ]
+
+    for marker, changed, stored in changes:
+        set_value(user, marker, changed)
+        await eventually(lambda: draft_shown(user), f"The buttons of the draft after a change of {marker}")
+        await user.should_see(marker="settings-save")
+        set_value(user, marker, stored)
+        await eventually(lambda: not draft_shown(user), f"No buttons of the draft after {marker} went back")
+
+    assert [setting(sessions, key) for key in (ROTATION_KEY, "processing_mode", "ytdlp_update")] == [None] * 3
+    assert choices_of(targets(sessions)[0]) == (["run_failed"], 0, True)
+
+
+async def test_discard_puts_each_control_back_and_writes_nothing(user, sessions):
+    store(sessions, target(1, "Phone"))
+    await user.open("/settings")
+    user.find(marker="rotation").click()
+    set_value(user, "mode", ProcessingMode.NEWEST)
+    set_value(user, "mode-count", 45.0)
+    set_value(user, "ytdlp-enabled", False)
+    set_value(user, "ytdlp-channel", "nightly")
+    set_value(user, "ytdlp-time", "noon")
+    user.find(marker="target-1-event-video_added").click()
+    set_value(user, "target-1-level", Level.FAILURE)
+    user.find(marker="target-1-enabled").click()
+    user.find(marker="settings-save").click()
+    await user.should_see(marker="ytdlp-error")
+
+    user.find(marker="settings-discard").click()
+
+    await eventually(lambda: not draft_shown(user), "No buttons of the draft")
+    assert element_of(user, "rotation").value is True
+    assert element_of(user, "mode").value is ProcessingMode.STOP_AT_SEEN
+    assert element_of(user, "mode-count").value == 30
+    assert (element_of(user, "ytdlp-enabled").value, element_of(user, "ytdlp-channel").value) == (True, "stable")
+    assert element_of(user, "ytdlp-time").value == "04:00"
+    await user.should_not_see(marker="ytdlp-error")
+    # The table shows the stored choices after its rebuild.
+    await eventually(lambda: element_of(user, "target-1-event-video_added").value is False, "The stored event")
+    assert element_of(user, "target-1-level").value is Level.INFO
+    assert element_of(user, "target-1-enabled").value is True
+    assert [setting(sessions, key) for key in (ROTATION_KEY, "processing_mode", "ytdlp_update")] == [None] * 3
+    assert choices_of(targets(sessions)[0]) == (["run_failed"], 0, True)
+
+
+async def test_a_save_writes_only_the_changed_settings(user, sessions):
+    store(sessions, target(1, "Phone"), target(2, "Desk"))
+    await user.open("/settings")
+    user.find(marker="rotation").click()
+    set_value(user, "target-1-level", Level.WARNING)
+    # Another page changes the mode, the yt-dlp settings and the other target after this page read them.
+    store(
+        sessions,
+        Setting(key="processing_mode", value={"mode": "mark_date"}),
+        Setting(key="ytdlp_update", value={"enabled": False, "channel": "nightly", "time": "06:15"}),
+    )
+    with sessions.begin() as session:
+        session.get(NotificationTarget, 2).events = ["video_added"]
+        session.get(NotificationTarget, 1).enabled = False
+
+    await save(user)
+
+    assert setting(sessions, ROTATION_KEY) is False
+    assert setting(sessions, "processing_mode") == {"mode": "mark_date"}
+    assert setting(sessions, "ytdlp_update") == {"enabled": False, "channel": "nightly", "time": "06:15"}
+    assert [choices_of(row) for row in targets(sessions)] == [
+        (["run_failed"], Level.WARNING, False),
+        (["video_added"], 0, True),
+    ]
+    assert not element_of(user, "mode-confirm-dialog").value
+    # The table reads the targets again, so it shows the choices of the other page too.
+    await eventually(lambda: element_of(user, "target-1-enabled").value is False, "The switch of the other page")
+    assert element_of(user, "target-2-event-video_added").value is True
+    assert element_of(user, "target-1-level").value is Level.WARNING
+    assert not draft_shown(user)
 
 
 # The translation.

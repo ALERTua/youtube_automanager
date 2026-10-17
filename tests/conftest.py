@@ -4,6 +4,8 @@ import logging
 import shutil
 import subprocess
 import threading
+import urllib.error
+import urllib.request
 
 import pytest
 from nicegui import Client
@@ -26,6 +28,7 @@ from youtube_automanager.db.models import (
     Setting,
 )
 from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, SyncRun
+from youtube_automanager.rotation import CookieRotation
 from youtube_automanager.runner import SYNC_LOCK
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.ytdlp_updater import UpdateResult, installed_version
@@ -86,6 +89,48 @@ def ytdlp_install(monkeypatch):
     """
     fake = FakeYtdlpInstall()
     monkeypatch.setattr("youtube_automanager.web.app.update_ytdlp", fake)
+    return fake
+
+
+class RefusingTransport(urllib.request.HTTPHandler, urllib.request.HTTPSHandler):
+    """Replaces the HTTP and the HTTPS transport of urllib. It records the URL of each request and refuses it."""
+
+    def __init__(self, urls):
+        super().__init__()
+        self.urls = urls
+
+    def _refuse(self, request):
+        self.urls.append(request.full_url)
+        raise urllib.error.URLError("a test sends no request to the network")
+
+    http_open = https_open = _refuse
+
+
+class OfflineRotations:
+    """Builds the cookie rotation of the service on a ``RefusingTransport``, and records each rotation that it builds.
+
+    ``refused`` holds the URL of each request that a rotation tried to send.
+    """
+
+    def __init__(self):
+        self.rotations = []
+        self.refused = []
+
+    def __call__(self, sessions, settings):
+        rotation = CookieRotation(sessions, settings, handlers=[RefusingTransport(self.refused)])
+        self.rotations.append(rotation)
+        return rotation
+
+
+@pytest.fixture(autouse=True)
+def rotation_offline(monkeypatch):
+    """Gives the service a cookie rotation that sends no request, and returns the ``OfflineRotations`` that builds it.
+
+    The rotation is on by default, so a test that runs the service with stored cookies long enough would send requests
+    to accounts.youtube.com.
+    """
+    fake = OfflineRotations()
+    monkeypatch.setattr("youtube_automanager.web.app.CookieRotation", fake)
     return fake
 
 

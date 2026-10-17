@@ -21,6 +21,7 @@ from youtube_automanager.ytdlp_job import (
     LastUpdate,
     UpdateSettings,
     YtdlpUpdates,
+    change_settings,
     parse_time,
     read_last_update,
     read_settings,
@@ -151,6 +152,27 @@ def test_a_save_replaces_a_stored_value_of_another_type(db_sessions):
     save_settings(db_sessions, UpdateSettings(channel="nightly"))
 
     assert stored(db_sessions, SETTINGS_KEY) == {"enabled": True, "channel": "nightly", "time": "04:00"}
+
+
+def test_change_settings_writes_only_the_changed_fields(db_sessions):
+    before = UpdateSettings()
+    # Another page moved the update to 06:15 after the caller read the settings.
+    save_settings(db_sessions, UpdateSettings(at=datetime.time(6, 15)))
+
+    saved = change_settings(db_sessions, before, UpdateSettings(channel="nightly"))
+
+    assert saved == UpdateSettings(enabled=True, channel="nightly", at=datetime.time(6, 15))
+    assert stored(db_sessions, SETTINGS_KEY) == {"enabled": True, "channel": "nightly", "time": "06:15"}
+
+
+def test_change_settings_replaces_a_stored_value_that_is_not_valid(db_sessions, caplog):
+    store(db_sessions, SETTINGS_KEY, {"time": 400})
+
+    saved = change_settings(db_sessions, UpdateSettings(), UpdateSettings(enabled=False))
+
+    assert saved == UpdateSettings(enabled=False)
+    assert stored(db_sessions, SETTINGS_KEY) == {"enabled": False, "channel": "stable", "time": "04:00"}
+    assert f"The setting {SETTINGS_KEY} is not valid" in caplog.text
 
 
 def test_a_stored_value_without_some_keys_takes_their_defaults(db_sessions):

@@ -1,9 +1,10 @@
 """The yt-dlp block of the settings page: the version that the next run uses, the daily update and "Update now".
 
 An update installs a release from PyPI and can take a few minutes, so the block waits for it in a thread. The block
-reads and writes the database in a thread, never on the event loop. Each write holds the lock of the page, so one
-write runs at a time. A save of the settings tells the scheduler at once, and a new channel installs at the next
-update. Each time shows in the time zone of the schedule.
+reads and writes the database in a thread, never on the event loop. The switch, the channel and the time of the daily
+update are part of the draft of the page. The floating Save of the page writes only the fields that changed, while it
+holds the lock of the page. A save of the settings tells the scheduler at once, and a new channel installs at the next
+update. "Update now" acts at once with the saved channel. Each time shows in the time zone of the schedule.
 """
 
 import asyncio
@@ -22,15 +23,16 @@ from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text
 from youtube_automanager.web.ui.dashboard import YTDLP_SOURCES, format_time
 from youtube_automanager.web.ui.scheduler_page import read_timezone
+from youtube_automanager.web.ui.settings_draft import DraftPart, FormError, SettingsDraft, Write
 from youtube_automanager.youtube.ytdlp_updater import Source, active_version
 from youtube_automanager.ytdlp_job import (
     CHANNELS,
     LastUpdate,
     UpdateSettings,
+    change_settings,
     parse_time,
     read_last_update,
     read_settings,
-    save_settings,
     time_text,
 )
 
@@ -87,7 +89,7 @@ class UpdateState:
     updating: bool = False
 
 
-async def ytdlp_section(services: Services, writes: asyncio.Lock) -> None:
+async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
     state = UpdateState(await take_status(services), await asyncio.to_thread(read_settings, services.sessions))
 
     def show_result(text: str, *, problem: bool = False) -> None:
@@ -112,24 +114,37 @@ async def ytdlp_section(services: Services, writes: asyncio.Lock) -> None:
         # The await rebuilds the view now, and not at the next turn of the event loop.
         await status_view.refresh()
 
-    async def save() -> None:
+    def read_form() -> UpdateSettings:
+        """Return the settings of the form. Raise FormError when the form cannot be saved."""
         try:
             at = parse_time(time_input.value or "")
         except ValueError:
-            show_error(_("Enter the time as HH:MM, from 00:00 to 23:59."))
-            return
-        show_error(None)
-        edited = UpdateSettings(bool(enabled_switch.value), channel_radio.value, at)
-        if edited == state.stored:
-            ui.notify(_("The yt-dlp settings did not change."))
-            return
-        async with writes:
-            await asyncio.to_thread(save_settings, services.sessions, edited)
-        await services.scheduler.plan_ytdlp_updates(edited.at, edited.enabled)
-        state.stored = edited
-        LOG.info("The yt-dlp update settings are now %s", edited.to_value())
-        ui.notify(_("The yt-dlp settings are saved."), type="positive")
-        await reload()
+            raise FormError(_("Enter the time as HH:MM, from 00:00 to 23:59.")) from None
+        return UpdateSettings(bool(enabled_switch.value), channel_radio.value, at)
+
+    def changed() -> bool:
+        try:
+            return read_form() != state.stored
+        except FormError:
+            return True
+
+    def show_stored() -> None:
+        enabled_switch.value = state.stored.enabled
+        channel_radio.value = state.stored.channel
+        time_input.value = time_text(state.stored.at)
+
+    def prepare() -> Write:
+        stored, edited = state.stored, read_form()
+
+        async def run() -> None:
+            saved = await asyncio.to_thread(change_settings, services.sessions, stored, edited)
+            await services.scheduler.plan_ytdlp_updates(saved.at, saved.enabled)
+            # A field that this page did not change can hold the value of another page, and the form shows it.
+            state.stored = saved
+            show_stored()
+            LOG.info("The yt-dlp update settings are now %s", saved.to_value())
+
+        return Write(run, after=reload)
 
     async def update_now() -> None:
         if state.updating:
@@ -181,7 +196,11 @@ async def ytdlp_section(services: Services, writes: asyncio.Lock) -> None:
         ).classes("text-grey-7")
         status_view()
         channel_radio = (
-            ui.radio({channel: _(CHANNEL_LABELS[channel]) for channel in CHANNELS}, value=state.stored.channel)
+            ui.radio(
+                {channel: _(CHANNEL_LABELS[channel]) for channel in CHANNELS},
+                value=state.stored.channel,
+                on_change=lambda: draft.update(),
+            )
             .props("inline")
             .mark("ytdlp-channel")
         )
@@ -191,9 +210,11 @@ async def ytdlp_section(services: Services, writes: asyncio.Lock) -> None:
                 "channel installs at the next update."
             )
         ).classes("text-grey-7").mark("ytdlp-channel-help")
-        enabled_switch = ui.switch(_("Update each day"), value=state.stored.enabled).mark("ytdlp-enabled")
+        enabled_switch = ui.switch(
+            _("Update each day"), value=state.stored.enabled, on_change=lambda: draft.update()
+        ).mark("ytdlp-enabled")
         time_input = (
-            ui.input(_("Time of the update"), value=time_text(state.stored.at))
+            ui.input(_("Time of the update"), value=time_text(state.stored.at), on_change=lambda: draft.update())
             .props("type=time outlined dense")
             .classes("w-48")
             .mark("ytdlp-time")
@@ -204,10 +225,9 @@ async def ytdlp_section(services: Services, writes: asyncio.Lock) -> None:
         ).mark("ytdlp-time-help")
         error_label = ui.label().classes("text-negative").mark("ytdlp-error")
         error_label.set_visibility(False)
-        with ui.row().classes("gap-2"):
-            ui.button(_("Save"), icon="save", on_click=save).mark("ytdlp-save")
-            update_button = ui.button(_("Update now"), icon="system_update_alt", on_click=update_now).mark(
-                "ytdlp-update-now"
-            )
+        update_button = ui.button(_("Update now"), icon="system_update_alt", on_click=update_now).mark(
+            "ytdlp-update-now"
+        )
         result_label = ui.label().classes("whitespace-pre-wrap break-words").mark("ytdlp-result")
     show_work()
+    draft.add(DraftPart(changed=changed, prepare=prepare, discard=show_stored, show_error=show_error))
