@@ -992,6 +992,68 @@ def test_a_channel_error_is_reported_and_the_run_goes_on(sync):
     assert "HTTP Error 404" in channel_errors[0].body
 
 
+def test_the_channel_errors_of_a_run_go_into_one_message_before_the_summary(sync):
+    sync.rule("all", ANY, channels=[A, B, C])
+    for channel in (A, B, C):
+        sync.sources.uploads[channel] = entries(channel[-1], 25, channel)
+    sync.run()
+
+    sync.sources.errors[B] = PublicSourceError("HTTP Error 404")
+    sync.sources.errors[C] = PublicSourceError("HTTP Error 500")
+    report = sync.run()
+
+    assert [notification.event for notification in sync.sent] == [Event.CHANNEL_ERROR, Event.RUN_SUMMARY]
+    channel_error, summary = sync.sent
+    assert channel_error.title == "YouTube AutoManager: cannot read 2 channels"
+    assert f"- Channel {B}: HTTP Error 404\n- Channel {C}: HTTP Error 500" in channel_error.body
+    # The summary keeps a line for each error.
+    assert report.errors == [f"Channel Channel {B}: HTTP Error 404", f"Channel Channel {C}: HTTP Error 500"]
+    assert all(error in summary.body for error in report.errors)
+
+
+def test_a_run_sends_each_added_video_after_its_record(sync):
+    sync.playlist("WL", "Watch later")
+    sync.rule("all", ANY, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+    stored = []
+    send = sync.send
+
+    def send_and_look(notification):
+        if notification.event is Event.VIDEO_ADDED:
+            stored.append(set(sync.added_rows()))
+        return send(notification)
+
+    sync.send = send_and_look
+    sync.sources.uploads[A] = [entry("new2", title="Second"), entry("new1", title="First"), *old]
+    sync.run()
+
+    assert [notification.event for notification in sync.sent] == [
+        Event.VIDEO_ADDED,
+        Event.VIDEO_ADDED,
+        Event.RUN_SUMMARY,
+    ]
+    assert [notification.title for notification in sync.sent[:2]] == [
+        "YouTube AutoManager: video added to Watch later"
+    ] * 2
+    assert sync.sent[0].body == "Added First to the playlist Watch later.\nhttps://www.youtube.com/watch?v=new1"
+    assert stored == [{("WL", "new1")}, {("WL", "new1"), ("WL", "new2")}]
+
+
+def test_a_failed_add_sends_no_added_video(sync):
+    sync.rule("all", ANY, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+
+    sync.account.add_errors[("WL", "new")] = AccountError("YouTube did not confirm the change")
+    sync.sources.uploads[A] = [entry("new"), *old]
+    sync.run()
+
+    assert [notification.event for notification in sync.sent] == [Event.RUN_SUMMARY]
+
+
 def test_a_page_that_fails_in_the_middle_leaves_the_channel_as_it_was(sync):
     sync.rule("all", ANY, channels=[A])
     old = entries("old", 30)

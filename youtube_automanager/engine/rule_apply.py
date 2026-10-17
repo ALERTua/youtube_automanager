@@ -697,6 +697,7 @@ class RuleApply:
             session.execute(update(Run).where(Run.id == self._run_id).values(added_count=Run.added_count + 1))
         self.report.added.append(notify.AddedVideo(video.title, playlist_title, video.url))
         LOG.info("Run %s: added %s (%s) to %s", self._run_id, video.video_id, video.title, playlist_title)
+        self._notify(notify.video_added(video.title, playlist_title, video.url))
 
     def _account_client(self) -> AccountLike:
         if self._account is None:

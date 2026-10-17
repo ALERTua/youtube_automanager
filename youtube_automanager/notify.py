@@ -1,6 +1,7 @@
 """Notifications through Apprise: events with levels, targets that pick their events, and one send for each target."""
 
 import logging
+import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -20,6 +21,11 @@ logging.getLogger(apprise.LOGGER_NAME).setLevel(logging.CRITICAL + 1)
 
 APP_NAME = "YouTube AutoManager"
 MAX_LISTED_ITEMS = 20
+# The longest error text of one channel in a channel error message, so that 20 channels fit into one Telegram message.
+MAX_ERROR_CHARS = 200
+# The longest time that one target can hold a send. Apprise limits each request to 4 s to connect and 4 s between two
+# reads, but a target can make several requests with pauses between them, and its URL can set longer limits.
+DELIVER_TIMEOUT_S = 30.0
 
 
 class Level(IntEnum):
@@ -104,6 +110,12 @@ class AddedVideo:
     video_url: str
 
 
+@dataclass(frozen=True)
+class ChannelFailure:
+    channel_title: str
+    error_text: str
+
+
 class Notifier:
     def __init__(self, targets: Iterable[Target]):
         self._targets = tuple(targets)
@@ -160,6 +172,26 @@ def send_to_stored_targets(sessions: sessionmaker[Session], notification: Notifi
 
 
 def _deliver(target: Target, title: str, body: str, level: Level, what: str) -> bool:
+    """Send to one target, and give up after ``DELIVER_TIMEOUT_S``.
+
+    The send runs in a daemon thread, because Apprise cannot stop a request. A thread that is late keeps its send, but
+    the caller goes on, and the thread ends with the process at the latest.
+    """
+    results: list[bool] = []
+    thread = threading.Thread(
+        target=lambda: results.append(_deliver_now(target, title, body, level, what)),
+        name="notify-target",
+        daemon=True,
+    )
+    thread.start()
+    thread.join(DELIVER_TIMEOUT_S)
+    if thread.is_alive():
+        LOG.warning("Cannot send %s to target %r: no result after %g s", what, target.name, DELIVER_TIMEOUT_S)
+        return False
+    return results[0]
+
+
+def _deliver_now(target: Target, title: str, body: str, level: Level, what: str) -> bool:
     try:
         sender = apprise.Apprise()
         if not sender.add(target.url):
@@ -240,13 +272,27 @@ def cookie_expiry(days_left: int, expires_at: datetime) -> Notification:
     )
 
 
-def channel_error(channel_title: str, error_text: str) -> Notification:
-    return Notification(
-        Event.CHANNEL_ERROR,
-        f"{APP_NAME}: cannot read the channel {channel_title}",
-        f"yt-dlp failed to read the channel {channel_title}. The run continues with the other channels."
-        f"\n\n{error_text}",
+def _shortened(text: str) -> str:
+    return text if len(text) <= MAX_ERROR_CHARS else text[: MAX_ERROR_CHARS - 3] + "..."
+
+
+def channel_error(failures: Sequence[ChannelFailure]) -> Notification:
+    """Tell each channel that a run could not read, in one message. Raise ValueError without a failure."""
+    if not failures:
+        raise ValueError("A channel error needs at least one failed channel")
+    if len(failures) == 1:
+        title = f"{APP_NAME}: cannot read the channel {failures[0].channel_title}"
+    else:
+        title = f"{APP_NAME}: cannot read {_count(len(failures), 'channel')}"
+    items = [f"- {failure.channel_title}: {_shortened(failure.error_text)}" for failure in failures]
+    body = "\n".join(
+        [
+            f"yt-dlp failed to read {_count(len(failures), 'channel')}. The run continued with the other channels.",
+            "",
+            *_limited(items),
+        ]
     )
+    return Notification(Event.CHANNEL_ERROR, title, body)
 
 
 def ytdlp_update(

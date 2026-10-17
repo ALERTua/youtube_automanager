@@ -782,16 +782,29 @@ def test_one_apply_adds_at_most_its_limit_and_the_next_apply_adds_the_rest(sync,
     assert len(rules.added()) == APPLY_LIMIT + 30
 
 
-def test_the_apply_sends_the_summary_of_the_run(sync, rules):
+def test_the_apply_sends_each_added_video_and_the_summary_of_the_run(sync, rules):
     rule_id = sync.rule("all", ANY, channels=[A], target="PLhome")
-    sync.sources.uploads[A] = [entry("v1")]
+    sync.sources.uploads[A] = [entry("v2"), entry("v1")]
 
     rules.apply(rule_id)
 
-    (notification,) = sync.sent
-    assert notification.event is Event.RUN_SUMMARY
-    assert "Video v1 -> Playlist PLhome" in notification.body
-    assert "https://www.youtube.com/watch?v=v1" in notification.body
+    first, second, summary = sync.sent
+    assert (first.event, second.event, summary.event) == (Event.VIDEO_ADDED, Event.VIDEO_ADDED, Event.RUN_SUMMARY)
+    assert first.title == "YouTube AutoManager: video added to Playlist PLhome"
+    assert first.body == "Added Video v1 to the playlist Playlist PLhome.\nhttps://www.youtube.com/watch?v=v1"
+    assert "https://www.youtube.com/watch?v=v2" in second.body
+    assert "Video v1 -> Playlist PLhome" in summary.body
+    assert "https://www.youtube.com/watch?v=v1" in summary.body
+
+
+def test_the_apply_sends_no_added_video_for_a_failed_add(sync, rules):
+    rule_id = sync.rule("all", ANY, channels=[A])
+    sync.sources.uploads[A] = [entry("v1")]
+    sync.account.add_errors[("WL", "v1")] = AccountError("YouTube did not confirm the change")
+
+    rules.apply(rule_id)
+
+    assert [notification.event for notification in sync.sent] == [Event.RUN_SUMMARY]
 
 
 def test_a_failed_notification_does_not_fail_the_apply(sync, rules):
@@ -822,7 +835,7 @@ def test_a_failed_add_stops_the_apply_with_an_error(sync, rules, error):
     assert rules.added() == {"v1": rule_id}
     assert report.errors == [f"Cannot add video v2 to Playlist WL: {error}"]
     assert sync.actions(rules.run_id) == [(ADDED, "v1", rule_id, "WL"), (ERROR, "v2", rule_id, "WL")]
-    assert "1 error" in sync.sent[0].title
+    assert "1 error" in sync.sent[-1].title
 
 
 def test_a_session_that_youtube_refuses_during_the_apply_dies_and_the_apply_stops(sync, rules):

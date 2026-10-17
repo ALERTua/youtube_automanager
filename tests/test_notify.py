@@ -1,5 +1,7 @@
 import logging
 import socket
+import threading
+import time
 from datetime import UTC, datetime
 
 import apprise
@@ -12,6 +14,7 @@ from youtube_automanager.notify import (
     DEFAULT_EVENTS,
     EVENT_LEVELS,
     AddedVideo,
+    ChannelFailure,
     Event,
     Level,
     Notification,
@@ -228,6 +231,34 @@ def test_an_exception_of_apprise_for_one_target_does_not_stop_the_others(monkeyp
     assert [message["host"] for message in sent] == ["ok"]
 
 
+HELD = threading.Event()
+
+
+@apprise_notify(on="testhang")
+def _hang(body, title, notify_type, *args, meta, **kwargs):
+    _record("testhang", body, title, notify_type, meta)
+    HELD.wait(10)
+    return True
+
+
+def test_a_target_that_does_not_answer_in_time_fails_and_the_others_still_get_the_message(monkeypatch, all_logs, sent):
+    monkeypatch.setattr(notify, "DELIVER_TIMEOUT_S", 0.2)
+    HELD.clear()
+    notifier = Notifier([Target("slow", "testhang://slow"), Target("ok", "testcapture://ok")])
+
+    started = time.monotonic()
+    try:
+        report = notifier.send(notify.run_failed("boom"))
+        elapsed = time.monotonic() - started
+    finally:
+        HELD.set()
+
+    assert report == SendReport(succeeded=("ok",), failed=("slow",))
+    assert elapsed < 5
+    assert [message["host"] for message in sent] == ["slow", "ok"]
+    assert any("Cannot send run_failed to target 'slow': no result after 0.2 s" in line for line in all_logs)
+
+
 def test_send_test_reaches_a_disabled_target(sent):
     target = Target("off", "testcapture://off", enabled=False, events=frozenset())
 
@@ -343,7 +374,7 @@ def test_the_repr_of_a_target_hides_its_url():
         (notify.run_failed("boom"), Event.RUN_FAILED),
         (notify.cookie_session_dead(), Event.COOKIE_SESSION_DEAD),
         (notify.cookie_expiry(1, datetime(2026, 10, 12, tzinfo=UTC)), Event.COOKIE_EXPIRY_WARNING),
-        (notify.channel_error("Chan", "HTTP Error 404"), Event.CHANNEL_ERROR),
+        (notify.channel_error([ChannelFailure("Chan", "HTTP Error 404")]), Event.CHANNEL_ERROR),
         (notify.ytdlp_update("2026.09.01", "2026.10.01", ok=True), Event.YTDLP_UPDATE_RESULT),
         (notify.ytdlp_update("2026.09.01", "2026.10.01", ok=False, error_text="no space"), Event.YTDLP_UPDATE_RESULT),
         (notify.video_added("Video", "Later", "https://www.youtube.com/watch?v=x"), Event.VIDEO_ADDED),
@@ -355,6 +386,37 @@ def test_each_builder_gives_its_event(notification, event):
     assert notification.event is event
     assert notification.title
     assert notification.body
+
+
+def test_a_channel_error_of_one_channel_names_the_channel_in_the_title():
+    notification = notify.channel_error([ChannelFailure("Chan", "HTTP Error 404")])
+
+    assert notification.title == "YouTube AutoManager: cannot read the channel Chan"
+    assert notification.body == (
+        "yt-dlp failed to read 1 channel. The run continued with the other channels.\n\n- Chan: HTTP Error 404"
+    )
+
+
+def test_a_channel_error_lists_at_most_20_channels_and_counts_the_rest():
+    failures = [ChannelFailure(f"Chan {i:02}", f"error {i:02}") for i in range(23)]
+
+    notification = notify.channel_error(failures)
+
+    assert notification.title == "YouTube AutoManager: cannot read 23 channels"
+    lines = notification.body.splitlines()
+    assert lines[0] == "yt-dlp failed to read 23 channels. The run continued with the other channels."
+    assert lines[2:] == [f"- Chan {i:02}: error {i:02}" for i in range(20)] + ["and 3 more"]
+
+
+def test_a_channel_error_shortens_a_long_error_text():
+    body = notify.channel_error([ChannelFailure("Chan", "x" * 500)]).body
+
+    assert body.endswith("- Chan: " + "x" * (notify.MAX_ERROR_CHARS - 3) + "...")
+
+
+def test_a_channel_error_needs_a_failed_channel():
+    with pytest.raises(ValueError, match="at least one"):
+        notify.channel_error([])
 
 
 def test_run_summary_lists_at_most_20_videos_and_counts_the_rest():

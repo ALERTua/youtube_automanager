@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+from apprise.decorators import notify as apprise_notify
 from nicegui import ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
@@ -20,7 +21,7 @@ from ui_support import (
 )
 
 from youtube_automanager import i18n
-from youtube_automanager.db.models import Run, RunStatus, RunTrigger, Schedule, ScheduleKind
+from youtube_automanager.db.models import NotificationTarget, Run, RunStatus, RunTrigger, Schedule, ScheduleKind
 from youtube_automanager.scheduler import MAX_INTERVAL_S, ScheduleSpec
 from youtube_automanager.web.ui import scheduler_page
 from youtube_automanager.web.ui.dashboard import TIME_FORMAT
@@ -346,6 +347,57 @@ async def test_pause_and_resume_write_the_row_and_keep_the_unsaved_edits(user, s
     assert element_of(user, "pause").enabled
     assert not element_of(user, "resume").enabled
     assert len(texts_of(user, "next-run")) == 5
+
+
+DELIVERED: list[str] = []
+PAUSED_TITLE = "YouTube AutoManager: the schedule is paused"
+RESUMED_TITLE = "YouTube AutoManager: the schedule is resumed"
+
+
+@apprise_notify(on="testschedule")
+def _capture(body, title, notify_type, *args, meta, **kwargs):
+    DELIVERED.append(title)
+    return True
+
+
+@pytest.fixture
+def delivered(sessions):
+    """A target that takes the event of a pause or a resume, and the titles that it got."""
+    DELIVERED.clear()
+    store(
+        sessions,
+        NotificationTarget(name="t", url="testschedule://t", min_level=0, events=["scheduler_state"], enabled=True),
+    )
+    yield DELIVERED
+    DELIVERED.clear()
+
+
+async def test_pause_and_resume_send_the_state_of_the_schedule(user, delivered):
+    await user.open("/scheduler")
+
+    user.find(marker="pause").click()
+    await eventually(lambda: delivered == [PAUSED_TITLE], "The notification of the pause")
+    user.find(marker="resume").click()
+    await eventually(lambda: delivered == [PAUSED_TITLE, RESUMED_TITLE], "The notification of the resume")
+
+
+async def test_a_save_that_turns_the_switch_sends_the_state_and_a_save_that_keeps_it_sends_nothing(user, delivered):
+    await user.open("/scheduler")
+
+    set_value(user, "schedule-cron", "5 5 * * *")
+    await click_save(user)
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert delivered == []
+
+    user.find(marker="schedule-enabled").click()
+    await user.should_see(marker="preview-off")
+    await click_save(user)
+    await eventually(lambda: delivered == [PAUSED_TITLE], "The notification of the pause")
+
+    user.find(marker="schedule-enabled").click()
+    await user.should_see(marker="preview-time")
+    await click_save(user)
+    await eventually(lambda: delivered == [PAUSED_TITLE, RESUMED_TITLE], "The notification of the resume")
 
 
 async def test_run_now_starts_a_manual_run(user, sessions, fake_starter):

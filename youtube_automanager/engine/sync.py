@@ -253,6 +253,8 @@ class SyncRun:
         self._shorts: dict[str, frozenset[str] | None] = {}
         self._channel_titles: dict[str, str] = {}
         self._playlist_titles: dict[str, str] = {}
+        # The channels that the run could not read. They go into one notification at the end of the run.
+        self._channel_failures: list[notify.ChannelFailure] = []
         self.report = RunReport()
 
     def run(self) -> RunReport:
@@ -270,6 +272,8 @@ class SyncRun:
             self.report.seen_count,
             len(self.report.errors),
         )
+        if self._channel_failures:
+            self._notify(notify.channel_error(self._channel_failures))
         self._notify(notify.run_summary(self.report.added, self.report.errors))
         return self.report
 
@@ -545,6 +549,7 @@ class SyncRun:
             session.execute(update(Run).where(Run.id == self._run_id).values(added_count=Run.added_count + 1))
         self.report.added.append(notify.AddedVideo(video.title, playlist_title, video.url))
         LOG.info("Run %s: added %s (%s) to %s", self._run_id, video.video_id, video.title, playlist_title)
+        self._notify(notify.video_added(video.title, playlist_title, video.url))
 
     def _record(self, source: Source, video: Video, state: SeenVideoState, action: RunAction | None = None) -> None:
         with self._sessions.begin() as session:
@@ -648,7 +653,7 @@ class SyncRun:
 
     def _channel_error(self, title: str, error_text: str, channel_id: str) -> None:
         self._error(f"Channel {title}: {error_text}", channel_id=channel_id)
-        self._notify(notify.channel_error(title, error_text))
+        self._channel_failures.append(notify.ChannelFailure(title, error_text))
 
     def _notify(self, notification: notify.Notification) -> None:
         try:
