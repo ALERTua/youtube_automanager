@@ -184,6 +184,39 @@ def load_processing(session: Session) -> Processing:
         raise SyncAborted(f"The setting {PROCESSING_MODE_KEY!r} is not valid: {error}") from None
 
 
+def resets_state(session: Session, processing: Processing) -> bool:
+    """Tell whether the next run removes the state of each source, because the stored state has another mode.
+
+    Without a record of the mode of the state, the run keeps the state and records the mode.
+    """
+    row = session.get(Setting, STATE_MODE_KEY)
+    return row is not None and row.value != processing.to_value()
+
+
+def _known(session: Session, key: str) -> dict[str, Known]:
+    rows = session.execute(
+        select(SeenVideo.video_id, SeenVideo.state, SeenVideo.upload_date).where(SeenVideo.channel_id == key)
+    )
+    return {video_id: Known(state, upload_date) for video_id, state, upload_date in rows}
+
+
+def load_source_state(
+    session: Session, key: str
+) -> tuple[dict[str, Known], datetime.date | None, datetime.datetime | None]:
+    """Return the stored videos of the source ``key``, its mark, and the time of its last full read."""
+    known = _known(session, key)
+    if key == FEED_SOURCE:
+        mark_row = session.get(Setting, FEED_MARK_KEY)
+        read_row = session.get(Setting, FEED_READ_KEY)
+        mark = datetime.date.fromisoformat(mark_row.value) if mark_row is not None and mark_row.value else None
+        read_at = datetime.datetime.fromisoformat(read_row.value) if read_row is not None and read_row.value else None
+        return known, mark, read_at
+    channel = session.get(Channel, key)
+    if channel is None:
+        return known, None, None
+    return known, channel.mark_date, channel.last_checked_at
+
+
 class SyncRun:
     """One run of the sync. ``run`` does the whole run once.
 
@@ -293,7 +326,7 @@ class SyncRun:
         if row is None:
             session.add(Setting(key=STATE_MODE_KEY, value=value))
             return
-        if row.value == value:
+        if not resets_state(session, processing):
             return
         LOG.warning(
             "The processing mode changed from %s to %s, so each source starts with a baseline",
@@ -354,28 +387,8 @@ class SyncRun:
             raise PublicSourceError(str(error)) from error
 
     def _load_state(self, source: Source) -> tuple[dict[str, Known], datetime.date | None, datetime.datetime | None]:
-        """Return the stored videos of the source, its mark, and the time of its last full read."""
         with self._sessions() as session:
-            known = self._known(session, source.key)
-            if source.is_feed:
-                mark_row = session.get(Setting, FEED_MARK_KEY)
-                read_row = session.get(Setting, FEED_READ_KEY)
-                mark = datetime.date.fromisoformat(mark_row.value) if mark_row is not None and mark_row.value else None
-                read_at = (
-                    datetime.datetime.fromisoformat(read_row.value) if read_row is not None and read_row.value else None
-                )
-                return known, mark, read_at
-            channel = session.get(Channel, source.key)
-            if channel is None:
-                return known, None, None
-            return known, channel.mark_date, channel.last_checked_at
-
-    @staticmethod
-    def _known(session: Session, key: str) -> dict[str, Known]:
-        rows = session.execute(
-            select(SeenVideo.video_id, SeenVideo.state, SeenVideo.upload_date).where(SeenVideo.channel_id == key)
-        )
-        return {video_id: Known(state, upload_date) for video_id, state, upload_date in rows}
+            return load_source_state(session, source.key)
 
     def _finish_source(self, source: Source, baseline_videos: Sequence[Video], *, mark: datetime.date | None) -> None:
         """Write the end of a full read in one transaction: the videos of a baseline, the mark and the read time.
@@ -672,7 +685,7 @@ class SyncRun:
             for key, outcome in outcomes.items():
                 if outcome is None:
                     continue
-                known = self._known(session, key)
+                known = _known(session, key)
                 gone = set(known) - ids_to_keep(processing, outcome.read, known, outcome.mark)
                 for chunk in _chunks(gone):
                     session.execute(delete(SeenVideo).where(SeenVideo.channel_id == key, SeenVideo.video_id.in_(chunk)))

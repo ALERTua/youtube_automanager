@@ -104,22 +104,34 @@ DRAFT = DraftRule({"regex": [{"var": "title"}, "-x", "i"]}, ("UCx",), True)
 
 
 @pytest.mark.parametrize(
-    ("argv", "rule_id", "draft"),
+    ("argv", "since", "rule_id", "draft"),
     [
-        (["preview-rule", "--since=2026-10-05", "--rule-id=3"], 3, None),
-        (["preview-rule", "--since", "2026-10-05", f"--draft={DRAFT.to_json()}"], None, DRAFT),
-        (["preview-rule", "--since=2026-10-05", "--rule-id", "3", f"--draft={DRAFT.to_json()}"], 3, DRAFT),
+        (["preview-rule", "--since=2026-10-05", "--rule-id=3"], datetime.date(2026, 10, 5), 3, None),
+        (
+            ["preview-rule", "--since", "2026-10-05", f"--draft={DRAFT.to_json()}"],
+            datetime.date(2026, 10, 5),
+            None,
+            DRAFT,
+        ),
+        (
+            ["preview-rule", "--since=2026-10-05", "--rule-id", "3", f"--draft={DRAFT.to_json()}"],
+            datetime.date(2026, 10, 5),
+            3,
+            DRAFT,
+        ),
+        (["preview-rule", f"--draft={DRAFT.to_json()}"], None, None, DRAFT),
+        (["preview-rule", "--rule-id=3"], None, 3, None),
     ],
 )
 def test_preview_rule_runs_the_preview_body_and_gives_its_exit_code(
-    settings, logging_setups, monkeypatch, argv, rule_id, draft
+    settings, logging_setups, monkeypatch, argv, since, rule_id, draft
 ):
     calls = []
     monkeypatch.setattr(cli, "preview_once", lambda *given: calls.append(given) or 5)
 
     assert cli.main(argv) == 5
 
-    assert calls == [(settings, datetime.date(2026, 10, 5), rule_id, draft)]
+    assert calls == [(settings, since, rule_id, draft)]
     assert logging_setups == [True]
 
 
@@ -163,7 +175,7 @@ def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(
         ["unsubscribe", "--title=x"],
         ["unsubscribe", "--channel-id=UCx", "--title=x"],
         ["preview-rule", "--since=2026-10-05"],
-        ["preview-rule", "--rule-id=3"],
+        ["preview-rule"],
         ["preview-rule", "--since=yesterday", "--rule-id=3"],
         ["preview-rule", "--since=2026-10-05", "--rule-id=x"],
         ["preview-rule", "--since=2026-10-05", "--draft=[]"],
