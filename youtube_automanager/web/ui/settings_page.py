@@ -1,9 +1,14 @@
 """The settings page: the YouTube cookies, the cookie rotation, the processing mode, yt-dlp and the notifications.
 
-The web UI has no login, so anybody who can open the page can read it. The page therefore never shows a cookie value
-or a stored notification URL. No log line of the page holds a cookie value or a target URL. The block of yt-dlp is in
-the module ``ytdlp_section``. The block of the notification targets is in the module ``notifications_section``, and
-the page shows it last.
+The web UI has no login, so anybody who can open the page can read it, and the deployer must protect the access to the
+UI. The page never shows a cookie value. It shows a stored notification URL only in the edit form of its target,
+because the user needs to see the URL to change it. No log line of the page holds a cookie value or a target URL. The
+block of yt-dlp is in the module ``ytdlp_section``. The block of the notification targets is in the module
+``notifications_section``, and the page shows it last.
+
+A control of a setting changes only the draft of the page, and one pair of floating buttons saves or discards each
+change of the draft, see the module ``settings_draft``. The actions keep their own buttons and act at once: the cookie
+upload, the session check, "Update now", the add, the change and the delete of a notification target, and its test.
 
 The session check runs in a child process of the runner, and a test notification can take up to a minute, so the page
 waits for both in a thread. The page reads and writes the database in a thread, never on the event loop. Each time
@@ -47,6 +52,7 @@ from youtube_automanager.web.ui.service_settings import (
     save_processing,
     save_rotation,
 )
+from youtube_automanager.web.ui.settings_draft import DraftPart, FormError, SettingsDraft, Write
 from youtube_automanager.web.ui.ytdlp_section import ytdlp_section
 from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES
 from youtube_automanager.youtube.session import CookieCipher, CookieKeyError
@@ -323,26 +329,40 @@ async def _cookies_section(services: Services) -> None:
 # The cookie rotation.
 
 
-async def _rotation_section(services: Services, writes: asyncio.Lock) -> None:
-    enabled = await asyncio.to_thread(read_rotation, services.sessions)
+@dataclass
+class RotationState:
+    stored: bool
 
-    async def change(event: events.ValueChangeEventArguments) -> None:
-        on = bool(event.value)
-        async with writes:
+
+async def _rotation_section(services: Services, draft: SettingsDraft) -> None:
+    state = RotationState(await asyncio.to_thread(read_rotation, services.sessions))
+
+    def prepare() -> Write:
+        on = bool(switch.value)
+
+        async def run() -> None:
             await asyncio.to_thread(save_rotation, services.sessions, on)
-        LOG.info("The cookie rotation is now %s", "on" if on else "off")
-        ui.notify(_("The cookie rotation is on.") if on else _("The cookie rotation is off."), type="positive")
+            state.stored = on
+            LOG.info("The cookie rotation is now %s", "on" if on else "off")
+
+        return Write(run)
+
+    def discard() -> None:
+        switch.value = state.stored
 
     with ui.card().classes("w-full").mark("rotation-card"):
         ui.label(_("Cookie rotation")).classes("text-h6")
-        ui.switch(_("Rotate the cookie session"), value=enabled, on_change=change).mark("rotation")
+        switch = ui.switch(_("Rotate the cookie session"), value=state.stored, on_change=lambda: draft.update()).mark(
+            "rotation"
+        )
         ui.label(
             _(
                 "The rotation renews the session of the stored cookies about each {minutes} minutes, the way an open "
-                "YouTube tab does. It is off by default, and this default can change after a measurement that still "
-                "runs. A change acts at the next turn of the rotation, without a restart."
+                "YouTube tab does. It is on by default. A saved change acts at the next turn of the rotation, "
+                "without a restart."
             ).format(minutes=round(INTERVAL_S / 60))
         ).classes("text-grey-7").mark("rotation-help")
+    draft.add(DraftPart(changed=lambda: bool(switch.value) != state.stored, prepare=prepare, discard=discard))
 
 
 # The processing mode.
@@ -354,44 +374,51 @@ class ModeState:
     stored: Processing | None
 
 
-async def _processing_section(services: Services, writes: asyncio.Lock) -> None:
+async def _processing_section(services: Services, draft: SettingsDraft) -> None:
     stored = await asyncio.to_thread(read_processing, services.sessions)
     state = ModeState(stored.processing)
     shown = stored.processing or Processing()
 
     def read_form() -> Processing:
-        """Return the mode of the form. Raise ValueError with a text for the user when the form cannot be saved."""
+        """Return the mode of the form. Raise FormError when the form cannot be saved."""
         mode = ProcessingMode(mode_radio.value)
         if mode is not ProcessingMode.NEWEST:
             return Processing(mode)
         count = count_input.value
         # ``ui.number`` gives a float, and its limits act only in the browser.
         if count is None or not float(count).is_integer() or count < 1:
-            raise ValueError(_("Enter a whole number of videos, 1 or more."))
+            raise FormError(_("Enter a whole number of videos, 1 or more."))
         return Processing(mode, int(count))
+
+    def changed() -> bool:
+        # A stored mode that is not valid always differs from the form, so the user can save a valid mode at once.
+        try:
+            return read_form() != state.stored
+        except FormError:
+            return True
 
     def show_error(text: str | None) -> None:
         error_label.set_text(text or "")
         error_label.set_visibility(bool(text))
 
-    async def save() -> None:
-        try:
-            processing = read_form()
-        except ValueError as error:
-            show_error(str(error))
-            return
-        show_error(None)
-        if processing == state.stored:
-            ui.notify(_("The processing mode did not change."))
-            return
-        if not await confirm_dialog:
-            return
-        async with writes:
+    async def confirm() -> bool:
+        return bool(await confirm_dialog)
+
+    def prepare() -> Write:
+        processing = read_form()
+
+        async def run() -> None:
             await asyncio.to_thread(save_processing, services.sessions, processing)
-        state.stored = processing
-        invalid_label.set_visibility(False)
-        LOG.info("The processing mode is now %s", processing.describe())
-        ui.notify(_("The processing mode is saved. The next run uses it."), type="positive")
+            state.stored = processing
+            invalid_label.set_visibility(False)
+            LOG.info("The processing mode is now %s", processing.describe())
+
+        return Write(run, confirm=confirm)
+
+    def discard() -> None:
+        shown = state.stored or Processing()
+        mode_radio.value = shown.mode
+        count_input.value = shown.count or DEFAULT_NEWEST_COUNT
 
     with ui.card().classes("w-full").mark("mode-card"):
         ui.label(_("Processing mode")).classes("text-h6")
@@ -409,7 +436,9 @@ async def _processing_section(services: Services, writes: asyncio.Lock) -> None:
             .mark("mode-invalid")
         )
         invalid_label.set_visibility(stored.processing is None)
-        mode_radio = ui.radio({mode: _(label) for mode, label in MODE_LABELS.items()}, value=shown.mode).mark("mode")
+        mode_radio = ui.radio(
+            {mode: _(label) for mode, label in MODE_LABELS.items()}, value=shown.mode, on_change=lambda: draft.update()
+        ).mark("mode")
         ui.label().classes("text-grey-7").mark("mode-help").bind_text_from(
             mode_radio, "value", lambda mode: mode_help(ProcessingMode(mode))
         )
@@ -420,6 +449,7 @@ async def _processing_section(services: Services, writes: asyncio.Lock) -> None:
                 min=1,
                 step=1,
                 precision=0,
+                on_change=lambda: draft.update(),
             )
             .props("outlined dense")
             .classes("w-64")
@@ -435,7 +465,6 @@ async def _processing_section(services: Services, writes: asyncio.Lock) -> None:
         )
         error_label = ui.label().classes("text-negative").mark("mode-error")
         error_label.set_visibility(False)
-        ui.button(_("Save"), icon="save", on_click=save).mark("mode-save")
 
     with ui.dialog().mark("mode-confirm-dialog") as confirm_dialog, ui.card().classes("max-w-lg"):
         ui.label(_("Change the processing mode?")).classes("text-h6")
@@ -448,15 +477,17 @@ async def _processing_section(services: Services, writes: asyncio.Lock) -> None:
         with ui.row().classes("gap-2"):
             ui.button(_("Change the mode"), on_click=lambda: confirm_dialog.submit(True)).mark("mode-confirm")
             ui.button(_("Cancel"), on_click=lambda: confirm_dialog.submit(False)).props("flat").mark("mode-cancel")
+    draft.add(DraftPart(changed=changed, prepare=prepare, discard=discard, show_error=show_error))
 
 
 @register_page("/settings", label=N_("Settings"), icon="settings")
 async def settings_page(services: Services) -> None:
     # One write of the page at a time, so a later change never loses to an earlier one that ends later.
-    writes = asyncio.Lock()
+    draft = SettingsDraft(asyncio.Lock())
     ui.label(_("Settings")).classes("text-h5")
     await _cookies_section(services)
-    await _rotation_section(services, writes)
-    await _processing_section(services, writes)
-    await ytdlp_section(services, writes)
-    await notifications_section(services, writes)
+    await _rotation_section(services, draft)
+    await _processing_section(services, draft)
+    await ytdlp_section(services, draft)
+    await notifications_section(services, draft)
+    draft.build()

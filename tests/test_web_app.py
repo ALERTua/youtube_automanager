@@ -1,11 +1,13 @@
 import dataclasses
 import importlib.metadata
+import socket
 import time
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import select
 
 from youtube_automanager import ytdlp_job
@@ -20,13 +22,17 @@ from youtube_automanager.db.models import (
     SessionState,
     Setting,
 )
+from youtube_automanager.rotation import INTERVAL_S, PAGE_URL
 from youtube_automanager.runner import INTERRUPTED_ERROR, UNAVAILABLE_EXIT_CODE
 from youtube_automanager.scheduler import ROTATION_DELAY_S, ROTATION_JOB_ID, RunNowOutcome
 from youtube_automanager.settings import Settings
 from youtube_automanager.web.app import create_app
+from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
 WAIT_SECONDS = 10
 KYIV = ZoneInfo("Europe/Kyiv")
+# A fake login cookie of a stored session.
+ROTATION_COOKIE = ".youtube.com\tTRUE\t/\tTRUE\t4000000000\tSAPISID\tfake-sapisid\n"
 
 
 @pytest.fixture(autouse=True)
@@ -219,6 +225,31 @@ def test_start_plans_the_first_turn_of_the_cookie_rotation(settings, fake_starte
 
     assert job is not None
     assert datetime.now(UTC) < job.next_run_time <= datetime.now(UTC) + timedelta(seconds=ROTATION_DELAY_S)
+
+
+def test_the_cookie_rotation_of_a_service_under_test_sends_no_request(
+    settings, sessions, fake_starter, rotation_offline, monkeypatch
+):
+    key = generate_key()
+    with sessions.begin() as session:
+        save_cookies(session, CookieCipher(key), "# Netscape HTTP Cookie File\n" + ROTATION_COOKIE)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("the cookie rotation tried to open a network connection")
+
+    with TestClient(
+        create_app(settings.model_copy(update={"cookies_key": SecretStr(key)}), start=fake_starter)
+    ) as client:
+        (rotation,) = rotation_offline.rotations
+        assert client.app.state.services.scheduler._scheduler.get_job(ROTATION_JOB_ID).args == (rotation,)
+        # The event loop of the client connected its own sockets already. A request to a host name needs a lookup.
+        monkeypatch.setattr(socket, "getaddrinfo", refuse)
+        monkeypatch.setattr(socket, "create_connection", refuse)
+        # The setting of the rotation is not stored, so the turn tries to rotate.
+        delay_s = rotation.turn()
+
+    assert rotation_offline.refused == [PAGE_URL]
+    assert delay_s == 2 * INTERVAL_S
 
 
 def test_start_plans_the_ytdlp_update_each_day_at_0400_in_the_time_zone_of_the_schedule(settings, fake_starter):

@@ -5,7 +5,7 @@ rotation page for a rotation id, and a POST of that id. The answer of the POST h
 SIDCC cookies, and the interval until the next rotation. A second rotation within 1 to 10 minutes can give HTTP 429,
 so the service never rotates more often than the answer allows, and never more often than each ``INTERVAL_S``.
 
-The rotation is the setting ROTATION_KEY, off by default. It never runs while a sync run or a session check holds the
+The rotation is the setting ROTATION_KEY, on by default. It never runs while a sync run or a session check holds the
 sync lock, and it saves the new values through the guarded write-back. It uses only the standard library, because the
 process of the service never imports yt-dlp.
 """
@@ -33,7 +33,7 @@ LOG = logging.getLogger(__name__)
 
 # The setting that turns the rotation on, and its default.
 ROTATION_KEY = "cookie_rotation"
-ROTATION_DEFAULT = False
+ROTATION_DEFAULT = True
 # The time before which the next rotation must not come. It survives a restart of the service.
 NEXT_ROTATION_KEY = "cookie_rotation_next_at"
 
@@ -56,7 +56,10 @@ _ROTATION_ID = re.compile(r"init\('(-?\d+)'")
 
 
 def rotation_enabled(session: Session) -> bool:
-    """Return the setting of the rotation. A value that is not true or false keeps the rotation off."""
+    """Return the setting of the rotation. Without a stored value, the rotation is on.
+
+    A stored value that is not true or false keeps the rotation off.
+    """
     row = session.get(Setting, ROTATION_KEY)
     if row is None:
         return ROTATION_DEFAULT

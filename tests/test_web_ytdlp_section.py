@@ -81,47 +81,84 @@ async def test_the_release_of_the_data_folder_and_the_last_update_show_on_the_pa
         assert "text-negative" in element_of(user, "ytdlp-last-result").classes
 
 
+def draft_shown(user) -> bool:
+    return element_of(user, "settings-draft").visible
+
+
 async def test_a_save_stores_the_settings_and_moves_the_update_without_a_restart(user, sessions, ytdlp_install):
     await user.open("/settings")
     set_value(user, "ytdlp-channel", "nightly")
     set_value(user, "ytdlp-time", "05:30")
+    assert setting(sessions, SETTINGS_KEY) is None
 
-    user.find(marker="ytdlp-save").click()
+    user.find(marker="settings-save").click()
 
-    await user.should_see("The yt-dlp settings are saved.")
+    await user.should_see("The settings are saved.")
     assert setting(sessions, SETTINGS_KEY) == {"enabled": True, "channel": "nightly", "time": "05:30"}
     await eventually(lambda: text_of(user, "ytdlp-next") == next_kyiv_time(5, 30), "The new time of the update")
+    assert not draft_shown(user)
     # A new channel installs at the next update, not at once.
     assert ytdlp_install.calls == []
 
     set_value(user, "ytdlp-enabled", False)
-    user.find(marker="ytdlp-save").click()
+    user.find(marker="settings-save").click()
 
     await eventually(lambda: text_of(user, "ytdlp-next") == "No update is planned", "The update off")
     assert setting(sessions, SETTINGS_KEY) == {"enabled": False, "channel": "nightly", "time": "05:30"}
     assert ytdlp_install.calls == []
 
 
-async def test_a_save_of_the_same_settings_writes_nothing(user, sessions):
+async def test_a_form_that_equals_the_stored_settings_has_nothing_to_save(user, sessions):
     await user.open("/settings")
+    assert not draft_shown(user)
 
-    user.find(marker="ytdlp-save").click()
+    set_value(user, "ytdlp-channel", "nightly")
+    await eventually(lambda: draft_shown(user), "The buttons of the draft")
+    set_value(user, "ytdlp-channel", "stable")
+    await eventually(lambda: not draft_shown(user), "No buttons of the draft")
+    # Another text of the same time is the same setting.
+    set_value(user, "ytdlp-time", "4:00")
 
-    await user.should_see("The yt-dlp settings did not change.")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert not draft_shown(user)
     assert setting(sessions, SETTINGS_KEY) is None
 
 
 @pytest.mark.parametrize("value", ["25:00", "", None, "noon"])
 async def test_a_wrong_time_shows_the_error_and_stores_nothing(user, sessions, value):
     await user.open("/settings")
+    set_value(user, "ytdlp-channel", "nightly")
     set_value(user, "ytdlp-time", value)
 
-    user.find(marker="ytdlp-save").click()
+    user.find(marker="settings-save").click()
 
     await user.should_see(marker="ytdlp-error")
     assert text_of(user, "ytdlp-error") == "Enter the time as HH:MM, from 00:00 to 23:59."
+    await asyncio.sleep(SETTLE_SECONDS)
     assert setting(sessions, SETTINGS_KEY) is None
     assert text_of(user, "ytdlp-next") == next_kyiv_time(4, 0)
+
+    # The error goes when the form equals the stored settings again.
+    set_value(user, "ytdlp-channel", "stable")
+    set_value(user, "ytdlp-time", "04:00")
+    await eventually(lambda: not draft_shown(user), "No buttons of the draft")
+    await user.should_not_see(marker="ytdlp-error")
+
+
+async def test_a_save_writes_only_the_fields_that_the_page_changed(user, sessions):
+    await user.open("/settings")
+    set_value(user, "ytdlp-channel", "nightly")
+    # Another page moves the update to 06:15 after this page read the settings.
+    store(sessions, Setting(key=SETTINGS_KEY, value={"enabled": True, "channel": "stable", "time": "06:15"}))
+
+    user.find(marker="settings-save").click()
+
+    await user.should_see("The settings are saved.")
+    assert setting(sessions, SETTINGS_KEY) == {"enabled": True, "channel": "nightly", "time": "06:15"}
+    # The form and the scheduler follow the database.
+    assert element_of(user, "ytdlp-time").value == "06:15"
+    assert not draft_shown(user)
+    await eventually(lambda: text_of(user, "ytdlp-next") == next_kyiv_time(6, 15), "The time of the other page")
 
 
 async def test_update_now_shows_a_spinner_and_then_the_result_and_the_new_version(

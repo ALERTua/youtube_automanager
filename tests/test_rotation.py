@@ -243,12 +243,12 @@ def test_the_rotation_never_comes_more_often_than_the_measured_interval(harness,
 # No rotation
 
 
-def test_the_rotation_is_off_by_default(harness):
+def test_without_a_stored_setting_the_rotation_is_on(harness):
     with harness.sessions.begin() as session:
         session.delete(session.get(Setting, ROTATION_KEY))
 
     assert harness.rotation().turn() == INTERVAL_S
-    assert harness.accounts.requests == []
+    assert [request["url"] for request in harness.accounts.requests] == [PAGE_URL, ROTATE_URL]
 
 
 @pytest.mark.parametrize("value", [False, "yes", 1, None])

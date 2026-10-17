@@ -72,15 +72,16 @@ def test_a_save_replaces_a_stored_mode_that_is_not_valid(db_sessions):
     assert setting(db_sessions, PROCESSING_MODE_KEY) == {"mode": "newest", "count": 5}
 
 
-def test_the_rotation_is_off_by_default_and_its_saves_store_json_booleans(db_sessions):
+def test_the_rotation_is_on_by_default_and_its_saves_store_json_booleans(db_sessions):
+    assert read_rotation(db_sessions) is True
+
+    save_rotation(db_sessions, False)
+    assert setting(db_sessions, ROTATION_KEY) is False
     assert read_rotation(db_sessions) is False
 
     save_rotation(db_sessions, True)
     assert setting(db_sessions, ROTATION_KEY) is True
     assert read_rotation(db_sessions) is True
-
-    save_rotation(db_sessions, False)
-    assert setting(db_sessions, ROTATION_KEY) is False
 
 
 @pytest.mark.parametrize(("stored", "saved"), [(1, True), (0, False), ("true", True)])

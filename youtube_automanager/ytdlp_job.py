@@ -11,6 +11,7 @@ lives under ``LAST_UPDATE_KEY``. An update sends the ``ytdlp_update`` notificati
 update failed. This module imports neither NiceGUI nor yt-dlp, so the process of the service runs it.
 """
 
+import dataclasses
 import datetime
 import functools
 import logging
@@ -153,24 +154,45 @@ def _replace_setting(session: Session, key: str, value: Any) -> None:
     session.add(Setting(key=key, value=value))
 
 
-def read_settings(sessions: sessionmaker[Session]) -> UpdateSettings:
-    """Read the settings of the update. A missing or wrong stored value gives the defaults. This call blocks."""
-    with sessions() as session:
-        row = session.get(Setting, SETTINGS_KEY)
-        value = None if row is None else row.value
+def _stored_settings(session: Session) -> UpdateSettings:
+    """Return the stored settings of the update. A missing or wrong stored value gives the defaults."""
+    row = session.get(Setting, SETTINGS_KEY)
     if row is None:
         return UpdateSettings()
     try:
-        return UpdateSettings.from_value(value)
+        return UpdateSettings.from_value(row.value)
     except (ValueError, TypeError) as error:
         LOG.warning("The setting %s is not valid, so the yt-dlp update uses its defaults: %s", SETTINGS_KEY, error)
         return UpdateSettings()
+
+
+def read_settings(sessions: sessionmaker[Session]) -> UpdateSettings:
+    """Read the settings of the update. A missing or wrong stored value gives the defaults. This call blocks."""
+    with sessions() as session:
+        return _stored_settings(session)
 
 
 def save_settings(sessions: sessionmaker[Session], settings: UpdateSettings) -> None:
     """Store the settings of the update. The caller tells the scheduler about a new time. This call blocks."""
     with sessions.begin() as session:
         _replace_setting(session, SETTINGS_KEY, settings.to_value())
+
+
+def change_settings(sessions: sessionmaker[Session], stored: UpdateSettings, edited: UpdateSettings) -> UpdateSettings:
+    """Write each field of ``edited`` that differs from ``stored``, the settings that the caller read or saved before.
+
+    Each other field keeps its value in the database, also when another page changed it. Return the settings that the
+    database holds now. The caller tells the scheduler about them. This call blocks.
+    """
+    changes = {
+        field.name: getattr(edited, field.name)
+        for field in dataclasses.fields(UpdateSettings)
+        if getattr(edited, field.name) != getattr(stored, field.name)
+    }
+    with sessions.begin() as session:
+        settings = dataclasses.replace(_stored_settings(session), **changes)
+        _replace_setting(session, SETTINGS_KEY, settings.to_value())
+    return settings
 
 
 def read_last_update(sessions: sessionmaker[Session]) -> LastUpdate | None:

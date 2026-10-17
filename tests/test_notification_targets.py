@@ -6,17 +6,18 @@ from sqlalchemy import select
 from youtube_automanager.db.models import NotificationTarget
 from youtube_automanager.notify import DEFAULT_EVENTS, Event, Level, Target
 from youtube_automanager.web.ui.notification_targets import (
+    APPRISE_URLS,
     EVENT_LABELS,
     LEVEL_LABELS,
     SaveOutcome,
+    TargetChoices,
     TargetRecord,
     delete_target,
+    keep_edits,
     load_target,
     read_targets,
+    save_choices,
     save_target,
-    set_enabled,
-    set_event,
-    set_min_level,
     url_scheme,
 )
 
@@ -127,35 +128,52 @@ def test_load_target_gives_the_url_for_a_test(db_sessions):
     assert load_target(db_sessions, 99) is None
 
 
-def test_set_event_changes_one_event_and_keeps_each_other_stored_name(db_sessions):
+def test_the_link_of_the_services_goes_to_the_apprise_site():
+    # The wiki of the Apprise repository on GitHub says "Documentation Moved".
+    assert APPRISE_URLS == "https://appriseit.com/services/"
+
+
+def choices(events=(Event.RUN_FAILED,), min_level=Level.INFO, enabled=True) -> TargetChoices:
+    return TargetChoices(frozenset(events), min_level, enabled)
+
+
+def test_save_choices_writes_each_changed_choice_and_keeps_each_other_stored_name(db_sessions):
     target_id = add(db_sessions, events=["no_such_event", "run_failed"])
+    before = choices()
 
-    assert set_event(db_sessions, target_id, Event.VIDEO_ADDED, True) is True
-    assert stored(db_sessions)[0].events == ["run_failed", "video_added", "no_such_event"]
-    assert set_event(db_sessions, target_id, Event.RUN_FAILED, False) is True
-    assert set_event(db_sessions, target_id, Event.RUN_FAILED, False) is True
-    assert stored(db_sessions)[0].events == ["video_added", "no_such_event"]
-
-
-def test_set_min_level_and_set_enabled_write_their_column(db_sessions):
-    target_id = add(db_sessions)
-
-    assert set_min_level(db_sessions, target_id, Level.WARNING) is True
-    assert set_enabled(db_sessions, target_id, False) is True
+    edited = choices(events={Event.VIDEO_ADDED}, min_level=Level.WARNING, enabled=False)
+    assert save_choices(db_sessions, target_id, before, edited) is True
 
     (row,) = stored(db_sessions)
-    assert (row.min_level, row.enabled) == (2, False)
+    assert (row.events, row.min_level, row.enabled) == (["video_added", "no_such_event"], 2, False)
 
 
-@pytest.mark.parametrize(
-    ("write", "value"), [(set_min_level, Level.FAILURE), (set_enabled, False)], ids=["level", "enabled"]
-)
-def test_a_change_of_a_target_that_went_tells_so(db_sessions, write, value):
-    assert write(db_sessions, 7, value) is False
+def test_save_choices_keeps_the_values_that_the_page_did_not_change(db_sessions):
+    # Another page turned the target off, raised its level and checked CHANNEL_ERROR after this page read it.
+    target_id = add(db_sessions, events=["run_failed", "channel_error"], min_level=3, enabled=False)
+    before = choices()
+
+    assert save_choices(db_sessions, target_id, before, choices(events={Event.RUN_FAILED, Event.VIDEO_ADDED})) is True
+
+    (row,) = stored(db_sessions)
+    assert (row.events, row.min_level, row.enabled) == (["run_failed", "channel_error", "video_added"], 3, False)
 
 
-def test_a_change_of_an_event_of_a_target_that_went_tells_so(db_sessions):
-    assert set_event(db_sessions, 7, Event.RUN_FAILED, True) is False
+def test_save_choices_of_a_target_that_went_tells_so(db_sessions):
+    assert save_choices(db_sessions, 7, choices(), choices(enabled=False)) is False
+
+
+def test_keep_edits_keeps_each_change_of_the_user_and_takes_each_other_choice_from_the_read():
+    before = choices(events={Event.RUN_FAILED, Event.CHANNEL_ERROR}, min_level=Level.INFO, enabled=True)
+    # The user checked VIDEO_ADDED, cleared CHANNEL_ERROR and raised the level.
+    edited = choices(events={Event.RUN_FAILED, Event.VIDEO_ADDED}, min_level=Level.WARNING, enabled=True)
+    # Another page cleared RUN_FAILED, checked CHANNEL_ERROR and SCHEDULER_STATE, lowered the level and turned it off.
+    read = choices(events={Event.CHANNEL_ERROR, Event.SCHEDULER_STATE}, min_level=Level.SUCCESS, enabled=False)
+
+    assert keep_edits(before, edited, read) == choices(
+        events={Event.VIDEO_ADDED, Event.SCHEDULER_STATE}, min_level=Level.WARNING, enabled=False
+    )
+    assert keep_edits(before, before, read) == read
 
 
 def test_delete_target_removes_the_row_and_ignores_a_missing_one(db_sessions):
