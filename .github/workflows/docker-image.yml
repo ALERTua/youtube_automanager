@@ -20,7 +20,6 @@ on:
     paths-ignore:
       - ".pre-commit-config.yaml"
       - "userscript/**"
-      - "script/**"
       - "docs/**"
       - ".github/dependabot.yml"
 
@@ -31,7 +30,6 @@ on:
     paths-ignore:
       - ".pre-commit-config.yaml"
       - "userscript/**"
-      - "script/**"
       - "docs/**"
 
 permissions: {}
@@ -41,7 +39,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  tests:
+    # actionlint 1.7.12 refuses the self-repository form "$/..." that zizmor suggests.
+    uses: ./.github/workflows/tests.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read # checkout
+
   build-and-publish:
+    needs: tests
     # builds on buildkit of alert-server when it answers through the tailnet, otherwise on GitHub
     uses: ALERTua/ci-workflows/.github/workflows/docker-build.yml@v4.0.0
     permissions:

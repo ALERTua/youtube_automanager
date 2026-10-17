@@ -7,6 +7,8 @@ services:
     build: .
     container_name: youtube_automanager
     restart: unless-stopped
+    # The stop of the service waits up to 10 s for the child process of a run alone, and "docker stop" waits 10 s.
+    stop_grace_period: 30s
     env_file: .env
     ports:
       - "8080:8080"

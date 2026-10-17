@@ -9,7 +9,6 @@ sibling folder ``<target>.previous``, so ``go_back`` can put it back. ``use_imag
 the child imports the yt-dlp of the image.
 """
 
-import ast
 import http.client
 import importlib.metadata
 import json
@@ -107,30 +106,6 @@ def active_version(target_dir: Path) -> tuple[str | None, Source]:
     if version:
         return version, "data_folder"
     return image_version(), "image"
-
-
-def installed_channel(target_dir: Path) -> str | None:
-    """Return ``CHANNEL`` of ``yt_dlp/version.py`` in ``target_dir``, or None when it cannot be read. For display only.
-
-    The file is parsed, not imported.
-    """
-    version_file = target_dir / "yt_dlp" / "version.py"
-    try:
-        tree = ast.parse(version_file.read_bytes(), filename=str(version_file))
-    except FileNotFoundError:
-        return None
-    except (OSError, SyntaxError, ValueError) as error:
-        LOG.warning("Cannot parse %s: %s", version_file, error)
-        return None
-    for node in tree.body:
-        if (
-            isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "CHANNEL" for target in node.targets)
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
-        ):
-            return node.value.value
-    return None
 
 
 def _fetch_pypi_json() -> dict[str, Any]:

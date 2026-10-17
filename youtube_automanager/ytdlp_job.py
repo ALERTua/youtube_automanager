@@ -201,12 +201,6 @@ def read_settings(sessions: sessionmaker[Session]) -> UpdateSettings:
         return _stored_settings(session)
 
 
-def save_settings(sessions: sessionmaker[Session], settings: UpdateSettings) -> None:
-    """Store the settings of the update. The caller tells the scheduler about a new time. This call blocks."""
-    with sessions.begin() as session:
-        _replace_setting(session, SETTINGS_KEY, settings.to_value())
-
-
 def change_settings(sessions: sessionmaker[Session], stored: UpdateSettings, edited: UpdateSettings) -> UpdateSettings:
     """Write each field of ``edited`` that differs from ``stored``, the settings that the caller read or saved before.
 

@@ -111,14 +111,6 @@ def save_cookies(
     return version
 
 
-def load_cookies(session: Session, cipher: CookieCipher) -> str | None:
-    """Return the stored Netscape cookie text of the account, or None when no cookies are stored."""
-    account = account_row(session)
-    if account is None or account.cookies is None:
-        return None
-    return cipher.decrypt(account.cookies)
-
-
 def current_version(session: Session) -> CookieVersion | None:
     """Return the current cookie version: the newest version that is not dead. None when no such version exists."""
     return session.scalars(

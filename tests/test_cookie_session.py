@@ -14,7 +14,6 @@ from youtube_automanager.youtube.session import (
     StoredCookies,
     current_version,
     generate_key,
-    load_cookies,
     load_current,
     mark_good,
     retire,
@@ -89,10 +88,16 @@ def test_an_old_key_still_opens_the_cookies_and_the_newest_key_encrypts(key):
     assert CookieCipher(new_key).decrypt(both.encrypt(COOKIES)) == COOKIES
 
 
+def account_copy(session, cipher: CookieCipher) -> str | None:
+    """The cookie text in ``account.cookies``, the copy of the current version. None when no cookies are stored."""
+    account = session.scalars(select(Account)).first()
+    return None if account is None or account.cookies is None else cipher.decrypt(account.cookies)
+
+
 def test_load_without_stored_cookies_gives_none(database, key):
     _, sessions = database
     with sessions() as session:
-        assert load_cookies(session, CookieCipher(key)) is None
+        assert account_copy(session, CookieCipher(key)) is None
 
 
 def test_save_and_load(database, key):
@@ -102,7 +107,7 @@ def test_save_and_load(database, key):
         save_cookies(session, cipher, COOKIES)
 
     with sessions() as session:
-        assert load_cookies(session, cipher) == COOKIES
+        assert account_copy(session, cipher) == COOKIES
 
 
 def test_a_second_save_replaces_the_cookies_of_the_one_account(database, key):
@@ -115,7 +120,7 @@ def test_a_second_save_replaces_the_cookies_of_the_one_account(database, key):
 
     with sessions() as session:
         assert len(session.scalars(select(Account)).all()) == 1
-        assert load_cookies(session, cipher) == "# Netscape HTTP Cookie File\n"
+        assert account_copy(session, cipher) == "# Netscape HTTP Cookie File\n"
 
 
 def test_a_copy_of_the_database_holds_no_cookie_value(database, key):

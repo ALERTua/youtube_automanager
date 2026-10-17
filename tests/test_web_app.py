@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import select
 
-from youtube_automanager import ytdlp_job
+from youtube_automanager import scheduler, ytdlp_job
 from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.db.models import (
     Account,
@@ -24,7 +24,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.rotation import INTERVAL_S, PAGE_URL
 from youtube_automanager.runner import INTERRUPTED_ERROR, UNAVAILABLE_EXIT_CODE
-from youtube_automanager.scheduler import ROTATION_DELAY_S, ROTATION_JOB_ID, RunNowOutcome
+from youtube_automanager.scheduler import MIN_INTERVAL_S, ROTATION_DELAY_S, ROTATION_JOB_ID, RunNowOutcome
 from youtube_automanager.settings import Settings
 from youtube_automanager.web.app import create_app
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
@@ -103,12 +103,27 @@ def test_start_writes_the_default_schedule_and_starts_the_scheduler(settings, fa
 
 
 def test_start_keeps_the_saved_schedule(settings, sessions, fake_starter):
-    store(sessions, Schedule(enabled=False, kind=ScheduleKind.INTERVAL, interval_s=600, timezone="UTC"))
+    store(sessions, Schedule(enabled=False, kind=ScheduleKind.INTERVAL, interval_s=1800, timezone="UTC"))
 
     with TestClient(create_app(settings, start=fake_starter)) as client:
         status = client.get("/api/status").json()
 
     assert (status["scheduler_state"], status["next_run_at"]) == ("paused", None)
+
+
+def test_a_stored_interval_below_the_shortest_starts_with_the_shortest(settings, sessions, fake_starter, caplog):
+    store(sessions, Schedule(enabled=True, kind=ScheduleKind.INTERVAL, interval_s=60, timezone="UTC"))
+
+    before = datetime.now(UTC)
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        status = client.get("/api/status").json()
+
+    assert status["scheduler_state"] == "running"
+    next_run = datetime.fromisoformat(status["next_run_at"])
+    assert (
+        before + timedelta(seconds=MIN_INTERVAL_S) <= next_run <= datetime.now(UTC) + timedelta(seconds=MIN_INTERVAL_S)
+    )
+    assert "The stored interval of 60 s is below the shortest interval" in caplog.text
 
 
 def test_start_marks_interrupted_runs_as_failed(settings, sessions, fake_starter):
@@ -203,7 +218,9 @@ def test_status_without_an_account_and_without_the_data_folder(settings, fake_st
     assert (status["ytdlp_version"], status["ytdlp_source"]) == (importlib.metadata.version("yt-dlp"), "image")
 
 
-def test_scheduled_run_appears_in_the_runs(settings, sessions, fake_starter):
+def test_scheduled_run_appears_in_the_runs(settings, sessions, fake_starter, monkeypatch):
+    # An interval of 1 s gives a scheduled run within the wait of the test.
+    monkeypatch.setattr(scheduler, "MIN_INTERVAL_S", 1)
     store(sessions, Schedule(enabled=True, kind=ScheduleKind.INTERVAL, interval_s=1, timezone="UTC"))
 
     with TestClient(create_app(settings, start=fake_starter)) as client:

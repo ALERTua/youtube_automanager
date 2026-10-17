@@ -25,7 +25,6 @@ from youtube_automanager.ytdlp_job import (
     parse_time,
     read_last_update,
     read_settings,
-    save_settings,
 )
 
 WAIT_SECONDS = 10
@@ -40,6 +39,11 @@ IMAGE = importlib.metadata.version("yt-dlp")
 def store(sessions, key, value):
     with sessions.begin() as session:
         session.add(Setting(key=key, value=value))
+
+
+def save_settings(sessions, settings):
+    """Store ``settings`` as the settings page does: each field that differs from the stored value."""
+    change_settings(sessions, read_settings(sessions), settings)
 
 
 def stored(sessions, key):

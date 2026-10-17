@@ -21,6 +21,7 @@ from youtube_automanager.db.models import Schedule, ScheduleKind
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.scheduler import (
     MAX_INTERVAL_S,
+    MIN_INTERVAL_S,
     RunNowOutcome,
     SchedulerState,
     ScheduleSpec,
@@ -249,7 +250,7 @@ async def scheduler_page(services: Services) -> None:
             ui.number(
                 _("Interval in seconds"),
                 value=spec.interval_s,
-                min=1,
+                min=MIN_INTERVAL_S,
                 max=MAX_INTERVAL_S,
                 step=60,
                 precision=0,
@@ -260,6 +261,12 @@ async def scheduler_page(services: Services) -> None:
             .mark("schedule-interval")
         )
         interval_input.bind_visibility_from(kind_radio, "value", lambda kind: kind is ScheduleKind.INTERVAL)
+        interval_hint = ui.label(
+            _("From {minimum} s (15 minutes) to {maximum} s (one year). Example: 3600 is each hour.").format(
+                minimum=MIN_INTERVAL_S, maximum=MAX_INTERVAL_S
+            )
+        ).classes("text-grey-7")
+        interval_hint.bind_visibility_from(kind_radio, "value", lambda kind: kind is ScheduleKind.INTERVAL)
         timezone_select = (
             ui.select(
                 timezones,
