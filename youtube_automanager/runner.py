@@ -103,7 +103,7 @@ class SessionCheckResult:
 
 
 @dataclass(frozen=True)
-class _ChildEnd:
+class ChildEnd:
     """How a child process ended. ``start_error`` is set when the child never started.
 
     ``error_text`` keeps only the end of a long stderr. ``last_line`` is the last stderr line that is not empty, in
@@ -394,7 +394,7 @@ class SyncRunner:
 
     def run_short_child(
         self, command: Sequence[str], name: str, timeout_s: float, input_text: str | None = None
-    ) -> _ChildEnd | None:
+    ) -> ChildEnd | None:
         """Run a child that works with the cookies, and tell how it ended. The call blocks until the child ends.
 
         The child holds the sync lock, so a run never works on the cookies at the same time, and ``stop`` stops the
@@ -407,6 +407,18 @@ class SyncRunner:
             return self._run_process(command, name, timeout_s, input_text)
         finally:
             self._lock.release()
+
+    def run_child_in_lock(
+        self, command: Sequence[str], name: str, timeout_s: float, ytdlp_dir: Path, input_text: str | None = None
+    ) -> ChildEnd:
+        """Run a child for a caller that holds the sync lock through ``lock_held``, and tell how it ended.
+
+        The child imports yt-dlp from ``ytdlp_dir`` first, not from the yt-dlp folder of the runner. ``stop`` stops the
+        child, and ``input_text`` goes to its standard input. The call blocks until the child ends.
+        """
+        if not self._lock.locked():
+            raise RuntimeError("run_child_in_lock needs the sync lock of the runner")
+        return self._run_process(command, name, timeout_s, input_text, ytdlp_dir=ytdlp_dir)
 
     def _run_child(self, run_id: int, command: Sequence[str]) -> tuple[RunStatus, str | None]:
         end = self._run_process(command, f"Run {run_id}", self._child_timeout_s)
@@ -421,23 +433,29 @@ class SyncRunner:
         return RunStatus.FAILED, end.error_text or f"The sync process exited with code {end.returncode}."
 
     def _run_process(
-        self, command: Sequence[str], name: str, timeout_s: float, input_text: str | None = None
-    ) -> _ChildEnd:
+        self,
+        command: Sequence[str],
+        name: str,
+        timeout_s: float,
+        input_text: str | None = None,
+        *,
+        ytdlp_dir: Path | None = None,
+    ) -> ChildEnd:
         """Start a child, copy its stderr, wait up to ``timeout_s`` seconds, and tell how it ended.
 
-        The child gets ``input_text`` on its standard input. ``stop`` terminates the child. A child that does not end
-        in time gets killed.
+        The child gets ``input_text`` on its standard input, and yt-dlp from ``ytdlp_dir``, by default from the yt-dlp
+        folder of the runner. ``stop`` terminates the child. A child that does not end in time gets killed.
         """
-        env = child_environment(self._ytdlp_dir, self._database_url)
+        env = child_environment(ytdlp_dir or self._ytdlp_dir, self._database_url)
         with self._state_lock:
             if self._stopping:
-                return _ChildEnd(stopped=True)
+                return ChildEnd(stopped=True)
             # The start happens under the lock, so `stop` either sees this child or stops the work before it starts.
             try:
                 child = self._start(command, env, input_text)
             except (OSError, subprocess.SubprocessError) as error:
                 LOG.error("%s: cannot start the child process: %s", name, error)
-                return _ChildEnd(start_error=str(error))
+                return ChildEnd(start_error=str(error))
             self._child = child
 
         tail: collections.deque[str] = collections.deque(maxlen=ERROR_TAIL_LINES)
@@ -469,7 +487,7 @@ class SyncRunner:
         # The reader can still run when the wait ended, so the lines come from one copy of the tail.
         kept = list(tail)
         lines = [line.strip() for line in kept if line.strip()]
-        return _ChildEnd(
+        return ChildEnd(
             returncode,
             timed_out,
             stopped,

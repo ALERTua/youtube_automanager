@@ -212,6 +212,7 @@ def record_value(**changes):
         "old_version": None,
         "new_version": NEW,
         "error": None,
+        "skipped": False,
     }
     return {**value, **changes}
 
@@ -227,6 +228,7 @@ def record_value(**changes):
         record_value(ok=1),
         record_value(channel="beta"),
         record_value(old_version=7),
+        record_value(skipped="yes"),
     ],
     ids=[
         "not-an-object",
@@ -237,6 +239,7 @@ def record_value(**changes):
         "ok-not-bool",
         "bad-channel",
         "version-not-text",
+        "skipped-not-bool",
     ],
 )
 def test_a_record_that_is_not_valid_reads_as_no_update(db_sessions, caplog, value):
@@ -499,3 +502,126 @@ def test_the_job_module_imports_neither_nicegui_nor_yt_dlp():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+# The previous release, the yt-dlp of the image and the skipped version
+
+
+def previous(ytdlp_dir):
+    return ytdlp_updater.previous_dir(ytdlp_dir)
+
+
+def test_a_record_of_an_older_service_has_no_skipped_flag(db_sessions):
+    value = record_value()
+    del value["skipped"]
+    store(db_sessions, LAST_UPDATE_KEY, value)
+
+    assert read_last_update(db_sessions) == LastUpdate(NOW, True, "stable", None, NEW, None, skipped=False)
+
+
+def test_each_update_gets_the_check_of_a_new_release(db_sessions, runner, ytdlp_dir, install, sent):
+    def smoke(folder, version):
+        return None
+
+    updates = YtdlpUpdates(db_sessions, runner, ytdlp_dir, install=install, smoke=smoke, send=sent.append)
+
+    updates.update_now()
+    updates.run_scheduled()
+
+    assert [options["smoke"] for options in install.options] == [smoke, smoke]
+
+
+def test_the_scheduled_update_skips_the_skipped_version_and_update_now_does_not(
+    db_sessions, updates, install, ytdlp_dir, sent
+):
+    install.write_release(ytdlp_dir, OLD)
+    store(db_sessions, ytdlp_job.SKIPPED_KEY, NEW)
+    install.plan.extend([{"version": NEW}, {"version": NEW}])
+
+    updates.run_scheduled()
+    skipped = read_last_update(db_sessions)
+    updates.update_now()
+
+    assert [options["skipped"] for options in install.options] == [NEW, None]
+    assert skipped == LastUpdate(NOW, True, "stable", OLD, NEW, None, skipped=True)
+    assert not skipped.changed
+    assert ytdlp_updater.installed_version(ytdlp_dir) == NEW
+    assert [notification.title for notification in sent] == [f"YouTube AutoManager: yt-dlp updated to {NEW}"]
+
+
+def test_an_update_that_installs_a_new_version_forgets_the_skipped_version(db_sessions, updates, install, ytdlp_dir):
+    install.write_release(ytdlp_dir, OLD)
+    store(db_sessions, ytdlp_job.SKIPPED_KEY, "2026.7.15")
+    install.plan.append({"version": NEW})
+
+    updates.run_scheduled()
+
+    assert ytdlp_job.read_skipped(db_sessions) is None
+
+
+def test_an_update_that_installs_nothing_keeps_the_skipped_version(db_sessions, updates, install, ytdlp_dir):
+    install.write_release(ytdlp_dir, OLD)
+    store(db_sessions, ytdlp_job.SKIPPED_KEY, NEW)
+    install.plan.extend([{"version": NEW}, {"version": NEW, "error": "the check failed"}])
+
+    updates.run_scheduled()
+    updates.update_now()
+
+    assert ytdlp_job.read_skipped(db_sessions) == NEW
+
+
+def test_a_skipped_version_that_is_not_a_text_counts_as_none(db_sessions, caplog):
+    store(db_sessions, ytdlp_job.SKIPPED_KEY, 7)
+
+    assert ytdlp_job.read_skipped(db_sessions) is None
+    assert f"The setting {ytdlp_job.SKIPPED_KEY} is not a text" in caplog.text
+
+
+def test_go_back_puts_the_previous_release_back_and_skips_the_version_that_it_left(
+    db_sessions, updates, install, ytdlp_dir
+):
+    install.write_release(ytdlp_dir, OLD)
+    install.plan.append({"version": NEW})
+    updates.update_now()
+
+    result = updates.go_back()
+
+    assert result == ytdlp_job.SwitchResult(left=NEW, active=OLD, error=None)
+    assert ytdlp_updater.installed_version(ytdlp_dir) == OLD
+    assert ytdlp_updater.installed_version(previous(ytdlp_dir)) == NEW
+    assert ytdlp_job.read_skipped(db_sessions) == NEW
+
+
+def test_use_image_moves_the_release_aside_and_skips_its_version(db_sessions, updates, install, ytdlp_dir):
+    install.write_release(ytdlp_dir, NEW)
+
+    result = updates.use_image()
+
+    assert result == ytdlp_job.SwitchResult(left=NEW, active=IMAGE, error=None)
+    assert ytdlp_updater.active_version(ytdlp_dir) == (IMAGE, "image")
+    assert ytdlp_updater.installed_version(previous(ytdlp_dir)) == NEW
+    assert ytdlp_job.read_skipped(db_sessions) == NEW
+
+
+def test_a_failed_switch_keeps_the_skipped_version(db_sessions, updates, install, ytdlp_dir):
+    install.write_release(ytdlp_dir, NEW)
+    store(db_sessions, ytdlp_job.SKIPPED_KEY, "2026.9.1")
+
+    result = updates.go_back()
+
+    assert result == ytdlp_job.SwitchResult(left=NEW, active=NEW, error="The data folder keeps no previous yt-dlp.")
+    assert ytdlp_job.read_skipped(db_sessions) == "2026.9.1"
+
+
+@pytest.mark.parametrize("action", ["go_back", "use_image"])
+def test_a_switch_while_the_sync_lock_is_taken_changes_nothing(
+    db_sessions, updates, install, runner, ytdlp_dir, action
+):
+    install.write_release(previous(ytdlp_dir), OLD)
+    install.write_release(ytdlp_dir, NEW)
+
+    with runner.lock_held(timeout=0):
+        assert getattr(updates, action)() is None
+
+    assert ytdlp_updater.installed_version(ytdlp_dir) == NEW
+    assert ytdlp_job.read_skipped(db_sessions) is None

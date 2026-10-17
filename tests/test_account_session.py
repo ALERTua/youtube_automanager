@@ -733,3 +733,58 @@ def test_a_refresh_that_fails_leaves_the_session_live_and_the_run_goes_on(harnes
     assert harness.account().session_state is SessionState.OK
     assert harness.versions()[-1] == ("fake-sidcc-0+1", CookieOrigin.WRITE_BACK, CookieVersionState.UNCHECKED)
     assert stored_account_data(harness) == (set(), set(), False)
+
+
+def test_a_run_whose_yt_dlp_changed_an_internal_of_the_client_goes_on_without_the_account(
+    harness, sync, monkeypatch, caplog
+):
+    """The real client, on a yt-dlp that lacks ``_download_webpage``: the session check fails, the run reads the
+    public channels, and the session stays as it was."""
+    from yt_dlp import YoutubeDL
+    from yt_dlp.extractor.common import InfoExtractor
+    from yt_dlp.version import __version__ as ytdlp_version
+
+    from youtube_automanager.youtube import public
+    from youtube_automanager.youtube.account import AccountClient
+
+    channel = "UCaaaaaaaaaaaaaaaaaaaaaa"
+    reads = []
+
+    def iter_channel_uploads(channel_id):
+        reads.append(channel_id)
+        return iter(())
+
+    def refuse(ydl, request):
+        raise AssertionError("the client sent a request although its yt-dlp internal is gone")
+
+    monkeypatch.setattr(public, "iter_channel_uploads", iter_channel_uploads)
+    monkeypatch.setattr(YoutubeDL, "urlopen", refuse)
+    monkeypatch.delattr(InfoExtractor, "_download_webpage")
+    monkeypatch.setattr(
+        sync_module,
+        "AccountSession",
+        lambda sessions, settings, *, send: AccountSession(sessions, settings, send=send, make_client=AccountClient),
+    )
+    sync.rule("all", {"==": [1, 1]}, channels=[channel])
+    harness.upload()
+    with harness.sessions.begin() as session:
+        run = Run(status=RunStatus.RUNNING, trigger=RunTrigger.MANUAL)
+        session.add(run)
+        session.flush()
+        run_id = run.id
+
+    report = sync_module.run_with_youtube(harness.sessions, run_id, harness.settings)
+
+    assert reads == [channel]
+    assert report.errors == []
+    assert harness.account().session_state is SessionState.UNKNOWN
+    assert harness.versions() == [("fake-sidcc-0", CookieOrigin.UPLOAD, CookieVersionState.UNCHECKED)]
+    check_failed = [record.getMessage() for record in caplog.records if "session check failed" in record.getMessage()]
+    assert check_failed == [
+        (
+            f"The session check failed: yt-dlp {ytdlp_version} does not fit the client: "
+            "YoutubeTab._download_webpage raised AttributeError: "
+            "'YoutubeTabIE' object has no attribute '_download_webpage'"
+        )
+    ]
+    assert len([record for record in caplog.records if record.exc_info is not None]) == 1

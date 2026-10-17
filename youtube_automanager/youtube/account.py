@@ -8,6 +8,11 @@ Two requests with the cookies of the account are at least ``pause_s`` seconds ap
 start of the next. The functions are synchronous, because the yt-dlp calls are synchronous.
 
 The page config of a logged-in YouTube page holds the value of the ``LOGIN_INFO`` cookie, so the client never logs it.
+
+A new release of yt-dlp can rename or change an internal that the client calls. Such a call then raises
+``AttributeError``, ``TypeError`` or ``KeyError``, and the client turns it into an ``AccountError`` that names the
+version of yt-dlp and the call, so a run goes on without the account. ``YTDLP_INTERNALS`` lists the internals, and the
+check of a new yt-dlp release makes sure that each of them exists.
 """
 
 import contextlib
@@ -26,6 +31,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.cookies import YoutubeDLCookieJar
 from yt_dlp.networking.exceptions import HTTPError
 from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError, traverse_obj
+from yt_dlp.version import __version__ as YTDLP_VERSION
 
 from youtube_automanager.youtube._ytdlp import (
     BASE_OPTIONS,
@@ -61,6 +67,15 @@ _SUCCEEDED = "STATUS_SUCCEEDED"
 _VIDEO_ID = re.compile(r"[0-9A-Za-z_-]{11}")
 _PLAYLIST_ID = re.compile(r"[0-9A-Za-z_-]{2,64}")
 
+# The attributes of yt-dlp that the client uses beyond the public ``extract_info``, by the object that has them:
+# ``YoutubeDL``, and the extractor that ``YoutubeDL.get_info_extractor`` gives for ``_TAB_EXTRACTOR``.
+YTDLP_INTERNALS: dict[str, tuple[str, ...]] = {
+    "YoutubeDL": ("get_info_extractor", "urlopen", "cookiejar"),
+    _TAB_EXTRACTOR: ("initialize", "_download_webpage", "extract_ytcfg", "_extract_response", "generate_api_headers"),
+}
+# What a call into a changed internal of yt-dlp raises.
+_INTERNAL_ERRORS = (AttributeError, TypeError, KeyError)
+
 
 class AccountError(Exception):
     """yt-dlp failed to read or change the YouTube account."""
@@ -75,6 +90,42 @@ class NotLoggedInError(AccountError):
 
 class WriteRejectedError(AccountError):
     """YouTube answered a change, but the answer does not confirm the change."""
+
+
+class _YtDlpCall:
+    """Turns an error of a changed yt-dlp internal in the ``with`` block into an ``AccountError``.
+
+    ``call`` names the call in the error text, for example ``YoutubeTab._extract_response``. The log gets the trace
+    once. A trace shows the code lines and the error text, not the arguments, so it holds no cookie value.
+    """
+
+    def __init__(self, call: str) -> None:
+        self._call = call
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, kind, error, trace) -> None:
+        if not isinstance(error, _INTERNAL_ERRORS):
+            return
+        text = f"yt-dlp {YTDLP_VERSION} does not fit the client: {self._call} raised {type(error).__name__}: {error}"
+        LOG.error("%s", text, exc_info=(kind, error, trace))
+        raise AccountError(text) from error
+
+
+def missing_internals() -> list[str]:
+    """Return each name of ``YTDLP_INTERNALS`` that the imported yt-dlp lacks, as ``Owner.name``. Send no request."""
+    ydl = YoutubeDL(_OPTIONS)
+    try:
+        owners = {"YoutubeDL": ydl, _TAB_EXTRACTOR: ydl.get_info_extractor(_TAB_EXTRACTOR)}
+        return [
+            f"{owner}.{name}"
+            for owner, names in YTDLP_INTERNALS.items()
+            for name in names
+            if not hasattr(owners[owner], name)
+        ]
+    finally:
+        ydl.close()
 
 
 @dataclass(frozen=True)
@@ -157,15 +208,18 @@ class _AccountYoutubeDL(YoutubeDL):
         self._pacer = pacer
         super().__init__(params)
         self.ytcfgs: list[dict] = []
-        self.tab = self.get_info_extractor(_TAB_EXTRACTOR)
-        download_webpage = self.tab._download_webpage
+        with _YtDlpCall(f"YoutubeDL.get_info_extractor of {_TAB_EXTRACTOR}"):
+            self.tab = self.get_info_extractor(_TAB_EXTRACTOR)
+        with _YtDlpCall(f"{_TAB_EXTRACTOR}._download_webpage"):
+            download_webpage = self.tab._download_webpage
 
         def checked_download_webpage(url_or_request, *args, **kwargs):
-            webpage = download_webpage(url_or_request, *args, **kwargs)
+            with _YtDlpCall(f"{_TAB_EXTRACTOR}._download_webpage"):
+                webpage = download_webpage(url_or_request, *args, **kwargs)
             if isinstance(webpage, str):
-                self._check_login(
-                    self.tab.extract_ytcfg("page", webpage), getattr(url_or_request, "url", url_or_request)
-                )
+                with _YtDlpCall(f"{_TAB_EXTRACTOR}.extract_ytcfg"):
+                    ytcfg = self.tab.extract_ytcfg("page", webpage)
+                self._check_login(ytcfg, getattr(url_or_request, "url", url_or_request))
             return webpage
 
         self.tab._download_webpage = checked_download_webpage
@@ -223,7 +277,7 @@ class AccountClient:
         what = "check the session"
         ydl = self._new_youtube_dl()
         try:
-            ydl.tab.initialize()
+            _initialize(ydl)
             self._home_config(ydl, what)
         except YoutubeDLError as error:
             raise _account_error(error, what) from error
@@ -353,7 +407,8 @@ class AccountClient:
         """
         ydl = self._new_youtube_dl(**options)
         try:
-            info = ydl.extract_info(url, download=False, process=False, ie_key=_TAB_EXTRACTOR)
+            with _YtDlpCall("YoutubeDL.extract_info"):
+                info = ydl.extract_info(url, download=False, process=False, ie_key=_TAB_EXTRACTOR)
             if not ydl.ytcfgs:
                 raise AccountError(f"YouTube gave no page config for {url}, so the login is not confirmed")
             if not info or info.get("_type") != "playlist":
@@ -382,17 +437,15 @@ class AccountClient:
         ydl = self._new_youtube_dl(**({} if retries is None else {"extractor_retries": retries}))
         try:
             tab = ydl.tab
-            tab.initialize()
+            _initialize(ydl)
             if ytcfg is None:
                 ytcfg = self._home_config(ydl, what)
-            response = tab._extract_response(
-                item_id=what,
-                query=query,
-                ep=endpoint,
-                ytcfg=ytcfg,
-                headers=tab.generate_api_headers(ytcfg=ytcfg),
-                note=f"Calling {endpoint}",
-            )
+            with _YtDlpCall(f"{_TAB_EXTRACTOR}.generate_api_headers"):
+                headers = tab.generate_api_headers(ytcfg=ytcfg)
+            with _YtDlpCall(f"{_TAB_EXTRACTOR}._extract_response"):
+                response = tab._extract_response(
+                    item_id=what, query=query, ep=endpoint, ytcfg=ytcfg, headers=headers, note=f"Calling {endpoint}"
+                )
         except YoutubeDLError as error:
             raise _account_error(error, what) from error
         finally:
@@ -463,11 +516,17 @@ def _load_cookie_jar(text: str) -> YoutubeDLCookieJar:
     return jar
 
 
+def _initialize(ydl: _AccountYoutubeDL) -> None:
+    with _YtDlpCall(f"{_TAB_EXTRACTOR}.initialize"):
+        ydl.tab.initialize()
+
+
 def _iter_entries(info: dict, url: str) -> Iterator[dict]:
     entries = iter(info.get("entries") or ())
     while True:
         try:
-            entry = next(entries)
+            with _YtDlpCall(f"the entries of {url}"):
+                entry = next(entries)
         except StopIteration:
             return
         except YoutubeDLError as error:

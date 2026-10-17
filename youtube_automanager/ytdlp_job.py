@@ -8,7 +8,14 @@ An update replaces the folder that each child process imports yt-dlp from, so it
 session check and no other child works while the folder changes. A scheduled update waits for the lock up to
 ``SCHEDULED_WAIT_S``, as a scheduled run does, and an update on request does not wait. The result of the last update
 lives under ``LAST_UPDATE_KEY``. An update sends the ``ytdlp_update`` notification only when the version changed or the
-update failed. This module imports neither NiceGUI nor yt-dlp, so the process of the service runs it.
+update failed.
+
+The user can go back to the previous release of the data folder, or use the yt-dlp of the image. Each of these actions
+stores the version that the user left under ``SKIPPED_KEY``. The daily update does not install that version again, and
+installs only a newer one. "Update now" ignores the skipped version, because it is an explicit action of the user. An
+update that installs a new version forgets the skipped version.
+
+This module imports neither NiceGUI nor yt-dlp, so the process of the service runs it.
 """
 
 import dataclasses
@@ -19,7 +26,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, Protocol, get_args
 
 from sqlalchemy import delete
 from sqlalchemy.orm import Session, sessionmaker
@@ -27,19 +34,37 @@ from sqlalchemy.orm import Session, sessionmaker
 from youtube_automanager import notify
 from youtube_automanager.db.models import Setting, utc_now
 from youtube_automanager.runner import SCHEDULED_WAIT_S, RunAlreadyActive, SyncRunner, error_text_from_tail
-from youtube_automanager.youtube.ytdlp_updater import Channel, UpdateResult, image_version
+from youtube_automanager.youtube.ytdlp_updater import (
+    Channel,
+    Smoke,
+    UpdateResult,
+    active_version,
+    go_back,
+    image_version,
+    use_image,
+)
 
 LOG = logging.getLogger(__name__)
 
 SETTINGS_KEY = "ytdlp_update"
 LAST_UPDATE_KEY = "ytdlp_last_update"
+SKIPPED_KEY = "ytdlp_skipped_version"
 CHANNELS: tuple[Channel, ...] = get_args(Channel)
 DEFAULT_TIME = datetime.time(4, 0)
 # Only ASCII digits: ``\d`` and ``int`` also take the digits of other scripts.
 _TIME = re.compile(r"([0-9]{1,2}):([0-9]{2})")
 
-# Installs the latest release of a channel into a folder, as ``ytdlp_updater.update`` does.
-type Install = Callable[[Path, Channel], UpdateResult]
+
+class Install(Protocol):
+    """Installs the latest release of a channel into a folder, as ``ytdlp_updater.update`` does."""
+
+    def __call__(
+        self, target_dir: Path, channel: Channel, *, smoke: Smoke | None, skipped: str | None
+    ) -> UpdateResult: ...
+
+
+# Changes the active release of a folder, as ``ytdlp_updater.go_back`` does. Returns None, or else the error text.
+type Switch = Callable[[Path], str | None]
 
 
 def parse_time(text: str) -> datetime.time:
@@ -95,7 +120,7 @@ class LastUpdate:
     """The last update that ran: its time, its channel, the versions before and after it, and its error.
 
     ``old_version`` is None when the data folder held no yt-dlp. ``new_version`` is the latest version of the channel,
-    or None when PyPI gave no answer.
+    or None when PyPI gave no answer. ``skipped`` is True when the latest version was not newer than the skipped one.
     """
 
     at: datetime.datetime
@@ -104,17 +129,18 @@ class LastUpdate:
     old_version: str | None
     new_version: str | None
     error: str | None = None
+    skipped: bool = False
 
     @property
     def changed(self) -> bool:
         """True when the update put another version into the data folder."""
-        return self.ok and self.old_version != self.new_version
+        return self.ok and not self.skipped and self.old_version != self.new_version
 
     @classmethod
     def from_result(cls, result: UpdateResult, at: datetime.datetime) -> LastUpdate:
         # A uv error can be long, so only its end stays, as for the error of a run.
         error = error_text_from_tail(result.error.splitlines()) if result.error else None
-        return cls(at, result.ok, result.channel, result.old_version, result.new_version, error)
+        return cls(at, result.ok, result.channel, result.old_version, result.new_version, error, result.skipped)
 
     @classmethod
     def from_value(cls, value: object) -> LastUpdate:
@@ -130,11 +156,13 @@ class LastUpdate:
         except (KeyError, TypeError) as error:
             raise ValueError(f"The last yt-dlp update lacks a value or has a wrong one: {error!r}") from error
         ok, channel, old_version, new_version, error_text = fields
-        if at.tzinfo is None or not isinstance(ok, bool) or channel not in CHANNELS:
+        # A record of an older version of the service has no skipped flag.
+        skipped = value.get("skipped", False)
+        if at.tzinfo is None or not isinstance(ok, bool) or not isinstance(skipped, bool) or channel not in CHANNELS:
             raise ValueError(f"The last yt-dlp update has a wrong value: {dict(value)!r}")
         if not all(text is None or isinstance(text, str) for text in (old_version, new_version, error_text)):
             raise ValueError(f"The last yt-dlp update has a version or an error that is not a text: {dict(value)!r}")
-        return cls(at, ok, channel, old_version, new_version, error_text)
+        return cls(at, ok, channel, old_version, new_version, error_text, skipped)
 
     def to_value(self) -> dict[str, Any]:
         return {
@@ -144,6 +172,7 @@ class LastUpdate:
             "old_version": self.old_version,
             "new_version": self.new_version,
             "error": self.error,
+            "skipped": self.skipped,
         }
 
 
@@ -212,13 +241,43 @@ def read_last_update(sessions: sessionmaker[Session]) -> LastUpdate | None:
 def _save_last_update(sessions: sessionmaker[Session], record: LastUpdate) -> None:
     with sessions.begin() as session:
         _replace_setting(session, LAST_UPDATE_KEY, record.to_value())
+        if record.changed:
+            session.execute(delete(Setting).where(Setting.key == SKIPPED_KEY))
+
+
+def read_skipped(sessions: sessionmaker[Session]) -> str | None:
+    """Read the version that the daily update skips, or None. A stored value that is not a text counts as none."""
+    with sessions() as session:
+        row = session.get(Setting, SKIPPED_KEY)
+        value = None if row is None else row.value
+    if value is not None and not isinstance(value, str):
+        LOG.warning("The setting %s is not a text, so the daily update skips no version: %r", SKIPPED_KEY, value)
+        return None
+    return value or None
+
+
+def _save_skipped(sessions: sessionmaker[Session], version: str) -> None:
+    with sessions.begin() as session:
+        _replace_setting(session, SKIPPED_KEY, version)
+
+
+@dataclass(frozen=True)
+class SwitchResult:
+    """The end of a change of the active release: the version that the user left, the active version and the error.
+
+    ``left`` is None when no yt-dlp was known before the change. ``error`` is None after a success.
+    """
+
+    left: str | None
+    active: str | None
+    error: str | None
 
 
 class YtdlpUpdates:
     """Updates the yt-dlp of the data folder ``ytdlp_dir`` while it holds the sync lock of ``runner``.
 
-    ``install`` installs the latest release of a channel, and ``send`` sends a notification, by default to the targets
-    of the database.
+    ``install`` installs the latest release of a channel, and ``smoke`` checks a new release before it replaces the
+    active one. ``send`` sends a notification, by default to the targets of the database.
     """
 
     def __init__(
@@ -228,6 +287,7 @@ class YtdlpUpdates:
         ytdlp_dir: Path,
         *,
         install: Install,
+        smoke: Smoke | None = None,
         send: Callable[[notify.Notification], object] | None = None,
         clock: Callable[[], datetime.datetime] = utc_now,
     ) -> None:
@@ -235,6 +295,7 @@ class YtdlpUpdates:
         self._runner = runner
         self._ytdlp_dir = ytdlp_dir
         self._install = install
+        self._smoke = smoke
         self._send = send or functools.partial(notify.send_to_stored_targets, sessions)
         self._clock = clock
 
@@ -251,7 +312,7 @@ class YtdlpUpdates:
                 if not settings.enabled:
                     LOG.info("The scheduled yt-dlp update is off")
                     return
-                record = self._update(settings.channel)
+                record = self._update(settings.channel, skipped=read_skipped(self._sessions))
         except RunAlreadyActive:
             LOG.warning(
                 "The scheduled yt-dlp update did not start, because another task kept the sync lock or the service stops"
@@ -262,20 +323,52 @@ class YtdlpUpdates:
     def update_now(self) -> LastUpdate | None:
         """Update now from the stored channel, and return the result. This call blocks until the update ends.
 
-        Return None and change nothing when a run, a session check or another child holds the sync lock.
+        The update ignores the skipped version. Return None and change nothing when a run, a session check or another
+        child holds the sync lock.
         """
         try:
             with self._runner.lock_held(timeout=0):
-                record = self._update(read_settings(self._sessions).channel)
+                record = self._update(read_settings(self._sessions).channel, skipped=None)
         except RunAlreadyActive:
             return None
         self._tell(record)
         return record
 
-    def _update(self, channel: Channel) -> LastUpdate:
+    def go_back(self) -> SwitchResult | None:
+        """Put the previous release of the data folder in place of the active one, and skip the version that it left.
+
+        Return None and change nothing when another task holds the sync lock.
+        """
+        return self._switch(go_back)
+
+    def use_image(self) -> SwitchResult | None:
+        """Use the yt-dlp of the image, keep the release of the data folder as the previous one, and skip its version.
+
+        Return None and change nothing when another task holds the sync lock.
+        """
+        return self._switch(use_image)
+
+    def _switch(self, switch: Switch) -> SwitchResult | None:
+        try:
+            with self._runner.lock_held(timeout=0):
+                left, _ = active_version(self._ytdlp_dir)
+                error = switch(self._ytdlp_dir)
+                if error is None and left is not None:
+                    _save_skipped(self._sessions, left)
+                active, _ = active_version(self._ytdlp_dir)
+        except RunAlreadyActive:
+            return None
+        if error is None:
+            LOG.info("The active yt-dlp changed from %s to %s, and the daily update skips %s", left, active, left)
+        else:
+            LOG.warning("The active yt-dlp did not change: %s", error)
+        return SwitchResult(left, active, error)
+
+    def _update(self, channel: Channel, *, skipped: str | None) -> LastUpdate:
         """Install the latest release of ``channel`` and store the result. The caller holds the sync lock."""
         LOG.info("The yt-dlp update from the %s channel starts", channel)
-        record = LastUpdate.from_result(self._install(self._ytdlp_dir, channel), self._clock())
+        result = self._install(self._ytdlp_dir, channel, smoke=self._smoke, skipped=skipped)
+        record = LastUpdate.from_result(result, self._clock())
         _save_last_update(self._sessions, record)
         return record
 

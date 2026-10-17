@@ -55,6 +55,19 @@ def test_check_upload_gives_the_standard_input_to_the_upload_check_body(settings
     assert logging_setups == [True]
 
 
+def test_check_ytdlp_gives_the_folder_the_version_and_the_standard_input_to_the_check_body(
+    settings, logging_setups, monkeypatch, tmp_path
+):
+    calls = []
+    monkeypatch.setattr(cli, "check_ytdlp_once", lambda *given: calls.append(given) or 5)
+    monkeypatch.setattr("sys.stdin", io.StringIO("# Netscape HTTP Cookie File\nthe rest\n"))
+
+    assert cli.main(["check-ytdlp", "--folder", str(tmp_path), "--version", "2026.8.19"]) == 5
+
+    assert calls == [(tmp_path, "2026.8.19", "# Netscape HTTP Cookie File\nthe rest\n")]
+    assert logging_setups == [True]
+
+
 def test_refresh_account_runs_the_refresh_body_with_the_settings_and_gives_its_exit_code(
     settings, logging_setups, monkeypatch
 ):
