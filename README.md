@@ -42,7 +42,9 @@ You need Docker with Docker Compose.
 
 The service keeps its database and its yt-dlp releases in the folder `data` next to `compose.yaml`. It runs as the user `1000:1000`. If the folder `data` belongs to another user, set that user in `compose.yaml`, for example `user: "99:100"` on Unraid.
 
-The web UI has no login. Anybody who can open the page can change the rules and see the URL of each notification target. Do not publish the port on the internet. Reach the service through a VPN or a reverse proxy with its own login.
+The web UI has no password by default. Anybody who can open the page can change the rules and see the URL of each notification target. To ask for a password, set `UI_PASSWORD` in `.env`. The browser then asks for it once, and any user name works. The password goes over plain HTTP, so do not publish the port on the internet. Reach the service through a VPN, or through a reverse proxy with HTTPS.
+
+The service accepts only the host names of a home network: IP addresses, `localhost`, names without a dot such as `mini`, and names under `.ts.net`, `.local`, `.lan`, `.home.arpa` and `.internal`. It refuses each other host name with HTTP 400. This check stops a web page on the internet that tries to reach the service through your browser. If you open the service under another domain name, for example through a reverse proxy, add that name to `ALLOWED_HOSTS`.
 
 ## Give the service your YouTube session
 
@@ -98,6 +100,18 @@ The file `.env` holds the settings. Each line of `.env.example` explains its set
 | `YTDLP_DIR` | `/data/yt-dlp` | The folder of the yt-dlp releases that the updater installs. |
 | `CHILD_TIMEOUT_S` | `3600` | The longest time of one run in seconds. |
 | `HOST`, `PORT` | `0.0.0.0`, `8080` | The address and the port inside the container. Change the port mapping in `compose.yaml` instead. |
+| `UI_PASSWORD` | none | The password of the web UI, with any user name. `/health` needs no password. |
+| `ALLOWED_HOSTS` | none | More host names of the web UI, separated by commas. A name that starts with a dot also allows the names under it. `*` turns the check of the host name off. |
+
+## Backup
+
+The service keeps all its data in the folder `data`. To make a backup, stop the service and copy the folder `data` together with `.env`. As a smaller backup, copy the database file, by default `data/youtube_automanager.sqlite`, and the line `COOKIES_KEY` of `.env`. Without the key, the service cannot read the stored cookies.
+
+Before a new version changes the schema of a SQLite database, the service copies the database into the folder `data/backups`. The name of a copy holds the old schema revision and the time in UTC. The service keeps the newest 3 copies and deletes the older ones. If the copy fails, the service does not change the database and does not start. The error names the folder of the copies.
+
+To go back to the old version, stop the service, replace the database file with the copy, and start the image of the old version.
+
+The service makes no copy of a PostgreSQL database. Before you update the image, make a dump with `pg_dump`, for example `pg_dump -Fc -f youtube_automanager.dump <database URL>`.
 
 ## Migration from version 0.1
 
