@@ -22,6 +22,7 @@ from youtube_automanager.rotation import CookieRotation
 from youtube_automanager.runner import ChildStarter, SyncRunner, mark_interrupted_runs, start_child
 from youtube_automanager.scheduler import Scheduler, load_schedule
 from youtube_automanager.settings import Settings, get_settings
+from youtube_automanager.web.access import AccessGuard
 from youtube_automanager.web.api import router
 from youtube_automanager.web.services import Services
 from youtube_automanager.youtube.ytdlp_updater import update as update_ytdlp
@@ -86,4 +87,7 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
 
     app = FastAPI(title="YouTube AutoManager", lifespan=lifespan)
     app.include_router(router)
+    # The middleware of ``app`` also covers the pages and the websocket of NiceGUI, which mount at its root.
+    password = settings.ui_password.get_secret_value() if settings.ui_password else ""
+    app.add_middleware(AccessGuard, allowed_hosts=settings.allowed_hosts, password=password)
     return app

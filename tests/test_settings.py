@@ -16,6 +16,8 @@ VARIABLES = [
     "TZ",
     "CHILD_TIMEOUT_S",
     "COOKIES_KEY",
+    "ALLOWED_HOSTS",
+    "UI_PASSWORD",
 ]
 
 
@@ -45,6 +47,21 @@ def test_defaults_with_an_empty_environment(env):
     assert settings.tz == "UTC"
     assert settings.child_timeout_s == 3600
     assert settings.cookies_key is None
+    assert settings.allowed_hosts == ""
+    assert settings.ui_password is None
+
+
+@pytest.mark.parametrize("value", ["", "fake-password"])
+def test_ui_password_is_secret(env, value):
+    env.setenv("UI_PASSWORD", value)
+
+    settings = Settings()
+
+    if value:
+        assert settings.ui_password.get_secret_value() == value
+        assert value not in repr(settings)
+    else:
+        assert settings.ui_password is None
 
 
 @pytest.mark.parametrize("value", ["", "fakekey1,fakekey2"])
