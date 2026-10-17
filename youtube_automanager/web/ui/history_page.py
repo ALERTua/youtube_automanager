@@ -22,6 +22,7 @@ from youtube_automanager.retention import MIN_RETENTION_DAYS, get_retention_days
 from youtube_automanager.scheduler import CLEANUP_HOUR, CLEANUP_MINUTE
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.dashboard import RUN_STATUSES, RUN_TRIGGERS, format_time
+from youtube_automanager.web.ui.dates import today_button
 from youtube_automanager.web.ui.layout import register_page
 
 PAGE_SIZE = 50
@@ -456,12 +457,14 @@ async def history_page(services: Services) -> None:
             .props("type=date outlined dense clearable")
             .mark("filter-from")
         )
+        today_button(first_input, first_page.timezone).mark("filter-from-today")
         last_input = (
             ui.input(_("To"), on_change=filters_changed)
             .without_auto_validation()
             .props("type=date outlined dense clearable")
             .mark("filter-to")
         )
+        today_button(last_input, first_page.timezone).mark("filter-to-today")
         ui.button(_("Refresh"), icon="refresh", on_click=refresh).mark("refresh")
     runs_view(first_page)
     details(None)

@@ -40,6 +40,7 @@ from youtube_automanager.db.models import (
 from youtube_automanager.engine.rules import MATCH_ALL
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.web.ui import rules_page
+from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.web.ui.rule_form import LIVE_STATUSES
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
@@ -1028,6 +1029,23 @@ async def test_the_duration_has_a_field_for_the_minutes_and_one_for_the_seconds(
     assert stored_rules(sessions)[0].condition == {"and": [{"<=": [DURATION, 90]}]}
     await open_editor(user, 1)
     assert (element_of(user, "minutes-0").value, element_of(user, "seconds-0").value) == (1, 30)
+
+
+async def test_the_upload_date_gets_today_from_its_button(user, sessions, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-name", "From today")
+    set_value(user, "rule-playlist", "WL")
+    user.find(marker="add-condition").click()
+    await eventually(lambda: elements_of(user, "field-0"), "The condition")
+    await choose(user, "field-0", "upload_date")
+    today = today_in("Europe/Kyiv").isoformat()
+
+    user.find(marker="today-0").click()
+
+    await eventually(lambda: element_of(user, "value-0").value == today, "Today as the upload date")
+    await save(user)
+    assert stored_rules(sessions)[0].condition == {"and": [{">=": [{"var": "upload_date"}, today]}]}
 
 
 async def test_a_new_comparison_keeps_the_channel(user, account_copy):

@@ -523,6 +523,19 @@ async def test_a_preview_names_the_errors_and_the_sources_that_its_limit_cut(use
 # The apply dialog.
 
 
+async def test_the_today_button_puts_today_into_the_day_of_the_apply(user, sessions, account_copy, children):
+    saved_rule(sessions)
+    await user.open("/rules")
+    await open_editor(user, 1)
+    await open_apply(user)
+
+    user.find(marker="apply-since-today").click()
+
+    await eventually(lambda: element_of(user, "apply-since").value == today().isoformat(), "Today as the day")
+    await preview_in_dialog(user)
+    assert children.of("preview-rule")[0][4] == f"--since={today().isoformat()}"
+
+
 async def test_an_apply_previews_the_saved_rule_and_adds_the_videos_as_a_run_of_the_history(
     user, sessions, settings, account_copy, youtube, children
 ):
