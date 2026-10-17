@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-17 13:06+0300\n"
+"POT-Creation-Date: 2026-10-17 15:05+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -159,6 +159,7 @@ msgstr ""
 #: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Cancel"
 msgstr ""
 
@@ -489,6 +490,21 @@ msgstr ""
 msgid "From"
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Go back"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid ""
+"Go back from yt-dlp {active} to {previous}? The daily update then skips "
+"{active}, and it installs only a newer version."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Go back to the previous version"
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Handle"
 msgstr ""
@@ -718,6 +734,10 @@ msgstr ""
 msgid "No update is planned"
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "None"
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "None of these conditions"
 msgstr ""
@@ -782,6 +802,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Preview of the next run"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Previous version"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -932,6 +956,10 @@ msgstr ""
 msgid "Skipped"
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Skipped version"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Source"
@@ -1075,6 +1103,12 @@ msgstr ""
 msgid ""
 "The apply runs. Each add takes {seconds} s or more, so the apply takes "
 "{minutes} min or more. The History page shows the apply as a run."
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "The change failed: {cause}"
 msgstr ""
 
 #. Translators: {cause} is the English cause from the service, for example an
@@ -1547,6 +1581,18 @@ msgid ""
 "stop to work a few hours after the export."
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Use the image version"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid ""
+"Use yt-dlp {image} of the image instead of {active} of the data folder? "
+"The service keeps {active} as the previous version. The daily update then"
+" skips {active}, and it installs only a newer version."
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Version"
@@ -1781,6 +1827,18 @@ msgstr ""
 msgid "yt-dlp update"
 msgstr ""
 
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "yt-dlp {active} is active now."
+msgstr ""
+
+#. Translators: {active} and {left} are versions of yt-dlp, for example
+#. 2026.8.19.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "yt-dlp {active} is active now. The daily update skips {left}."
+msgstr ""
+
 #. Translators: a channel that left the subscriptions. A rule can still read it
 #. by its id.
 #: youtube_automanager/web/ui/rules_page.py
@@ -1858,4 +1916,12 @@ msgstr ""
 #: youtube_automanager/web/ui/ytdlp_section.py
 #, python-brace-format
 msgid "{version} is already the newest version."
+msgstr ""
+
+#. Translators: {version} is a version of yt-dlp, for example 2026.8.19.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid ""
+"{version} is the version that you left, so the daily update does not "
+"install it."
 msgstr ""

@@ -223,7 +223,11 @@ def test_update_does_not_install_when_the_folder_holds_the_latest_version(
     assert uv.calls == []
 
 
-def test_successful_update_replaces_the_folder_and_removes_the_old_one(uv, old_install):
+def test_successful_update_replaces_the_folder_and_keeps_the_replaced_release_as_the_previous_one(
+    uv, make_install, old_install
+):
+    make_install(sibling(old_install, ".previous"), "2026.6.1")
+
     result = update(old_install, "stable")
 
     assert result == ytdlp_updater.UpdateResult(
@@ -231,6 +235,8 @@ def test_successful_update_replaces_the_folder_and_removes_the_old_one(uv, old_i
     )
     assert installed_version(old_install) == STABLE
     assert not (old_install / "marker").exists()
+    assert installed_version(sibling(old_install, ".previous")) == OLD
+    assert (sibling(old_install, ".previous") / "marker").exists()
     assert not sibling(old_install, ".new").exists()
     assert not sibling(old_install, ".old").exists()
 
@@ -430,3 +436,160 @@ def test_child_python_imports_yt_dlp_from_the_target_folder(tmp_path):
     version, module_file = result.stdout.splitlines()
     assert version == "2099.01.02"
     assert Path(module_file).resolve() == (package / "__init__.py").resolve()
+
+
+# The check of a new release, the skipped version and the previous release
+
+
+class FakeSmoke:
+    """Replaces the check of a new release: records the folder and the version, and gives the planned cause."""
+
+    def __init__(self):
+        self.calls = []
+        self.cause = None
+        self.error = None
+
+    def __call__(self, new_dir, version):
+        self.calls.append((new_dir, version, installed_version(new_dir)))
+        if self.error is not None:
+            raise self.error
+        return self.cause
+
+
+@pytest.fixture
+def smoke():
+    return FakeSmoke()
+
+
+def test_update_checks_the_new_release_in_the_new_folder_before_the_swap(uv, old_install, smoke):
+    result = update(old_install, "stable", smoke=smoke)
+
+    assert result.ok, result.error
+    assert smoke.calls == [(sibling(old_install, ".new"), STABLE, STABLE)]
+    assert installed_version(old_install) == STABLE
+
+
+@pytest.mark.parametrize(
+    ("change", "expected_cause"),
+    [
+        ({"cause": "yt-dlp 2026.08.19 lacks YoutubeTab._extract_response"}, "lacks YoutubeTab._extract_response"),
+        ({"cause": "the read of the uploads failed: network is down"}, "network is down"),
+        ({"error": RuntimeError("a defect of the check")}, "the check raised RuntimeError"),
+    ],
+    ids=["broken", "network", "defect"],
+)
+def test_a_release_that_fails_the_check_keeps_the_active_release(
+    uv, make_install, old_install, smoke, change, expected_cause
+):
+    make_install(sibling(old_install, ".previous"), "2026.6.1")
+    for name, value in change.items():
+        setattr(smoke, name, value)
+
+    result = update(old_install, "stable", smoke=smoke)
+
+    assert not result.ok
+    assert (result.old_version, result.new_version) == (OLD, STABLE)
+    assert result.error.startswith(f"yt-dlp {STABLE} failed the check of a new release, so the service keeps")
+    assert expected_cause in result.error
+    assert installed_version(old_install) == OLD
+    assert (old_install / "marker").exists()
+    assert installed_version(sibling(old_install, ".previous")) == "2026.6.1"
+    assert not sibling(old_install, ".new").exists()
+
+
+def test_a_release_that_is_up_to_date_gets_no_check(uv, make_install, target_dir, smoke):
+    make_install(target_dir, STABLE)
+
+    assert update(target_dir, "stable", smoke=smoke).ok
+    assert smoke.calls == []
+
+
+@pytest.mark.parametrize("skipped", [STABLE, "2026.9.1"], ids=["same", "newer"])
+def test_the_update_does_not_install_a_version_that_is_not_newer_than_the_skipped_one(uv, old_install, smoke, skipped):
+    result = update(old_install, "stable", smoke=smoke, skipped=skipped)
+
+    assert result == ytdlp_updater.UpdateResult(
+        ok=True, channel="stable", old_version=OLD, new_version=STABLE, error=None, skipped=True
+    )
+    assert uv.calls == []
+    assert smoke.calls == []
+    assert installed_version(old_install) == OLD
+
+
+@pytest.mark.parametrize("skipped", ["2026.8.18", "not a version"], ids=["older", "invalid"])
+def test_the_update_installs_a_version_newer_than_the_skipped_one(uv, old_install, skipped):
+    result = update(old_install, "stable", skipped=skipped)
+
+    assert result.ok
+    assert not result.skipped
+    assert installed_version(old_install) == STABLE
+
+
+def test_go_back_swaps_the_active_and_the_previous_release(make_install, old_install):
+    make_install(sibling(old_install, ".previous"), STABLE)
+
+    assert ytdlp_updater.go_back(old_install) is None
+
+    assert installed_version(old_install) == STABLE
+    assert installed_version(sibling(old_install, ".previous")) == OLD
+    assert (sibling(old_install, ".previous") / "marker").exists()
+    assert not sibling(old_install, ".old").exists()
+
+
+def test_go_back_without_an_active_release_moves_the_previous_one_in(make_install, target_dir):
+    make_install(sibling(target_dir, ".previous"), STABLE)
+
+    assert ytdlp_updater.go_back(target_dir) is None
+
+    assert installed_version(target_dir) == STABLE
+    assert not sibling(target_dir, ".previous").exists()
+
+
+def test_go_back_without_a_previous_release_changes_nothing(old_install):
+    assert ytdlp_updater.go_back(old_install) == "The data folder keeps no previous yt-dlp."
+    assert installed_version(old_install) == OLD
+
+
+@pytest.mark.parametrize("failing_source", ["yt-dlp", "yt-dlp.previous"], ids=["move-aside", "move-in"])
+def test_a_failed_go_back_keeps_both_releases(make_install, old_install, monkeypatch, failing_source):
+    make_install(sibling(old_install, ".previous"), STABLE)
+    rename = Path.rename
+
+    def fake_rename(self, target):
+        if self.name == failing_source:
+            raise PermissionError(f"{self.name} is in use")
+        return rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", fake_rename)
+
+    error = ytdlp_updater.go_back(old_install)
+
+    assert f"{failing_source} is in use" in error
+    assert installed_version(old_install) == OLD
+    assert installed_version(sibling(old_install, ".previous")) == STABLE
+
+
+def test_use_image_moves_the_active_release_to_the_previous_one(make_install, old_install):
+    make_install(sibling(old_install, ".previous"), "2026.6.1")
+
+    assert ytdlp_updater.use_image(old_install) is None
+
+    assert not old_install.exists()
+    assert ytdlp_updater.active_version(old_install) == (ytdlp_updater.image_version(), "image")
+    assert installed_version(sibling(old_install, ".previous")) == OLD
+
+
+def test_use_image_without_an_active_release_changes_nothing(make_install, target_dir):
+    make_install(sibling(target_dir, ".previous"), STABLE)
+
+    assert "already uses the yt-dlp of the image" in ytdlp_updater.use_image(target_dir)
+    assert installed_version(sibling(target_dir, ".previous")) == STABLE
+
+
+def test_an_update_after_use_image_keeps_the_previous_release(uv, make_install, target_dir):
+    make_install(sibling(target_dir, ".previous"), OLD)
+
+    assert update(target_dir, "stable").ok
+
+    assert installed_version(target_dir) == STABLE
+    assert installed_version(sibling(target_dir, ".previous")) == OLD

@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager import notify
 from youtube_automanager.db import make_engine, make_session_factory
-from youtube_automanager.runner import BUSY_TEXT, UNAVAILABLE_EXIT_CODE, SyncRunner
+from youtube_automanager.runner import BUSY_TEXT, UNAVAILABLE_EXIT_CODE, ChildEnd, SyncRunner
 from youtube_automanager.settings import Settings
 
 if TYPE_CHECKING:
@@ -141,6 +141,14 @@ def run_child(
     end = runner.run_short_child(command, f"The {noun}", timeout_s, input_text)
     if end is None:
         raise ChildBusy(BUSY_TEXT)
+    return child_result(end, noun, timeout_s)
+
+
+def child_result(end: ChildEnd, noun: str, timeout_s: float) -> str:
+    """Return the last line of the stderr of a child that succeeded. Raise a ``ChildError`` for a child that failed.
+
+    ``noun`` names the work in the error texts, and ``timeout_s`` is the time limit that the child had.
+    """
     if end.start_error is not None:
         raise ChildFailed(f"The service cannot start the {noun} process: {end.start_error}")
     if end.timed_out:

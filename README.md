@@ -42,7 +42,9 @@ You need Docker with Docker Compose.
 
 The service keeps its database and its yt-dlp releases in the folder `data` next to `compose.yaml`. It runs as the user `1000:1000`. If the folder `data` belongs to another user, set that user in `compose.yaml`, for example `user: "99:100"` on Unraid.
 
-The web UI has no login. Anybody who can open the page can change the rules and see the URL of each notification target. Do not publish the port on the internet. Reach the service through a VPN or a reverse proxy with its own login.
+The web UI has no password by default. Anybody who can open the page can change the rules and see the URL of each notification target. To ask for a password, set `UI_PASSWORD` in `.env`. The browser then asks for it once, and any user name works. The password goes over plain HTTP, so do not publish the port on the internet. Reach the service through a VPN, or through a reverse proxy with HTTPS.
+
+The service accepts only the host names of a home network: IP addresses, `localhost`, names without a dot such as `mini`, and names under `.ts.net`, `.local`, `.lan`, `.home.arpa` and `.internal`. It refuses each other host name with HTTP 400. This check stops a web page on the internet that tries to reach the service through your browser. If you open the service under another domain name, for example through a reverse proxy, add that name to `ALLOWED_HOSTS`.
 
 ## Give the service your YouTube session
 
@@ -84,6 +86,29 @@ The processing mode of the settings page decides how far a run reads each source
 
 A change of the mode starts each source again with a baseline.
 
+## When YouTube or yt-dlp breaks
+
+YouTube changes its pages often, and yt-dlp follows with new releases. The service installs the newest release of the chosen channel each day at 04:00.
+
+Before a new release replaces the active one, the service checks it in a separate process. The check imports the release, makes sure that it has each part of yt-dlp that the account client uses, reads the newest upload of the official YouTube channel, and, with stored cookies, checks the session. If any step fails, the active release stays, also when the network fails. The service then sends the notification "the yt-dlp update failed" with the cause.
+
+When a run meets a problem, you see it in these places:
+
+- The notifications: "cannot read the channel" for one source, the run summary with the count of its errors, or "the run failed".
+- The History page: each run with its errors and the cause of each error.
+- The yt-dlp card of the Settings page: the active version of yt-dlp, its source, the previous version, the skipped version, and the result of the last update.
+
+If an error names a version of yt-dlp, for example "yt-dlp 2026.08.19 does not fit the client", that release changed a part that the service uses. The run then goes on without the account, so it still reads the public channels, but it adds no video.
+
+To fix the problem, use the yt-dlp card of the settings page:
+
+1. To return to the release that the last change replaced, click "Go back to the previous version" and confirm.
+2. To use the yt-dlp that came with the image, click "Use the image version" and confirm.
+3. To stop the daily update, turn off "Update each day" and click Save.
+4. To install the newest release when a fix comes out, click "Update now".
+
+After each of the first two actions, the daily update skips the version that you left. It installs a release again only when a newer one comes out. "Update now" always installs the newest release, also the skipped one.
+
 ## Settings
 
 The file `.env` holds the settings. Each line of `.env.example` explains its setting and shows the default value.
@@ -98,6 +123,8 @@ The file `.env` holds the settings. Each line of `.env.example` explains its set
 | `YTDLP_DIR` | `/data/yt-dlp` | The folder of the yt-dlp releases that the updater installs. |
 | `CHILD_TIMEOUT_S` | `3600` | The longest time of one run in seconds. |
 | `HOST`, `PORT` | `0.0.0.0`, `8080` | The address and the port inside the container. Change the port mapping in `compose.yaml` instead. |
+| `UI_PASSWORD` | none | The password of the web UI, with any user name. `/health` needs no password. |
+| `ALLOWED_HOSTS` | none | More host names of the web UI, separated by commas. A name that starts with a dot also allows the names under it. `*` turns the check of the host name off. |
 
 ## Backup
 

@@ -22,9 +22,11 @@ from youtube_automanager.rotation import CookieRotation
 from youtube_automanager.runner import ChildStarter, SyncRunner, mark_interrupted_runs, start_child
 from youtube_automanager.scheduler import Scheduler, load_schedule
 from youtube_automanager.settings import Settings, get_settings
+from youtube_automanager.web.access import AccessGuard
 from youtube_automanager.web.api import router
 from youtube_automanager.web.services import Services
 from youtube_automanager.youtube.ytdlp_updater import update as update_ytdlp
+from youtube_automanager.ytdlp_check import check_release_in_child
 from youtube_automanager.ytdlp_job import YtdlpUpdates
 from youtube_automanager.ytdlp_job import read_settings as read_ytdlp_settings
 
@@ -70,7 +72,9 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
             await scheduler.start(spec)
             # The setting of the rotation decides at each turn whether the turn rotates.
             await scheduler.start_rotation(CookieRotation(sessions, settings))
-            ytdlp = YtdlpUpdates(sessions, runner, settings.ytdlp_dir, install=update_ytdlp)
+            # A new yt-dlp release replaces the active one only after its check in a child process.
+            smoke = functools.partial(check_release_in_child, runner, sessions, settings)
+            ytdlp = YtdlpUpdates(sessions, runner, settings.ytdlp_dir, install=update_ytdlp, smoke=smoke)
             ytdlp_settings = await asyncio.to_thread(read_ytdlp_settings, sessions)
             await scheduler.start_ytdlp_updates(ytdlp.run_scheduled, ytdlp_settings.at, ytdlp_settings.enabled)
             app.state.services = Services(settings, engine, sessions, runner, scheduler, ytdlp)
@@ -86,4 +90,7 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
 
     app = FastAPI(title="YouTube AutoManager", lifespan=lifespan)
     app.include_router(router)
+    # The middleware of ``app`` also covers the pages and the websocket of NiceGUI, which mount at its root.
+    password = settings.ui_password.get_secret_value() if settings.ui_password else ""
+    app.add_middleware(AccessGuard, allowed_hosts=settings.allowed_hosts, password=password)
     return app
