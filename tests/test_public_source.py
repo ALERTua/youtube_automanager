@@ -18,6 +18,7 @@ from yt_dlp.utils import DownloadError, ExtractorError
 
 from youtube_automanager.youtube import public
 from youtube_automanager.youtube.public import ChannelInfo, PublicSourceError, VideoEntry
+from youtube_automanager.youtube.user_agent import USER_AGENT
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ytdlp"
 
@@ -140,6 +141,7 @@ def test_extract_asks_yt_dlp_for_the_unprocessed_answer_without_cookies(monkeypa
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
+            "http_headers": {"User-Agent": USER_AGENT},
             "logger": public._YT_DLP_LOGGER,
             "playlist_items": "0",
         },

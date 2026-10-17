@@ -28,6 +28,7 @@ from youtube_automanager.runner import SYNC_LOCK, RunAlreadyActive, sync_lock_he
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.cookie_text import from_cookiejar, to_cookiejar
 from youtube_automanager.youtube.session import CookieCipher, CookieKeyError, account_row, load_current, write_back
+from youtube_automanager.youtube.user_agent import USER_AGENT
 
 LOG = logging.getLogger(__name__)
 
@@ -40,8 +41,6 @@ NEXT_ROTATION_KEY = "cookie_rotation_next_at"
 PAGE_URL = "https://accounts.youtube.com/RotateCookiesPage?origin=https://www.youtube.com&yt_pid=1"
 ROTATE_URL = "https://accounts.youtube.com/RotateCookies"
 _REFERER = "https://www.youtube.com/"
-# The user agent of the measurement of the rotation. The cookies come from a Firefox export.
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
 # The interval that the answer gave in the measurement. The service never rotates more often.
 INTERVAL_S = 600.0
