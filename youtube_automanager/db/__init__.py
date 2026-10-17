@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 LOG = logging.getLogger(__name__)
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
+# A sync child and the web service write to one SQLite file. A write waits this long for the lock of the other one.
+SQLITE_BUSY_TIMEOUT_S = 30
+POSTGRES_CONNECT_TIMEOUT_S = 10
 
 
 def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
@@ -19,9 +22,20 @@ def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
     cursor.close()
 
 
+def connect_args(url: str) -> dict[str, int]:
+    """The options of a new connection: how long SQLite waits for a lock of another process, and how long PostgreSQL
+    waits for its server."""
+    backend = make_url(url).get_backend_name()
+    if backend == "sqlite":
+        return {"timeout": SQLITE_BUSY_TIMEOUT_S}
+    if backend == "postgresql":
+        return {"connect_timeout": POSTGRES_CONNECT_TIMEOUT_S}
+    return {}
+
+
 def make_engine(url: str) -> Engine:
     """Create the engine of the service. SQLite enforces foreign keys only when each connection turns them on."""
-    engine = create_engine(url)
+    engine = create_engine(url, connect_args=connect_args(url))
     if engine.dialect.name == "sqlite":
         event.listen(engine, "connect", _enable_sqlite_foreign_keys)
     return engine
