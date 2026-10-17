@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-17 12:26+0300\n"
+"POT-Creation-Date: 2026-10-17 12:34+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1483,6 +1483,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "To"
+msgstr ""
+
+#: youtube_automanager/web/ui/dates.py
+msgid "Today"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py

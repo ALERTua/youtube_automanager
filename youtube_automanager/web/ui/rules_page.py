@@ -35,6 +35,7 @@ from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
 from youtube_automanager.web.ui.dashboard import format_time
+from youtube_automanager.web.ui.dates import today_button, today_in
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
     FIELDS,
@@ -320,11 +321,6 @@ def channel_options(stored: Stored, extra: list[str]) -> dict[str, str]:
     for channel_id in extra:
         options.setdefault(channel_id, channel_id)
     return options
-
-
-def today_in(timezone: str) -> date:
-    """Return the day of today in the time zone ``timezone``."""
-    return datetime.now(ZoneInfo(timezone)).date()
 
 
 def parse_since(text: str | None, today: date) -> date:
@@ -770,9 +766,13 @@ class RuleEditor:
                     .mark(_marker("seconds", path))
                 )
             case ValueKind.DATE:
-                ui.input(_("Date"), value=leaf.value, on_change=lambda event: set_value(event.value or None)).props(
-                    "type=date outlined dense"
-                ).classes("w-48").mark(marker)
+                day = (
+                    ui.input(_("Date"), value=leaf.value, on_change=lambda event: set_value(event.value or None))
+                    .props("type=date outlined dense")
+                    .classes("w-48")
+                    .mark(marker)
+                )
+                today_button(day, self.stored.timezone).mark(_marker("today", path))
             case ValueKind.LIVE_STATUS:
                 ui.select(
                     {status: _(label) for status, label in LIVE_STATUSES.items()},
@@ -983,6 +983,7 @@ class ApplyDialog:
             with ui.row().classes("items-center gap-2"):
                 self.since_input = day_input(today_in(self.timezone)).mark("apply-since")
                 self.since_input.on_value_change(self._day_changed)
+                today_button(self.since_input, self.timezone).mark("apply-since-today")
                 self.preview_button = (
                     ui.button(_("Preview"), icon="visibility", on_click=self.run_preview)
                     .props("outline")
