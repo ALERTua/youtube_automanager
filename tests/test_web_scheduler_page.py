@@ -22,7 +22,7 @@ from ui_support import (
 
 from youtube_automanager import i18n
 from youtube_automanager.db.models import NotificationTarget, Run, RunStatus, RunTrigger, Schedule, ScheduleKind
-from youtube_automanager.scheduler import MAX_INTERVAL_S, ScheduleSpec
+from youtube_automanager.scheduler import MAX_INTERVAL_S, MIN_INTERVAL_S, ScheduleSpec
 from youtube_automanager.web.ui import scheduler_page
 from youtube_automanager.web.ui.dashboard import TIME_FORMAT
 
@@ -33,7 +33,7 @@ NEW_YORK = ZoneInfo("America/New_York")
 TIME = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+")
 # How long a test waits for a click that must change nothing. A click that does change something shows it within ms.
 SETTLE_SECONDS = 0.3
-TEN_MINUTES = timedelta(minutes=10)
+HALF_AN_HOUR = timedelta(minutes=30)
 
 
 def next_evenings(count: int, zone: ZoneInfo = KYIV) -> list[str]:
@@ -175,10 +175,10 @@ async def test_saving_an_interval_acts_without_a_restart(user, sessions):
     set_value(user, "schedule-kind", ScheduleKind.INTERVAL)
     await user.should_see(marker="schedule-interval")
     await user.should_not_see(marker="schedule-cron")
-    set_value(user, "schedule-interval", 600)
-    soon = datetime.now(UTC) + timedelta(seconds=600)
+    set_value(user, "schedule-interval", 1800)
+    soon = datetime.now(UTC) + timedelta(seconds=1800)
     await eventually(
-        lambda: len(texts_of(user, "preview-time")) == 5 and gaps(texts_of(user, "preview-time")) == {TEN_MINUTES},
+        lambda: len(texts_of(user, "preview-time")) == 5 and gaps(texts_of(user, "preview-time")) == {HALF_AN_HOUR},
         "The preview of the interval",
     )
     await click_save(user)
@@ -186,7 +186,7 @@ async def test_saving_an_interval_acts_without_a_restart(user, sessions):
     assert abs((await api_next_run(user)) - soon) < timedelta(seconds=30)
     row = stored_schedule(sessions)
     # The cron expression stays in the row, so a change back to cron finds it again.
-    assert (row.kind, row.interval_s, row.cron_expression) == (ScheduleKind.INTERVAL, 600, "0 18 * * *")
+    assert (row.kind, row.interval_s, row.cron_expression) == (ScheduleKind.INTERVAL, 1800, "0 18 * * *")
 
 
 async def test_the_time_zone_of_the_schedule_changes_the_run_times(user, sessions):
@@ -235,9 +235,11 @@ async def test_a_wrong_cron_expression_shows_the_error_and_saves_nothing(user, s
 @pytest.mark.parametrize(
     ("interval", "message"),
     [
-        (None, "1 s or more"),
-        (0, "1 s or more"),
-        (-60, "1 s or more"),
+        (None, "900 s (15 minutes) or more"),
+        (0, "900 s (15 minutes) or more"),
+        (-60, "900 s (15 minutes) or more"),
+        (60, "900 s (15 minutes) or more"),
+        (MIN_INTERVAL_S - 1, "900 s (15 minutes) or more"),
         (0.5, "whole number"),
         (MAX_INTERVAL_S + 1, "or less"),
         (10**12, "or less"),
@@ -255,6 +257,20 @@ async def test_a_wrong_interval_shows_the_error_and_saves_nothing(user, sessions
     row = stored_schedule(sessions)
     assert (row.kind, row.interval_s) == (ScheduleKind.CRON, None)
     assert (await api_next_run(user)) == before
+
+
+async def test_the_shortest_interval_is_saved_and_the_hint_names_the_limits(user, sessions):
+    await user.open("/scheduler")
+
+    set_value(user, "schedule-kind", ScheduleKind.INTERVAL)
+    await user.should_see("From 900 s (15 minutes) to 31536000 s (one year). Example: 3600 is each hour.")
+    # The field of the browser also refuses a shorter interval.
+    assert element_of(user, "schedule-interval").props["min"] == MIN_INTERVAL_S
+    set_value(user, "schedule-interval", MIN_INTERVAL_S)
+    await eventually(lambda: len(texts_of(user, "preview-time")) == 5, "The preview of the shortest interval")
+    await click_save(user)
+
+    assert stored_schedule(sessions).interval_s == MIN_INTERVAL_S
 
 
 async def test_the_longest_interval_is_saved_and_the_service_keeps_running(user, sessions):
@@ -281,7 +297,7 @@ async def test_a_schedule_without_a_run_time_is_refused(user, sessions):
     assert stored_schedule(sessions).cron_expression == "0 18 * * *"
 
 
-@pytest.mark.parametrize("unused", [0.5, 0, -5, MAX_INTERVAL_S + 1])
+@pytest.mark.parametrize("unused", [0.5, 0, -5, 60, MAX_INTERVAL_S + 1])
 async def test_a_wrong_interval_in_an_unused_field_blocks_no_save_and_is_not_stored(user, sessions, unused):
     await user.open("/scheduler")
 
@@ -299,12 +315,12 @@ async def test_a_wrong_cron_expression_in_an_unused_field_blocks_no_save_and_is_
 
     set_value(user, "schedule-cron", "every day")
     set_value(user, "schedule-kind", ScheduleKind.INTERVAL)
-    set_value(user, "schedule-interval", 600)
-    await eventually(lambda: gaps(texts_of(user, "preview-time")) == {TEN_MINUTES}, "The preview of the interval")
+    set_value(user, "schedule-interval", 1800)
+    await eventually(lambda: gaps(texts_of(user, "preview-time")) == {HALF_AN_HOUR}, "The preview of the interval")
     await click_save(user)
 
     row = stored_schedule(sessions)
-    assert (row.kind, row.interval_s, row.cron_expression) == (ScheduleKind.INTERVAL, 600, None)
+    assert (row.kind, row.interval_s, row.cron_expression) == (ScheduleKind.INTERVAL, 1800, None)
 
 
 async def test_the_switch_saves_a_pause_that_survives_a_restart(user, sessions):

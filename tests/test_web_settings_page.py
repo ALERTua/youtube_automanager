@@ -56,7 +56,7 @@ from youtube_automanager.web.ui.notification_targets import EVENT_LABELS, LEVEL_
 from youtube_automanager.web.ui.settings_page import expired_text, upload_error_text
 from youtube_automanager.youtube.account import AccountError, NotLoggedInError
 from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES
-from youtube_automanager.youtube.session import CookieCipher, generate_key, load_cookies, save_cookies
+from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -199,8 +199,9 @@ def sent():
 
 
 def stored_text(sessions) -> str | None:
-    with sessions() as session:
-        return load_cookies(session, CookieCipher(KEY))
+    """The cookie text in ``account.cookies``, the copy of the current version."""
+    stored = account(sessions)
+    return None if stored is None or stored.cookies is None else CookieCipher(KEY).decrypt(stored.cookies)
 
 
 def account(sessions) -> Account | None:

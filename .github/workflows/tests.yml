@@ -10,11 +10,15 @@ on:
       - "main"
       - "v1"
   workflow_dispatch:
+  # The image workflow calls this workflow before it builds the image.
+  workflow_call:
 
 permissions: {}
 
+# In a called workflow, github.workflow is the name of the caller, so the group needs a name of its own.
+# With the group of the caller, GitHub sees a deadlock and cancels the run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

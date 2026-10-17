@@ -40,6 +40,9 @@ YTDLP_JOB_ID = "ytdlp_update"
 CLEANUP_HOUR = 3
 CLEANUP_MINUTE = 30
 
+# The shortest interval of an interval schedule, 15 minutes. A stored row with a shorter interval from an older version
+# of the service gets this interval when the service reads it.
+MIN_INTERVAL_S = 15 * 60
 # The longest interval of an interval schedule, one year. A longer one makes the date arithmetic of APScheduler fail
 # with an OverflowError or an OSError, and a schedule row that fails like this stops the start of the service.
 MAX_INTERVAL_S = 365 * 24 * 60 * 60
@@ -88,11 +91,23 @@ class ScheduleSpec:
 
     @classmethod
     def from_row(cls, row: Schedule) -> ScheduleSpec:
+        """Return the schedule of ``row``. A stored interval below ``MIN_INTERVAL_S`` becomes ``MIN_INTERVAL_S``.
+
+        An older version of the service accepted a shorter interval, and such a row must not stop the start.
+        """
+        interval_s = row.interval_s
+        if row.kind is ScheduleKind.INTERVAL and interval_s is not None and interval_s < MIN_INTERVAL_S:
+            LOG.warning(
+                "The stored interval of %s s is below the shortest interval, so the schedule uses %s s",
+                interval_s,
+                MIN_INTERVAL_S,
+            )
+            interval_s = MIN_INTERVAL_S
         return cls(
             kind=row.kind,
             timezone=row.timezone,
             cron_expression=row.cron_expression,
-            interval_s=row.interval_s,
+            interval_s=interval_s,
             enabled=row.enabled,
         )
 
@@ -161,8 +176,10 @@ def build_trigger(spec: ScheduleSpec) -> BaseTrigger:
             raise ValueError("A cron schedule needs a cron expression")
         return _cron_trigger(spec.cron_expression, zone)
     if spec.kind is ScheduleKind.INTERVAL:
-        if spec.interval_s is None or spec.interval_s < 1:
-            raise ValueError(f"An interval schedule needs an interval of 1 s or more, got {spec.interval_s}")
+        if spec.interval_s is None or spec.interval_s < MIN_INTERVAL_S:
+            raise ValueError(
+                f"An interval schedule needs an interval of {MIN_INTERVAL_S} s (15 minutes) or more, got {spec.interval_s}"
+            )
         if spec.interval_s > MAX_INTERVAL_S:
             raise ValueError(
                 f"An interval schedule needs an interval of {MAX_INTERVAL_S} s or less, got {spec.interval_s}"

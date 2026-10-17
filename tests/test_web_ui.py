@@ -129,7 +129,7 @@ async def test_paused_schedule_has_no_next_run_and_shows_its_own_time_zone(
 ):
     store(
         sessions,
-        Schedule(enabled=False, kind=ScheduleKind.INTERVAL, interval_s=600, timezone="America/New_York"),
+        Schedule(enabled=False, kind=ScheduleKind.INTERVAL, interval_s=1800, timezone="America/New_York"),
         Run(status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=datetime(2026, 1, 5, tzinfo=UTC)),
     )
 

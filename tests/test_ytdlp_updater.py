@@ -14,7 +14,6 @@ import pytest
 from youtube_automanager.youtube import ytdlp_updater
 from youtube_automanager.youtube.ytdlp_updater import (
     child_env,
-    installed_channel,
     installed_version,
     latest_version,
     update,
@@ -157,29 +156,6 @@ def test_installed_version_with_malformed_metadata_is_none(target_dir, metadata)
     assert installed_version(target_dir) is None
 
 
-def test_installed_channel_reads_the_channel_of_version_py(make_install, target_dir):
-    make_install(target_dir, NIGHTLY, channel="nightly")
-
-    assert installed_channel(target_dir) == "nightly"
-
-
-def test_installed_channel_of_a_missing_folder_is_none(target_dir):
-    assert installed_channel(target_dir) is None
-
-
-@pytest.mark.parametrize(
-    "source",
-    ["CHANNEL = \n", "__version__ = '2026.08.19'\n"],
-    ids=["syntax-error", "no-channel"],
-)
-def test_installed_channel_of_a_malformed_version_py_is_none(target_dir, source):
-    package = target_dir / "yt_dlp"
-    package.mkdir(parents=True)
-    (package / "version.py").write_text(source, encoding="utf-8")
-
-    assert installed_channel(target_dir) is None
-
-
 def test_latest_stable_is_the_current_version_of_pypi(pypi):
     assert latest_version("stable") == STABLE
     assert pypi.requests == [(ytdlp_updater.PYPI_URL, ytdlp_updater.PYPI_TIMEOUT_SECONDS)]
@@ -247,7 +223,7 @@ def test_first_update_creates_the_folder(uv, target_dir):
     assert result.ok
     assert result.old_version is None
     assert installed_version(target_dir) == NIGHTLY
-    assert installed_channel(target_dir) == "nightly"
+    assert "CHANNEL = 'nightly'" in (target_dir / "yt_dlp" / "version.py").read_text(encoding="utf-8")
 
 
 def test_update_installs_into_a_clean_new_folder_and_removes_leftovers(uv, old_install):

@@ -16,6 +16,7 @@ from youtube_automanager.scheduler import (
     CLEANUP_HOUR,
     CLEANUP_MINUTE,
     MAX_INTERVAL_S,
+    MIN_INTERVAL_S,
     ROTATION_JOB_ID,
     YTDLP_JOB_ID,
     RunNowOutcome,
@@ -104,7 +105,7 @@ def test_day_of_month_and_day_of_week_together_match_either_day():
 
 
 def test_interval_counts_from_now():
-    assert upcoming_run_times(interval(600), 3, now=NOW) == [NOW + timedelta(seconds=600 * n) for n in (1, 2, 3)]
+    assert upcoming_run_times(interval(1800), 3, now=NOW) == [NOW + timedelta(seconds=1800 * n) for n in (1, 2, 3)]
 
 
 def test_disabled_schedule_has_no_run_times():
@@ -123,10 +124,11 @@ def test_disabled_schedule_has_no_run_times():
         (lambda: cron("0 18 * * *-3"), "day of the week"),
         (lambda: cron(""), "cron expression"),
         (lambda: cron("0 18 * * *", timezone="Nowhere/City"), "Unknown time zone"),
-        (lambda: interval(0), "1 s or more"),
+        (lambda: interval(0), r"900 s \(15 minutes\) or more"),
+        (lambda: interval(MIN_INTERVAL_S - 1), r"900 s \(15 minutes\) or more"),
         (lambda: interval(MAX_INTERVAL_S + 1), "or less"),
         (lambda: interval(10**12), "or less"),
-        (lambda: ScheduleSpec(kind=ScheduleKind.INTERVAL, timezone="UTC"), "1 s or more"),
+        (lambda: ScheduleSpec(kind=ScheduleKind.INTERVAL, timezone="UTC"), "or more"),
     ],
 )
 def test_wrong_schedule_is_refused(make_spec, message):
@@ -142,16 +144,55 @@ def test_load_schedule_writes_the_default_row_once(db_sessions):
         (row,) = session.scalars(select(Schedule)).all()
         assert (row.id, row.enabled, row.kind, row.timezone) == (1, True, ScheduleKind.CRON, "Europe/Kyiv")
         row.kind = ScheduleKind.INTERVAL
-        row.interval_s = 600
+        row.interval_s = 1800
         row.enabled = False
 
     assert load_schedule(db_sessions, "UTC") == ScheduleSpec(
         kind=ScheduleKind.INTERVAL,
         timezone="Europe/Kyiv",
         cron_expression="0 18 * * *",
-        interval_s=600,
+        interval_s=1800,
         enabled=False,
     )
+
+
+def test_the_shortest_interval_gives_run_times():
+    assert upcoming_run_times(interval(MIN_INTERVAL_S), 2, now=NOW) == [
+        NOW + timedelta(seconds=MIN_INTERVAL_S * n) for n in (1, 2)
+    ]
+
+
+@pytest.mark.parametrize("stored", [1, 60, MIN_INTERVAL_S - 1])
+def test_a_stored_interval_below_the_shortest_reads_as_the_shortest_with_one_warning(db_sessions, caplog, stored):
+    load_schedule(db_sessions, "UTC")
+    with db_sessions.begin() as session:
+        row = session.get(Schedule, 1)
+        row.kind = ScheduleKind.INTERVAL
+        row.interval_s = stored
+
+    with caplog.at_level(logging.WARNING, logger=scheduler_module.__name__):
+        spec = load_schedule(db_sessions, "UTC")
+
+    assert spec.interval_s == MIN_INTERVAL_S
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert [record.getMessage() for record in warnings] == [
+        f"The stored interval of {stored} s is below the shortest interval, so the schedule uses {MIN_INTERVAL_S} s"
+    ]
+    with db_sessions() as session:
+        # The row keeps its value until the next save.
+        assert session.get(Schedule, 1).interval_s == stored
+
+
+def test_a_short_stored_interval_of_a_cron_schedule_stays_as_it_is(db_sessions, caplog):
+    load_schedule(db_sessions, "UTC")
+    with db_sessions.begin() as session:
+        session.get(Schedule, 1).interval_s = 60
+
+    with caplog.at_level(logging.WARNING, logger=scheduler_module.__name__):
+        spec = load_schedule(db_sessions, "UTC")
+
+    assert (spec.kind, spec.interval_s) == (ScheduleKind.CRON, 60)
+    assert not caplog.records
 
 
 # The scheduler on a running event loop.
@@ -240,22 +281,22 @@ def test_pause_and_resume(runner):
 def test_apply_changes_the_schedule_without_a_restart(runner):
     async def body(scheduler):
         before = datetime.now(UTC)
-        await scheduler.apply(interval(600))
+        await scheduler.apply(interval(1800))
         return before, await scheduler.state(), await scheduler.next_run_times(2)
 
     before, state, times = run_with_scheduler(runner, cron("0 18 * * *"), body)
 
     assert state is SchedulerState.RUNNING
-    assert before + timedelta(seconds=600) <= times[0] <= datetime.now(UTC) + timedelta(seconds=600)
-    assert times[1] - times[0] == timedelta(seconds=600)
+    assert before + timedelta(seconds=1800) <= times[0] <= datetime.now(UTC) + timedelta(seconds=1800)
+    assert times[1] - times[0] == timedelta(seconds=1800)
 
 
 def test_apply_of_a_disabled_schedule_keeps_the_scheduler_paused(runner):
     async def body(scheduler):
-        await scheduler.apply(interval(600, enabled=False))
+        await scheduler.apply(interval(1800, enabled=False))
         first = await scheduler.state()
         # A second change while paused must not resume the schedule.
-        await scheduler.apply(interval(300, enabled=False))
+        await scheduler.apply(interval(1200, enabled=False))
         second = await scheduler.state(), await scheduler.next_run_times(1)
         await scheduler.resume()
         return first, second, await scheduler.next_run_times(2)
@@ -264,12 +305,12 @@ def test_apply_of_a_disabled_schedule_keeps_the_scheduler_paused(runner):
 
     assert first is SchedulerState.PAUSED
     assert second == (SchedulerState.PAUSED, [])
-    assert times[1] - times[0] == timedelta(seconds=300)
+    assert times[1] - times[0] == timedelta(seconds=1200)
 
 
 def test_apply_of_an_enabled_schedule_resumes_a_paused_scheduler(runner):
     async def body(scheduler):
-        await scheduler.apply(interval(300))
+        await scheduler.apply(interval(1200))
         return await scheduler.state()
 
     assert run_with_scheduler(runner, cron("0 18 * * *", enabled=False), body) is SchedulerState.RUNNING
@@ -445,7 +486,7 @@ def test_save_schedule_replaces_the_single_row(db_sessions):
 def test_save_schedule_keeps_an_empty_field_empty(db_sessions):
     load_schedule(db_sessions, "Europe/Kyiv")
 
-    save_schedule(db_sessions, ScheduleSpec(kind=ScheduleKind.INTERVAL, timezone="UTC", interval_s=60))
+    save_schedule(db_sessions, ScheduleSpec(kind=ScheduleKind.INTERVAL, timezone="UTC", interval_s=MIN_INTERVAL_S))
 
     assert load_schedule(db_sessions, "UTC").cron_expression is None
 
@@ -458,13 +499,13 @@ def test_save_schedule_writes_the_row_when_the_table_is_empty(db_sessions):
 
 def test_save_enabled_changes_only_the_flag(db_sessions):
     load_schedule(db_sessions, "UTC")
-    save_schedule(db_sessions, interval(600, timezone="America/New_York"))
+    save_schedule(db_sessions, interval(1800, timezone="America/New_York"))
 
     save_enabled(db_sessions, False)
 
-    assert load_schedule(db_sessions, "UTC") == interval(600, timezone="America/New_York", enabled=False)
+    assert load_schedule(db_sessions, "UTC") == interval(1800, timezone="America/New_York", enabled=False)
     save_enabled(db_sessions, True)
-    assert load_schedule(db_sessions, "UTC") == interval(600, timezone="America/New_York")
+    assert load_schedule(db_sessions, "UTC") == interval(1800, timezone="America/New_York")
 
 
 def test_save_enabled_without_a_row_is_an_error(db_sessions):
