@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-12 18:55+0300\n"
+"POT-Creation-Date: 2026-10-17 12:03+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -356,7 +356,7 @@ msgid "Disabled"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
-msgid "Duration in seconds"
+msgid "Duration"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -427,10 +427,6 @@ msgstr ""
 msgid "Enter a whole number of days, 1 or more."
 msgstr ""
 
-#: youtube_automanager/web/ui/rule_form.py
-msgid "Enter a whole number of seconds, 0 or more."
-msgstr ""
-
 #: youtube_automanager/web/ui/settings_page.py
 msgid "Enter a whole number of videos, 1 or more."
 msgstr ""
@@ -441,6 +437,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Enter the time as HH:MM, from 00:00 to 23:59."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Enter whole minutes, 0 or more, and whole seconds from 0 to 59."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -583,6 +583,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Matches now"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Minutes"
 msgstr ""
 
 #: youtube_automanager/web/ui/notifications_section.py

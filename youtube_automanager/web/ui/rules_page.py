@@ -51,6 +51,8 @@ from youtube_automanager.web.ui.rule_form import (
     condition_from_json,
     condition_of,
     describe,
+    duration_fields,
+    duration_value,
     from_tree,
     json_text,
     new_leaf,
@@ -735,19 +737,23 @@ class RuleEditor:
                     on_change=lambda event: set_value(list(event.value or [])),
                 ).props("outlined dense use-chips").classes("flex-1 min-w-48").mark(marker)
             case ValueKind.SECONDS:
+                minutes, seconds = duration_fields(leaf.value)
 
-                def set_seconds(value: float | None) -> None:
-                    # ``ui.number`` gives a float. The rule compares whole seconds.
-                    set_value(int(value) if value is not None and float(value).is_integer() else value)
+                def set_duration() -> None:
+                    set_value(duration_value(minutes_input.value, seconds_input.value))
 
-                ui.number(
-                    _("Seconds"),
-                    value=leaf.value,
-                    min=0,
-                    step=1,
-                    precision=0,
-                    on_change=lambda event: set_seconds(event.value),
-                ).props("outlined dense").classes("w-36").mark(marker)
+                minutes_input = (
+                    ui.number(_("Minutes"), value=minutes, min=0, step=1, precision=0, on_change=set_duration)
+                    .props("outlined dense")
+                    .classes("w-28")
+                    .mark(_marker("minutes", path))
+                )
+                seconds_input = (
+                    ui.number(_("Seconds"), value=seconds, min=0, max=59, step=1, precision=0, on_change=set_duration)
+                    .props("outlined dense")
+                    .classes("w-28")
+                    .mark(_marker("seconds", path))
+                )
             case ValueKind.DATE:
                 ui.input(_("Date"), value=leaf.value, on_change=lambda event: set_value(event.value or None)).props(
                     "type=date outlined dense"
