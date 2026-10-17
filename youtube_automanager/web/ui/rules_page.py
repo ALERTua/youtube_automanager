@@ -5,9 +5,9 @@ subscriptions feed of the account. The page takes the channels and the playlists
 account, which the refresh of the account data writes, so a page load makes no request to YouTube. The page reads and
 writes the database in a thread, never on the event loop. Each time shows in the time zone of the schedule.
 
-The editor previews a rule for the videos since a day, and the apply dialog adds the matching videos of a saved rule
-since a day to its playlist. Both read YouTube in a child process through ``rule_actions``, and the apply is a run of
-the history.
+The editor previews what the next sync run does with a rule, and the apply dialog adds the matching videos of a saved
+rule since a day to its playlist. Both read YouTube in a child process through ``rule_actions``, and the apply is a
+run of the history.
 """
 
 import asyncio
@@ -35,6 +35,7 @@ from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
 from youtube_automanager.web.ui.dashboard import format_time
+from youtube_automanager.web.ui.dates import today_button, today_in
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
     FIELDS,
@@ -51,6 +52,8 @@ from youtube_automanager.web.ui.rule_form import (
     condition_from_json,
     condition_of,
     describe,
+    duration_fields,
+    duration_value,
     from_tree,
     json_text,
     new_leaf,
@@ -72,7 +75,7 @@ LONG_CELL = """
 </q-td>
 """
 
-# The first day of a preview and of an apply is this many days back by default.
+# The first day of an apply and of its preview is this many days back by default.
 DEFAULT_DAYS_BACK = 7
 # The first day is at most this many days back.
 MAX_DAYS_BACK = 365
@@ -320,11 +323,6 @@ def channel_options(stored: Stored, extra: list[str]) -> dict[str, str]:
     return options
 
 
-def today_in(timezone: str) -> date:
-    """Return the day of today in the time zone ``timezone``."""
-    return datetime.now(ZoneInfo(timezone)).date()
-
-
 def parse_since(text: str | None, today: date) -> date:
     """Return the first day of ``text`` in the form 2026-10-05.
 
@@ -343,7 +341,7 @@ def parse_since(text: str | None, today: date) -> date:
 
 
 def day_input(today: date) -> ui.input:
-    """Add the input of the first day of a preview or an apply, with the default day."""
+    """Add the input of the first day of an apply and of its preview, with the default day."""
     earliest = today - timedelta(days=MAX_DAYS_BACK)
     return (
         ui.input(_("Videos from"), value=(today - timedelta(days=DEFAULT_DAYS_BACK)).isoformat())
@@ -440,11 +438,28 @@ class PreviewView:
         with self.container:
             ui.label(text).classes("text-negative whitespace-pre-wrap").mark(f"{self.marker}-failed")
 
-    def show(self, preview: Preview) -> None:
+    def show(self, preview: Preview, note: str | None = None) -> None:
+        """Show the result. ``note`` comes first, for example that the rule is off."""
         self.container.clear()
         with self.container:
+            if note:
+                ui.label(note).classes("text-warning").mark(f"{self.marker}-note")
             for error in preview.errors:
                 ui.label(error).classes("text-negative").mark(f"{self.marker}-error")
+            if preview.mode_changed:
+                ui.label(
+                    _(
+                        "The processing mode changed, so the next run starts each source again: it stores the newest "
+                        "videos of each source as seen and adds none of them."
+                    )
+                ).classes("text-warning").mark(f"{self.marker}-mode-changed")
+            elif preview.baseline_sources:
+                ui.label(
+                    _(
+                        "The service has not read these sources yet, so the next run stores their newest videos as "
+                        "seen and adds none of them: {sources}"
+                    ).format(sources=", ".join(preview.baseline_sources))
+                ).classes("text-warning").mark(f"{self.marker}-baselines")
             if preview.cut_sources:
                 ui.label(
                     _(
@@ -599,29 +614,27 @@ class RuleEditor:
                 )
 
     def _preview_part(self) -> None:
-        """Add the preview of the form: the first day, the button and the result."""
+        """Add the preview of the form: the hint, the button and the result."""
         if self.rule is None:
             hint = _(
-                "The preview lists each video of the rule sources since the day that this rule matches or cannot "
-                "decide yet. It adds nothing."
+                "The preview lists the videos of the next run that this rule matches or cannot decide yet. A run "
+                "checks only the videos that came since the last run, as far as the processing mode reads. It adds "
+                "nothing."
             )
-            empty = _("The rule matches no video of its sources since this day.")
+            empty = _("The next run finds no new video that this rule matches.")
         else:
             hint = _(
-                "The preview lists each video of the rule sources since the day for which your changes change the "
-                "result: a video that the rule matches now, or no longer matches. It adds nothing."
+                "The preview lists the videos of the next run for which your changes change the result: a video "
+                "that the rule matches now, or no longer matches. A run checks only the videos that came since the "
+                "last run, as far as the processing mode reads. It adds nothing."
             )
-            empty = _("Your changes change the result for no video since this day.")
+            empty = _("Your changes change the result for no new video of the next run.")
         with ui.card().props("flat bordered").classes("w-full gap-2 p-2").mark("preview-part"):
-            ui.label(_("Preview")).classes("text-subtitle1")
+            ui.label(_("Preview of the next run")).classes("text-subtitle1")
             ui.label(hint).classes("text-grey-7").mark("preview-hint")
-            with ui.row().classes("items-center gap-2"):
-                self.preview_since = day_input(today_in(self.stored.timezone)).mark("preview-since")
-                self.preview_button = (
-                    ui.button(_("Preview"), icon="visibility", on_click=self.preview)
-                    .props("outline")
-                    .mark("preview-run")
-                )
+            self.preview_button = (
+                ui.button(_("Preview"), icon="visibility", on_click=self.preview).props("outline").mark("preview-run")
+            )
             self.preview_view = PreviewView("preview", empty)
 
     # The condition editor.
@@ -735,23 +748,31 @@ class RuleEditor:
                     on_change=lambda event: set_value(list(event.value or [])),
                 ).props("outlined dense use-chips").classes("flex-1 min-w-48").mark(marker)
             case ValueKind.SECONDS:
+                minutes, seconds = duration_fields(leaf.value)
 
-                def set_seconds(value: float | None) -> None:
-                    # ``ui.number`` gives a float. The rule compares whole seconds.
-                    set_value(int(value) if value is not None and float(value).is_integer() else value)
+                def set_duration() -> None:
+                    set_value(duration_value(minutes_input.value, seconds_input.value))
 
-                ui.number(
-                    _("Seconds"),
-                    value=leaf.value,
-                    min=0,
-                    step=1,
-                    precision=0,
-                    on_change=lambda event: set_seconds(event.value),
-                ).props("outlined dense").classes("w-36").mark(marker)
+                minutes_input = (
+                    ui.number(_("Minutes"), value=minutes, min=0, step=1, precision=0, on_change=set_duration)
+                    .props("outlined dense")
+                    .classes("w-28")
+                    .mark(_marker("minutes", path))
+                )
+                seconds_input = (
+                    ui.number(_("Seconds"), value=seconds, min=0, max=59, step=1, precision=0, on_change=set_duration)
+                    .props("outlined dense")
+                    .classes("w-28")
+                    .mark(_marker("seconds", path))
+                )
             case ValueKind.DATE:
-                ui.input(_("Date"), value=leaf.value, on_change=lambda event: set_value(event.value or None)).props(
-                    "type=date outlined dense"
-                ).classes("w-48").mark(marker)
+                day = (
+                    ui.input(_("Date"), value=leaf.value, on_change=lambda event: set_value(event.value or None))
+                    .props("type=date outlined dense")
+                    .classes("w-48")
+                    .mark(marker)
+                )
+                today_button(day, self.stored.timezone).mark(_marker("today", path))
             case ValueKind.LIVE_STATUS:
                 ui.select(
                     {status: _(label) for status, label in LIVE_STATUSES.items()},
@@ -813,11 +834,13 @@ class RuleEditor:
     # The preview and the apply.
 
     async def preview(self) -> None:
-        """Preview the form: a new rule alone, or the change of the saved rule. The preview adds nothing."""
+        """Preview what the next run does with the form: a new rule alone, or the change of the saved rule.
+
+        The preview adds nothing.
+        """
         if self.previewing:
             return
         try:
-            since = parse_since(self.preview_since.value, today_in(self.stored.timezone))
             draft = DraftRule(
                 self.read_condition(), tuple(self.channel_select.value or ()), bool(self.no_shorts_switch.value)
             )
@@ -832,7 +855,7 @@ class RuleEditor:
             result: Preview | str = await asyncio.to_thread(
                 preview_in_child,
                 self.services.runner,
-                since,
+                None,
                 rule_id=None if self.rule is None else self.rule.id,
                 draft=draft,
             )
@@ -848,8 +871,11 @@ class RuleEditor:
         self.preview_button.enable()
         if isinstance(result, str):
             self.preview_view.failed(result)
-        else:
-            self.preview_view.show(result)
+            return
+        note = None
+        if not self.enabled_switch.value:
+            note = _("The rule is off, so no run uses it. The preview shows what the next run does with the rule on.")
+        self.preview_view.show(result, note)
 
     def apply(self) -> None:
         if self.rule is not None and self.open_apply is not None:
@@ -957,6 +983,7 @@ class ApplyDialog:
             with ui.row().classes("items-center gap-2"):
                 self.since_input = day_input(today_in(self.timezone)).mark("apply-since")
                 self.since_input.on_value_change(self._day_changed)
+                today_button(self.since_input, self.timezone).mark("apply-since-today")
                 self.preview_button = (
                     ui.button(_("Preview"), icon="visibility", on_click=self.run_preview)
                     .props("outline")

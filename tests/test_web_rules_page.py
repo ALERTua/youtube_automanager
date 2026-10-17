@@ -40,6 +40,7 @@ from youtube_automanager.db.models import (
 from youtube_automanager.engine.rules import MATCH_ALL
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.web.ui import rules_page
+from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.web.ui.rule_form import LIVE_STATUSES
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
@@ -230,7 +231,7 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
             "channels": "Alpha, Beta",
             "playlist": "Home",
             "no_shorts": "Yes",
-            "condition": 'Title matches the pattern "Levels of" and Duration in seconds is at least 120',
+            "condition": 'Title matches the pattern "Levels of" and Duration is at least 2:00',
             "updated": "2026-10-01 15:00 EEST",
         },
         {
@@ -365,8 +366,8 @@ async def test_a_rule_made_on_the_page_adds_the_matching_new_videos_in_the_next_
     user.find(marker="add-condition").click()
     await eventually(lambda: elements_of(user, "field-1"), "The second condition")
     set_value(user, "field-1", "duration_s")
-    await eventually(lambda: isinstance(element_of(user, "value-1"), ui.number), "The input of the seconds")
-    set_value(user, "value-1", 120.0)
+    await eventually(lambda: elements_of(user, "minutes-1"), "The input of the minutes")
+    set_value(user, "minutes-1", 2.0)
     await save(user)
 
     (stored,) = stored_rules(sessions)
@@ -484,7 +485,8 @@ async def test_a_condition_that_the_visual_editor_cannot_show_opens_as_json(user
     assert stored_rule(sessions, 1).condition == shown
     await open_editor(user, 1)
     await user.should_not_see(marker="rule-json")
-    assert (element_of(user, "operator-0").value, element_of(user, "value-0").value) == ("<", 60)
+    assert element_of(user, "operator-0").value == "<"
+    assert (element_of(user, "minutes-0").value, element_of(user, "seconds-0").value) == (1, 0)
 
 
 async def test_an_empty_group_that_matches_no_video_opens_as_json(user, sessions, account_copy):
@@ -542,7 +544,10 @@ async def test_an_empty_pattern_stops_the_save(user, sessions, account_copy):
     assert stored_rules(sessions) == []
 
 
-async def test_a_fraction_of_a_second_stops_the_save(user, sessions, account_copy):
+@pytest.mark.parametrize(("minutes", "seconds"), [(1.5, None), (None, 60.0)])
+async def test_a_duration_without_whole_minutes_and_seconds_stops_the_save(
+    user, sessions, account_copy, minutes, seconds
+):
     await user.open("/rules")
     await open_editor(user)
     set_value(user, "rule-name", "Long")
@@ -550,13 +555,29 @@ async def test_a_fraction_of_a_second_stops_the_save(user, sessions, account_cop
     user.find(marker="add-condition").click()
     await eventually(lambda: elements_of(user, "field-0"), "The condition")
     set_value(user, "field-0", "duration_s")
-    await eventually(lambda: isinstance(element_of(user, "value-0"), ui.number), "The input of the seconds")
+    await eventually(lambda: elements_of(user, "minutes-0"), "The input of the minutes")
 
-    set_value(user, "value-0", 1.5)
+    set_value(user, "minutes-0", minutes)
+    set_value(user, "seconds-0", seconds)
     user.find(marker="editor-save").click()
 
-    await error_is(user, "Duration in seconds: Enter a whole number of seconds, 0 or more.")
+    await error_is(user, "Duration: Enter whole minutes, 0 or more, and whole seconds from 0 to 59.")
     assert stored_rules(sessions) == []
+
+
+async def test_a_rebuild_of_the_editor_keeps_a_wrong_duration(user, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+    user.find(marker="add-condition").click()
+    await eventually(lambda: elements_of(user, "field-0"), "The condition")
+    set_value(user, "field-0", "duration_s")
+    await eventually(lambda: elements_of(user, "minutes-0"), "The input of the minutes")
+    set_value(user, "minutes-0", 1.5)
+
+    user.find(marker="add-condition").click()
+    await eventually(lambda: elements_of(user, "field-1"), "The second condition")
+
+    assert (element_of(user, "minutes-0").value, element_of(user, "seconds-0").value) == (1.5, None)
 
 
 @pytest.mark.parametrize(
@@ -905,7 +926,7 @@ async def test_groups_nest_in_the_editor(user, sessions, account_copy):
     set_value(user, "group-kind-1-2", "all")
     await choose(user, "field-1-2-0", "duration_s")
     await choose(user, "operator-1-2-0", "<")
-    set_value(user, "value-1-2-0", 60)
+    set_value(user, "minutes-1-2-0", 1.0)
     user.find(marker="add-condition").click()
     await eventually(lambda: elements_of(user, "field-2"), "The third condition of the root")
     user.find(marker="remove-2").click()
@@ -967,7 +988,6 @@ async def test_a_group_without_conditions_is_left_out_at_the_save(user, sessions
         ("channel_id", "in", [A, C], ui.select, {"in": [{"var": "channel_id"}, [A, C]]}),
         ("channel_id", "==", B, ui.select, {"==": [{"var": "channel_id"}, B]}),
         ("channel_id", "regex", "^UCa", ui.input, {"regex": [{"var": "channel_id"}, "^UCa", "i"]}),
-        ("duration_s", "<=", 90.0, ui.number, {"<=": [DURATION, 90]}),
         ("upload_date", "<", "2026-10-01", ui.input, {"<": [{"var": "upload_date"}, "2026-10-01"]}),
         ("live_status", "!=", "was_live", ui.select, {"!=": [{"var": "live_status"}, "was_live"]}),
         ("is_short", None, False, ui.select, {"==": [{"var": "is_short"}, False]}),
@@ -989,6 +1009,43 @@ async def test_each_kind_of_value_has_its_input(user, sessions, account_copy, fi
     await save(user)
 
     assert stored_rules(sessions)[0].condition == {"and": [expected]}
+
+
+async def test_the_duration_has_a_field_for_the_minutes_and_one_for_the_seconds(user, sessions, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-name", "Up to a minute and a half")
+    set_value(user, "rule-playlist", "WL")
+    user.find(marker="add-condition").click()
+    await eventually(lambda: elements_of(user, "field-0"), "The condition")
+    await choose(user, "field-0", "duration_s")
+    await choose(user, "operator-0", "<=")
+    assert (type(element_of(user, "minutes-0")), type(element_of(user, "seconds-0"))) == (ui.number, ui.number)
+
+    set_value(user, "minutes-0", 1.0)
+    set_value(user, "seconds-0", 30.0)
+    await save(user)
+
+    assert stored_rules(sessions)[0].condition == {"and": [{"<=": [DURATION, 90]}]}
+    await open_editor(user, 1)
+    assert (element_of(user, "minutes-0").value, element_of(user, "seconds-0").value) == (1, 30)
+
+
+async def test_the_upload_date_gets_today_from_its_button(user, sessions, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-name", "From today")
+    set_value(user, "rule-playlist", "WL")
+    user.find(marker="add-condition").click()
+    await eventually(lambda: elements_of(user, "field-0"), "The condition")
+    await choose(user, "field-0", "upload_date")
+    today = today_in("Europe/Kyiv").isoformat()
+
+    user.find(marker="today-0").click()
+
+    await eventually(lambda: element_of(user, "value-0").value == today, "Today as the upload date")
+    await save(user)
+    assert stored_rules(sessions)[0].condition == {"and": [{">=": [{"var": "upload_date"}, today]}]}
 
 
 async def test_a_new_comparison_keeps_the_channel(user, account_copy):
@@ -1077,6 +1134,7 @@ async def test_each_text_of_the_rules_page_goes_through_the_translation(
         "<<Gamma, not subscribed>>",
         "<<is not a Short>>",
         "<<Case-sensitive>>",
+        "<<Minutes>>",
         "<<Seconds>>",
         "<<The visual editor cannot show this condition. Edit it as JsonLogic.>>",
     ):

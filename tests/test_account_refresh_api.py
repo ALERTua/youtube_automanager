@@ -42,7 +42,7 @@ class ProbedStarter:
         self.lock_held = []
         self.in_event_loop = []
 
-    def __call__(self, command, env):
+    def __call__(self, command, env, input_text):
         self.lock_held.append(SYNC_LOCK.locked())
         try:
             asyncio.get_running_loop()
@@ -50,7 +50,7 @@ class ProbedStarter:
             self.in_event_loop.append(False)
         else:
             self.in_event_loop.append(True)
-        return self.inner(command, env)
+        return self.inner(command, env, input_text)
 
 
 @pytest.fixture
@@ -300,7 +300,7 @@ def test_the_web_process_does_not_import_yt_dlp_for_a_refresh():
         "\n"
         "home = pathlib.Path(tempfile.mkdtemp())\n"
         "settings = Settings(home=home, database_url=f'sqlite:///{home / \"service.sqlite\"}', tz='UTC')\n"
-        "with TestClient(create_app(settings, start=lambda command, env: Child())) as client:\n"
+        "with TestClient(create_app(settings, start=lambda command, env, input_text: Child())) as client:\n"
         "    answer = client.post('/api/account/refresh')\n"
         "assert answer.status_code == 200, answer.text\n"
         "assert answer.json()['channels_new'] == 1, answer.text\n"

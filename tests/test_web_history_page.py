@@ -30,6 +30,7 @@ from youtube_automanager.db.models import (
     Setting,
 )
 from youtube_automanager.web.ui import history_page
+from youtube_automanager.web.ui.dates import today_in
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -391,6 +392,22 @@ async def test_the_date_range_counts_whole_days_of_the_time_zone_of_the_schedule
 
 
 WRONG_DATE = "This is not a date, so the filter does not use it."
+
+
+async def test_the_today_buttons_put_today_of_the_time_zone_of_the_schedule_into_the_date_fields(user, sessions):
+    now = datetime.now(UTC)
+    store(sessions, run(1, now - timedelta(days=2)), run(2, now))
+    today = today_in("Europe/Kyiv").isoformat()
+    await user.open("/history")
+    await runs_are(user, [2, 1])
+
+    user.find(marker="filter-from-today").click()
+
+    await runs_are(user, [2])
+    assert element_of(user, "filter-from").value == today
+    user.find(marker="filter-to-today").click()
+    await eventually(lambda: element_of(user, "filter-to").value == today, "Today as the last day")
+    await runs_are(user, [2])
 
 
 def date_error(user, marker: str) -> tuple[object, object]:

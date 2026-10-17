@@ -28,10 +28,14 @@ from youtube_automanager.db.models import (
     RunActionKind,
     RunStatus,
     RunTrigger,
+    SeenVideo,
+    SeenVideoState,
     SessionState,
+    Setting,
 )
 from youtube_automanager.engine import account_session
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, DraftRule, Mark, Preview, PreviewVideo
+from youtube_automanager.engine.sync import FEED_READ_KEY, FEED_SOURCE
 from youtube_automanager.rule_actions import (
     PREVIEW_TIMEOUT_SECONDS,
     AppliedRun,
@@ -110,6 +114,16 @@ def store_rule(sessions, rule_id=1, condition=ANY, channels=(), target="WL"):
     )
     store(sessions, *[RuleChannel(rule_id=rule_id, channel_id=channel_id) for channel_id in channels])
     return rule_id
+
+
+def store_read(sessions, channel_id, *video_ids):
+    """Store the state of a channel that a run read the day before: its videos as seen, and the time of the read."""
+    with sessions.begin() as session:
+        session.get(Channel, channel_id).last_checked_at = datetime.datetime(2026, 10, 11, 18, 0, tzinfo=datetime.UTC)
+        session.add_all(
+            SeenVideo(channel_id=channel_id, video_id=video_id, state=SeenVideoState.SEEN, upload_date=DAY)
+            for video_id in video_ids
+        )
 
 
 def store_run(sessions, trigger=RunTrigger.RULE_APPLY):
@@ -203,6 +217,9 @@ def preview_value(*videos, counts=None, errors=(), cut=()):
     return Preview(tuple(videos), counts, tuple(errors), tuple(cut)).to_value()
 
 
+EMPTY_PREVIEW = Preview((), {}).to_value()
+
+
 def video(video_id="v1", mark=Mark.WILL_ADD, day=DAY):
     return PreviewVideo(video_id, f"Video {video_id}", "Alpha", day, mark)
 
@@ -225,6 +242,7 @@ def test_the_commands_name_the_child_and_keep_each_value_one_argument():
     assert draft.to_json().isascii()
     assert DraftRule.from_json(draft.to_json()) == draft
     assert preview_command(SINCE, rule_id=3)[-1] == "--rule-id=3"
+    assert preview_command(None, draft=draft)[3:] == ["preview-rule", "--draft=" + draft.to_json()]
     assert apply_command(7, 3, SINCE) == [
         sys.executable,
         "-m",
@@ -346,6 +364,51 @@ def test_the_preview_of_a_feed_rule_without_cookies_ends_with_the_unavailable_co
     assert "no YouTube cookies are stored" in last_stderr_line(capsys)
 
 
+def test_the_preview_of_the_next_run_lists_only_the_new_videos_of_a_channel_that_a_run_read(
+    settings, db_sessions, fake_public, capsys
+):
+    store_rule(db_sessions, condition=LONG, channels=[A])
+    store_read(db_sessions, A, "old long")
+    fake_public.uploads[A] = [entry("new long"), entry("new short", duration_s=30), entry("old long")]
+
+    assert preview_once(settings, None, draft=DraftRule(LONG, (A,), False)) == 0
+
+    result = Preview.from_value(json.loads(last_stderr_line(capsys)))
+    assert [(item.video_id, item.mark) for item in result.videos] == [("new long", Mark.MATCHES)]
+    assert (result.baseline_sources, result.mode_changed) == ((), False)
+    assert fake_public.reads == [A]
+
+
+def test_the_preview_of_the_next_run_names_a_channel_without_state_and_reads_nothing(
+    settings, db_sessions, fake_public, capsys
+):
+    store_rule(db_sessions, channels=[A])
+    fake_public.uploads[A] = [entry("new")]
+
+    assert preview_once(settings, None, draft=DraftRule(ANY, (A,), False)) == 0
+
+    result = Preview.from_value(json.loads(last_stderr_line(capsys)))
+    assert (result.videos, result.baseline_sources) == ((), (f"Title {A}",))
+    assert fake_public.reads == []
+
+
+def test_the_preview_of_the_next_run_of_a_feed_rule_reads_the_feed_with_the_account(
+    settings, db_sessions, fake_public, fake_client, capsys
+):
+    store_cookies(db_sessions, settings)
+    store_rule(db_sessions)
+    with db_sessions.begin() as session:
+        session.add(Setting(key=FEED_READ_KEY, value="2026-10-11T18:00:00+00:00"))
+        session.add(SeenVideo(channel_id=FEED_SOURCE, video_id="f0", state=SeenVideoState.SEEN, upload_date=DAY))
+    fake_client.feed = [feed_video("f1", B), feed_video("f0", B)]
+
+    assert preview_once(settings, None, draft=DraftRule(ANY, (), False)) == 0
+
+    result = Preview.from_value(json.loads(last_stderr_line(capsys)))
+    assert [(item.video_id, item.mark) for item in result.videos] == [("f1", Mark.MATCHES)]
+    assert fake_client.created == 1
+
+
 def test_a_channel_that_fails_to_read_is_an_error_of_the_preview_and_not_of_the_child(
     settings, db_sessions, fake_public, capsys
 ):
@@ -465,6 +528,19 @@ def test_the_preview_gives_the_rule_and_the_draft_to_the_child_and_reads_the_res
     assert command == preview_command(SINCE, rule_id=3, draft=draft)
 
 
+def test_the_preview_of_the_next_run_gives_no_day_to_the_child_and_reads_its_sources(runner, fake_starter):
+    value = Preview((), {}, baseline_sources=("Beta",), mode_changed=True).to_value()
+    fake_starter.plan.append({"stderr": json.dumps(value) + "\n"})
+    draft = DraftRule(ANY, (A, B), False)
+
+    result = preview_in_child(runner, None, rule_id=3, draft=draft)
+
+    assert (result.baseline_sources, result.mode_changed) == (("Beta",), True)
+    ((command, _env),) = fake_starter.calls
+    assert command == preview_command(None, rule_id=3, draft=draft)
+    assert not any(part.startswith("--since") for part in command)
+
+
 def test_a_long_preview_comes_whole(runner, fake_starter):
     """The runner keeps only the end of a long stderr as the error text, but the result line comes in full."""
     videos = [video(f"v{index:03}") for index in range(200)]
@@ -483,13 +559,18 @@ def test_a_long_preview_comes_whole(runner, fake_starter):
         None,
         [],
         {"videos": [], "counts": {}},
-        {"videos": [], "counts": {}, "errors": [], "cut_sources": [], "extra": 1},
-        {"videos": "x", "counts": {}, "errors": [], "cut_sources": []},
-        {"videos": [], "counts": {"other": 1}, "errors": [], "cut_sources": []},
-        {"videos": [], "counts": {"will_add": True}, "errors": [], "cut_sources": []},
-        {"videos": [], "counts": {"will_add": -1}, "errors": [], "cut_sources": []},
-        {"videos": [], "counts": {}, "errors": [1], "cut_sources": []},
-        {"videos": [], "counts": {}, "errors": [], "cut_sources": "Alpha"},
+        {"videos": [], "counts": {}, "errors": [], "cut_sources": []},
+        {**EMPTY_PREVIEW, "extra": 1},
+        {**EMPTY_PREVIEW, "videos": "x"},
+        {**EMPTY_PREVIEW, "counts": {"other": 1}},
+        {**EMPTY_PREVIEW, "counts": {"will_add": True}},
+        {**EMPTY_PREVIEW, "counts": {"will_add": -1}},
+        {**EMPTY_PREVIEW, "errors": [1]},
+        {**EMPTY_PREVIEW, "cut_sources": "Alpha"},
+        {**EMPTY_PREVIEW, "baseline_sources": "Alpha"},
+        {**EMPTY_PREVIEW, "baseline_sources": [1]},
+        {**EMPTY_PREVIEW, "mode_changed": 1},
+        {**EMPTY_PREVIEW, "mode_changed": None},
         preview_value(video(), counts={}),
         {**preview_value(video()), "videos": [{**video().to_value(), "mark": "other"}]},
         {**preview_value(video()), "videos": [{**video().to_value(), "upload_date": "yesterday"}]},
@@ -555,11 +636,11 @@ def runs(sessions):
 
 
 def test_an_apply_is_a_run_with_its_own_trigger_and_child(db_sessions, db_url, tmp_path, fake_starter):
-    def start(command, env):
+    def start(command, env, input_text):
         # The child of the run writes the count of the added videos.
         with db_sessions.begin() as session:
             session.get(Run, int(command[4].removeprefix("--run-id="))).added_count = 2
-        return fake_starter(command, env)
+        return fake_starter(command, env, input_text)
 
     runner = SyncRunner(
         db_sessions,
@@ -656,6 +737,19 @@ def test_the_real_preview_child_of_a_rule_that_is_gone_gives_its_error_without_a
     assert result == Preview((), {}, ("The rule does not exist any more.",))
 
 
+def test_the_real_preview_child_of_the_next_run_names_a_channel_without_state_without_a_request(
+    db_sessions, db_url, tmp_path
+):
+    """Starts the real `preview-rule` child without a day: the child previews the next run."""
+    real_runner = SyncRunner(
+        db_sessions, ytdlp_dir=tmp_path / "yt-dlp", database_url=db_url, child_timeout_s=90, lock=threading.Lock()
+    )
+
+    result = preview_in_child(real_runner, None, draft=DraftRule(ANY, (A,), False))
+
+    assert result == Preview((), {}, baseline_sources=(A,))
+
+
 def test_the_real_apply_child_without_a_cookie_key_fails_the_run_with_the_cause(
     db_sessions, db_url, tmp_path, monkeypatch
 ):
@@ -708,7 +802,7 @@ def test_the_web_process_does_not_import_yt_dlp_for_a_preview_or_an_apply():
         "\n"
         "home = pathlib.Path(tempfile.mkdtemp())\n"
         "settings = Settings(home=home, database_url=f'sqlite:///{home / \"service.sqlite\"}', tz='UTC')\n"
-        "app = create_app(settings, start=lambda command, env: Child(LINES[command[3]]))\n"
+        "app = create_app(settings, start=lambda command, env, input_text: Child(LINES[command[3]]))\n"
         "mount_ui(app)\n"
         "since = datetime.date(2026, 10, 5)\n"
         "with TestClient(app) as client:\n"

@@ -70,6 +70,7 @@ metadata:
 - A fresh Firefox export holds cookies that live minutes (`GPS` 30 min, `CONSISTENCY` 10 min), `ST-*` cookies that are already expired, and `YSC` as a session cookie. The other cookies live 180 days (`VISITOR_INFO1_LIVE`, `VISITOR_PRIVACY_METADATA`, `__Secure-YNID`, `__Secure-BUCKET`, `__Secure-ROLLOUT_TOKEN`), 365 days (`PSIDTS` and `SIDCC` cookies) or 400 days (`SID` cookies, `LOGIN_INFO`, `PREF`).
 - The earliest expiry of all cookies of an export is thus always minutes away. The service takes the earliest expiry of the login cookies only (`cookie_text.LOGIN_COOKIES`).
 - One read check of the home page made the jar lose `GPS`, `CONSISTENCY` and the `ST-*` cookies, gave no new cookie name, and gave new values of exactly `SIDCC`, `__Secure-1PSIDCC` and `__Secure-3PSIDCC`. The text with these three new values passed a second check 5 s later.
+- A later check of an upload gave new values of five known cookies: the three above, `__Secure-YNID` and `__Secure-ROLLOUT_TOKEN`. The set of the cookies with a new value thus changes from check to check.
 - yt-dlp `YoutubeDLCookieJar.save` writes no `#HttpOnly_` mark. The write-back keeps each line of the stored text and changes only the value and the expiry date of a known cookie.
 
 ## The cookie session of the service
@@ -77,6 +78,7 @@ metadata:
 - The process of the service never imports yt-dlp. So a session check on request runs in the child command `check-session`, and the rotation uses `urllib` with `http.cookiejar`.
 - Each stored state of the cookies is a row of `cookie_version`. The current version is the newest version that is not dead, and `account.cookies` holds a copy of it.
 - An upload deletes the versions of the older upload, because they can belong to another account. A rollback thus never goes back to another export.
+- An upload goes into the database only after its own session check passed, so a dead export never replaces the stored cookies. The settings page first refuses a text without each login cookie, or with a login cookie that expired by now. Then the child `check-upload` checks the text and stores it as a good version with the state of a passed check, and saves the new values of the check as a write-back version. A refused upload or a check without a clear answer changes nothing and sends no `cookie_session_dead`.
 - SQLite gives an `INTEGER PRIMARY KEY` again after the row with the highest id went, unless the table has `AUTOINCREMENT`. The write-back compares the id of its base version with the current one, so `cookie_version` has `sqlite_autoincrement`.
 - When a version dies, each newer version dies with it, and the newest good version becomes current. A version is good after it passed a session check. A rotation does not make a version good.
 - A run checks the session at its start when cookies are stored, and that check costs one request with cookies. A session that dies during a run kills the version and the session. The next check tries the newest good version.

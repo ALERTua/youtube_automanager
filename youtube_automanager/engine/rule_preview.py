@@ -109,12 +109,17 @@ class Preview:
     ``videos`` holds at most PREVIEW_LIMIT of the listed videos, newest first, and ``counts`` counts each listed
     video by its mark, also the videos beyond the limit. ``errors`` names each source or rule that failed, and
     ``cut_sources`` names each source whose read stopped after READ_LIMIT entries before it reached the date.
+
+    A preview of the next run also names in ``baseline_sources`` each source that the next run starts with a
+    baseline, and ``mode_changed`` tells that the next run starts each source again, because the mode changed.
     """
 
     videos: tuple[PreviewVideo, ...]
     counts: dict[Mark, int]
     errors: tuple[str, ...] = ()
     cut_sources: tuple[str, ...] = ()
+    baseline_sources: tuple[str, ...] = ()
+    mode_changed: bool = False
 
     @property
     def total(self) -> int:
@@ -134,17 +139,20 @@ class Preview:
             "counts": {mark.value: count for mark, count in self.counts.items()},
             "errors": list(self.errors),
             "cut_sources": list(self.cut_sources),
+            "baseline_sources": list(self.baseline_sources),
+            "mode_changed": self.mode_changed,
         }
 
     @classmethod
     def from_value(cls, value: Any) -> Preview | None:
         """Read the value of ``to_value``. Return None when the value is not a preview."""
-        if not isinstance(value, dict) or set(value) != {"videos", "counts", "errors", "cut_sources"}:
+        if not isinstance(value, dict) or set(value) != _PREVIEW_KEYS:
             return None
         videos, counts, errors, cut = value["videos"], value["counts"], value["errors"], value["cut_sources"]
-        if not isinstance(videos, list) or not isinstance(counts, dict):
+        baselines, mode_changed = value["baseline_sources"], value["mode_changed"]
+        if not isinstance(videos, list) or not isinstance(counts, dict) or not isinstance(mode_changed, bool):
             return None
-        if not _texts(errors) or not _texts(cut):
+        if not _texts(errors) or not _texts(cut) or not _texts(baselines):
             return None
         parsed = [PreviewVideo.from_value(video) for video in videos]
         if None in parsed:
@@ -156,10 +164,13 @@ class Preview:
         # A count must be a whole number, and 1 == True in Python.
         if any(type(count) is not int or count < 0 for count in marks.values()):
             return None
-        preview = cls(tuple(parsed), marks, tuple(errors), tuple(cut))
+        preview = cls(tuple(parsed), marks, tuple(errors), tuple(cut), tuple(baselines), mode_changed)
         if len(parsed) > PREVIEW_LIMIT or preview.more < 0:
             return None
         return preview
+
+
+_PREVIEW_KEYS = frozenset({"videos", "counts", "errors", "cut_sources", "baseline_sources", "mode_changed"})
 
 
 def _texts(value: Any) -> bool:

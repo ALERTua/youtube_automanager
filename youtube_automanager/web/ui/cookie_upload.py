@@ -1,20 +1,16 @@
-"""The upload of the YouTube cookies on the settings page: the check of the text, and the store of a good text.
+"""The upload of the YouTube cookies on the settings page: the checks of the text before any request to YouTube.
 
-A cookie text goes into the database only when it is a Netscape cookie file and holds each login cookie of
-``.youtube.com``. A check names only a line number or the names of the missing cookies, never a cookie value.
+A cookie text goes to the check with YouTube only when it is a Netscape cookie file, holds each login cookie of
+``.youtube.com``, and its login cookies did not expire yet. A check names only a line number, the names of the missing
+cookies or a date, never a cookie value.
 
-The store holds the sync lock. A session that YouTube refuses during a run marks each newer cookie version dead, so an
-upload during a run, a session check, a cookie rotation or a short child could die with the old session. This module
-imports no NiceGUI, so its functions have tests of their own.
+The check with YouTube and the store run in a child process, through ``cookie_upload_check``. This module imports no
+NiceGUI, so its functions have tests of their own.
 """
 
 import datetime
 
-from sqlalchemy.orm import Session, sessionmaker
-
-from youtube_automanager.runner import SyncRunner
-from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES, cookies
-from youtube_automanager.youtube.session import CookieCipher, save_cookies
+from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES, cookies, earliest_login_expiry
 
 # The domain of the login cookies that the service needs.
 YOUTUBE_DOMAIN = ".youtube.com"
@@ -44,18 +40,10 @@ def missing_login_cookies(text: str) -> tuple[str, ...]:
     return tuple(sorted(LOGIN_COOKIES - present))
 
 
-def store_upload(
-    sessions: sessionmaker[Session],
-    runner: SyncRunner,
-    cipher: CookieCipher,
-    text: str,
-    *,
-    now: datetime.datetime | None = None,
-) -> None:
-    """Store ``text`` as a new upload of the cookies. This call blocks.
+def login_expired_at(text: str, now: datetime.datetime) -> datetime.datetime | None:
+    """Return the earliest expiry of the login cookies of ``text`` when it is ``now`` or earlier, else None.
 
-    The state of the session is unknown until the next session check. Raise ``RunAlreadyActive`` and store nothing
-    while a run, a session check, a cookie rotation or a short child holds the sync lock.
+    A cookie whose expiry is ``now`` is expired, as ``http.cookiejar`` counts it, so YouTube would not get it.
     """
-    with runner.lock_held(timeout=0), sessions.begin() as session:
-        save_cookies(session, cipher, text, now=now)
+    expiry = earliest_login_expiry(text)
+    return expiry if expiry is not None and expiry <= now else None

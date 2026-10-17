@@ -7,6 +7,9 @@ the date, or after READ_LIMIT entries. An entry without a date, for example an u
 The evaluation is the evaluation of a sync run: a rule with ``no_shorts`` gets the Shorts check of ``rule_spec``, and a
 rule that needs ``is_short`` reads the Shorts of a channel at most once, and only when it gives UNKNOWN.
 
+The preview of the next run reads no date. It reads each source as the next sync run does, with the processing mode
+and the stored state, and it lists only the videos that the run evaluates.
+
 An apply adds the matching videos to the target playlist of the rule, the oldest first, at most APPLY_LIMIT of them. It
 writes an ``added_video`` row and an ``added`` action for each add, as a sync run does, but it never writes
 ``seen_video``, a mark or a read time, because those belong to the processing window of the sync. An upcoming or live
@@ -15,7 +18,7 @@ entry is never added.
 
 import datetime
 import logging
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -40,7 +43,7 @@ from youtube_automanager.engine.account_session import (
     AccountUnavailable,
     CheckOutcome,
 )
-from youtube_automanager.engine.modes import Video
+from youtube_automanager.engine.modes import Known, Processing, Video, collect, has_state
 from youtube_automanager.engine.rule_preview import (
     APPLY_LIMIT,
     PREVIEW_LIMIT,
@@ -51,7 +54,17 @@ from youtube_automanager.engine.rule_preview import (
     PreviewVideo,
 )
 from youtube_automanager.engine.rules import RuleError, Verdict, evaluate
-from youtube_automanager.engine.sync import FEED_SOURCE, FEED_TITLE, SHORTS_LIMIT, RuleSpec, rule_spec
+from youtube_automanager.engine.sync import (
+    FEED_SOURCE,
+    FEED_TITLE,
+    SHORTS_LIMIT,
+    RuleSpec,
+    SyncAborted,
+    load_processing,
+    load_source_state,
+    resets_state,
+    rule_spec,
+)
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube import public
 from youtube_automanager.youtube.account import AccountError, NotLoggedInError
@@ -138,6 +151,15 @@ class Found:
     video: Video
     channel_title: str | None
     sources: frozenset[str]
+
+
+@dataclass(frozen=True)
+class SourceState:
+    """The stored state of a source that the next sync run reads: its videos, its mark and the day of its last read."""
+
+    known: Mapping[str, Known]
+    mark: datetime.date | None
+    read_before: datetime.date | None
 
 
 @dataclass(frozen=True)
@@ -230,29 +252,29 @@ class RuleReader:
 
     def read(self, keys: Iterable[str], since: datetime.date) -> SourcesRead:
         """Read each source of ``keys`` since the day ``since``. The channels come first, in the order of their ids."""
-        listed: dict[str, tuple[Video, str | None]] = {}
-        sources_of: dict[str, set[str]] = {}
+        taken: dict[str, list[tuple[Video, str | None]]] = {}
         cut: list[str] = []
-        for key in sorted(keys, key=lambda key: (key == FEED_SOURCE, key)):
-            taken = self._read_source(key, since)
-            if taken is None:
+        for key in sorted(keys, key=source_order):
+            read = self._read_source(key, since)
+            if read is None:
                 continue
-            videos, was_cut = taken
+            taken[key], was_cut = read
             if was_cut:
                 cut.append(key)
-            for video, channel_title in videos:
-                listed.setdefault(video.video_id, (video, channel_title))
-                sources_of.setdefault(video.video_id, set()).add(key)
-        found = [
-            Found(video, channel_title, frozenset(sources_of[video_id]))
-            for video_id, (video, channel_title) in listed.items()
-        ]
-        # Newest first, and an entry without a date first of all. A sort in reverse keeps the order of equal keys, so
-        # the entries of one day stay in the order of the read.
-        found.sort(
-            key=lambda item: (item.video.upload_date is None, item.video.upload_date or datetime.date.min), reverse=True
-        )
-        return SourcesRead(tuple(found), tuple(cut))
+        return SourcesRead(_found(taken), tuple(cut))
+
+    def read_next_run(self, states: Mapping[str, SourceState], processing: Processing) -> SourcesRead:
+        """Read the processing window of each source of ``states`` as the next sync run reads it.
+
+        Keep only the videos that the run evaluates: the new ones and the deferred ones. Each source has stored state,
+        because a source without it gets a baseline and no evaluation.
+        """
+        taken: dict[str, list[tuple[Video, str | None]]] = {}
+        for key in sorted(states, key=source_order):
+            read = self._read_window(key, states[key], processing)
+            if read is not None:
+                taken[key] = read
+        return SourcesRead(_found(taken), ())
 
     def _read_source(self, key: str, since: datetime.date) -> tuple[list[tuple[Video, str | None]], bool] | None:
         """Read one source. Return its videos and whether READ_LIMIT cut the read, or None when a channel failed.
@@ -263,6 +285,30 @@ class RuleReader:
             return _take(self._read_feed(), since)
         try:
             return _take(self._read_uploads(key), since)
+        except (PublicSourceError, ValueError) as error:
+            self._error(f"Channel {self.title(key)}: {error}", channel_id=key)
+            return None
+
+    def _read_window(
+        self, key: str, state: SourceState, processing: Processing
+    ) -> list[tuple[Video, str | None]] | None:
+        """Read the window of one source with ``collect`` of the sync. Return None when a channel failed."""
+        channel_titles: dict[str, str | None] = {}
+
+        def videos(listing: Iterable[Any]) -> Iterator[Video]:
+            for entry in listing:
+                video = Video.from_entry(entry)
+                channel_titles.setdefault(video.video_id, getattr(entry, "channel_title", None))
+                yield video
+
+        def todo(listing: Iterable[Any]) -> list[tuple[Video, str | None]]:
+            collected = collect(processing, videos(listing), state.known, state.mark, state.read_before)
+            return [(video, channel_titles.get(video.video_id)) for video in collected.todo]
+
+        if key == FEED_SOURCE:
+            return todo(self._read_feed())
+        try:
+            return todo(self._read_uploads(key))
         except (PublicSourceError, ValueError) as error:
             self._error(f"Channel {self.title(key)}: {error}", channel_id=key)
             return None
@@ -316,6 +362,31 @@ class RuleReader:
         return None if ids is None else video.video_id in ids
 
 
+def source_order(key: str) -> tuple[bool, str]:
+    """The order of the sources of a read: the channels by their ids, then the feed."""
+    return key == FEED_SOURCE, key
+
+
+def _found(taken: Mapping[str, Iterable[tuple[Video, str | None]]]) -> tuple[Found, ...]:
+    """Merge the videos of each source: each video once, with each source that listed it, newest first."""
+    listed: dict[str, tuple[Video, str | None]] = {}
+    sources_of: dict[str, set[str]] = {}
+    for key, videos in taken.items():
+        for video, channel_title in videos:
+            listed.setdefault(video.video_id, (video, channel_title))
+            sources_of.setdefault(video.video_id, set()).add(key)
+    found = [
+        Found(video, channel_title, frozenset(sources_of[video_id]))
+        for video_id, (video, channel_title) in listed.items()
+    ]
+    # Newest first, and an entry without a date first of all. A sort in reverse keeps the order of equal keys, so the
+    # entries of one day stay in the order of the read.
+    found.sort(
+        key=lambda item: (item.video.upload_date is None, item.video.upload_date or datetime.date.min), reverse=True
+    )
+    return tuple(found)
+
+
 def _take(listing: Iterable[Any], since: datetime.date) -> tuple[list[tuple[Video, str | None]], bool]:
     """Take the entries of a listing, newest first, until the first dated entry before ``since`` or READ_LIMIT entries.
 
@@ -357,18 +428,86 @@ def preview(
         errors.append(text)
 
     with sessions() as session:
-        titles = {row.channel_id: row.title for row in session.scalars(select(Channel))}
-        added: set[str] = set()
-        if request.saved is not None and request.draft is None:
-            added = set(
-                session.scalars(
-                    select(AddedVideo.video_id).where(AddedVideo.playlist_id == request.saved.spec.playlist_id)
-                )
-            )
+        titles = _channel_titles(session)
+        added = _added(session, request)
     reader = RuleReader(
         read_uploads=read_uploads, read_shorts=read_shorts, read_feed=read_feed, error=error, titles=titles
     )
     read = reader.read(request.source_keys, since)
+    listed, counts = _listed(reader, request, read, added, titles)
+    return Preview(listed, counts, tuple(errors), tuple(reader.title(key) for key in read.cut))
+
+
+def next_run_preview(
+    sessions: sessionmaker[Session],
+    request: PreviewRequest,
+    *,
+    read_uploads: ReadUploads,
+    read_shorts: ReadShorts,
+    read_feed: ReadFeed = _no_feed,
+) -> Preview:
+    """Tell what the next sync run does with the videos of the sources of ``request``. The preview writes nothing.
+
+    The read follows the sync run: the processing mode and the stored state of each source decide how far it reads,
+    and only the videos that the run evaluates count, the new ones and the deferred ones. A source without stored
+    state gets a baseline in the next run, and so does each source when the mode of the stored state is another mode.
+    The preview reads no such source and names it in ``baseline_sources``. The marks are the marks of ``preview``. A
+    failed read of the feed raises its error.
+    """
+    errors: list[str] = []
+
+    def error(text: str, **_where: Any) -> None:
+        LOG.warning("Preview of the next run: %s", text)
+        errors.append(text)
+
+    with sessions() as session:
+        titles = _channel_titles(session)
+        try:
+            processing = load_processing(session)
+        except SyncAborted as aborted:
+            return Preview((), {}, errors=(str(aborted),))
+        mode_changed = resets_state(session, processing)
+        states: dict[str, SourceState] = {}
+        baselines: list[str] = []
+        for key in sorted(request.source_keys, key=source_order):
+            known, mark, read_at = load_source_state(session, key)
+            read_before = None if read_at is None else read_at.date()
+            if mode_changed or not has_state(processing, known, mark, read_before):
+                baselines.append(key)
+            else:
+                states[key] = SourceState(known, mark, read_before)
+        added = _added(session, request)
+    reader = RuleReader(
+        read_uploads=read_uploads, read_shorts=read_shorts, read_feed=read_feed, error=error, titles=titles
+    )
+    read = reader.read_next_run(states, processing)
+    listed, counts = _listed(reader, request, read, added, titles)
+    return Preview(
+        listed,
+        counts,
+        tuple(errors),
+        baseline_sources=tuple(reader.title(key) for key in baselines),
+        mode_changed=mode_changed,
+    )
+
+
+def _channel_titles(session: Session) -> dict[str, str]:
+    return {row.channel_id: row.title for row in session.scalars(select(Channel))}
+
+
+def _added(session: Session, request: PreviewRequest) -> set[str]:
+    """The ids of the videos in the target playlist of a saved rule alone, for the marks of an apply."""
+    if request.saved is None or request.draft is not None:
+        return set()
+    return set(
+        session.scalars(select(AddedVideo.video_id).where(AddedVideo.playlist_id == request.saved.spec.playlist_id))
+    )
+
+
+def _listed(
+    reader: RuleReader, request: PreviewRequest, read: SourcesRead, added: set[str], titles: Mapping[str, str]
+) -> tuple[tuple[PreviewVideo, ...], dict[Mark, int]]:
+    """Mark each found video. Return at most PREVIEW_LIMIT of the listed videos, and the count of each mark."""
     listed: list[PreviewVideo] = []
     counts: dict[Mark, int] = {}
     for found in read.found:
@@ -378,7 +517,7 @@ def preview(
         counts[mark] = counts.get(mark, 0) + 1
         if len(listed) < PREVIEW_LIMIT:
             listed.append(_preview_video(found, mark, titles))
-    return Preview(tuple(listed), counts, tuple(errors), tuple(reader.title(key) for key in read.cut))
+    return tuple(listed), counts
 
 
 def _mark(reader: RuleReader, request: PreviewRequest, found: Found, added: set[str]) -> Mark | None:

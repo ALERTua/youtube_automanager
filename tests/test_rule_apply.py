@@ -18,9 +18,11 @@ from youtube_automanager.db.models import (
     RunStatus,
     RunTrigger,
     SeenVideo,
+    SeenVideoState,
     Setting,
 )
 from youtube_automanager.engine.account_session import DEAD_SESSION_TEXT, AccountUnavailable
+from youtube_automanager.engine.modes import MIN_CHECKED
 from youtube_automanager.engine.rule_apply import (
     ApplyAborted,
     RuleRefused,
@@ -28,6 +30,7 @@ from youtube_automanager.engine.rule_apply import (
     apply_with_youtube,
     draft_version,
     load_request,
+    next_run_preview,
     preview,
 )
 from youtube_automanager.engine.rule_apply import RuleApply as Apply
@@ -38,7 +41,13 @@ from youtube_automanager.engine.rule_preview import (
     DraftRule,
     Mark,
 )
-from youtube_automanager.engine.sync import FEED_READ_KEY, FEED_TITLE, SHORTS_LIMIT
+from youtube_automanager.engine.sync import (
+    FEED_READ_KEY,
+    FEED_TITLE,
+    PROCESSING_MODE_KEY,
+    SHORTS_LIMIT,
+    STATE_MODE_KEY,
+)
 from youtube_automanager.notify import Event
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.account import AccountError, NotLoggedInError
@@ -79,6 +88,16 @@ class Harness:
             self.sessions,
             request,
             since,
+            read_uploads=self.sources.read_uploads,
+            read_shorts=self.sources.read_shorts,
+            read_feed=self.read_feed,
+        )
+
+    def next_run(self, rule_id=None, draft=None):
+        request = load_request(self.sessions, rule_id, draft)
+        return next_run_preview(
+            self.sessions,
+            request,
             read_uploads=self.sources.read_uploads,
             read_shorts=self.sources.read_shorts,
             read_feed=self.read_feed,
@@ -454,6 +473,211 @@ def test_the_version_of_a_draft_is_built_as_a_saved_rule(sync):
     assert version.spec.tree == {"and": [LONG, NOT_SHORT]}
     assert (version.spec.id, version.spec.needs_is_short) == (3, True)
     assert draft_version(draft(LONG)).source_keys == frozenset({"feed"})
+
+
+# The preview of the next run.
+
+
+def test_the_preview_of_the_next_run_lists_what_the_next_run_evaluates(sync, rules):
+    sync.rule("long", LONG, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.sources.uploads[A] = [upcoming("soon"), entry("new long"), entry("new short", duration_s=60), *old]
+
+    result = rules.next_run(draft=draft(LONG, [A]))
+
+    # Each old video matches too, but the run saw it before, so the preview leaves it out.
+    assert marks(result) == [("soon", Mark.UNDECIDED), ("new long", Mark.MATCHES)]
+    assert (result.baseline_sources, result.mode_changed, result.errors, result.cut_sources) == ((), False, (), ())
+    sync.run()
+    assert sync.account.added == wl("new long")
+    assert sync.seen(A)["soon"] is SeenVideoState.DEFERRED
+
+
+def test_the_preview_of_the_next_run_reads_only_the_window_of_the_mode(sync, rules):
+    sync.rule("all", ANY, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.sources.uploads[A] = [entry("new"), *old]
+
+    result = rules.next_run(draft=draft(ANY, [A]))
+
+    assert marks(result) == [("new", Mark.MATCHES)]
+    assert sync.sources.consumed[A] == MIN_CHECKED
+
+
+def test_the_preview_of_the_next_run_checks_a_deferred_video_again(sync, rules):
+    sync.rule("all", LONG, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = [upcoming("soon"), *old]
+    sync.run()
+    assert sync.seen(A)["soon"] is SeenVideoState.DEFERRED
+
+    result = rules.next_run(draft=draft(ANY, [A]))
+
+    assert marks(result) == [("soon", Mark.MATCHES)]
+
+
+def test_mode_newest_previews_the_newest_entries_that_the_run_did_not_see(sync, rules):
+    sync.mode("newest", 3)
+    sync.rule("all", ANY, channels=[A])
+    old = entries("old", 10)
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.sources.uploads[A] = [*entries("new", 5), *old]
+
+    result = rules.next_run(draft=draft(ANY, [A]))
+
+    assert marks(result) == [("new00", Mark.MATCHES), ("new01", Mark.MATCHES), ("new02", Mark.MATCHES)]
+    sync.run()
+    assert sync.account.added == wl("new02", "new01", "new00")
+
+
+def test_mode_mark_date_previews_the_videos_since_the_mark(sync, rules):
+    sync.mode("mark_date")
+    sync.rule("all", ANY, channels=[A])
+    old = entries("old", 5, day=day(3))
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.sources.uploads[A] = [entry("new", day=day(1)), *old]
+
+    result = rules.next_run(draft=draft(ANY, [A]))
+
+    assert marks(result) == [("new", Mark.MATCHES)]
+    sync.run()
+    assert sync.account.added == wl("new")
+
+
+def test_a_source_without_state_is_a_baseline_of_the_next_run_and_the_preview_does_not_read_it(sync, rules):
+    sync.rule("all", ANY, channels=[A])
+    old = entries("a", 25, A)
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.channel(B, "Beta")
+    sync.sources.uploads[A] = [entry("new", A), *old]
+    sync.sources.uploads[B] = entries("b", 25, B)
+    sync.sources.upload_reads.clear()
+
+    result = rules.next_run(draft=draft(ANY, [A, B]))
+
+    assert marks(result) == [("new", Mark.MATCHES)]
+    assert result.baseline_sources == ("Beta",)
+    assert sync.sources.upload_reads == [A]
+
+
+def test_a_new_rule_on_a_new_channel_previews_only_the_baseline(sync, rules):
+    sync.channel(A, "Alpha")
+    sync.sources.uploads[A] = entries("a", 25, A)
+
+    result = rules.next_run(draft=draft(ANY, [A]))
+
+    assert (result.videos, result.counts, result.baseline_sources) == ((), {}, ("Alpha",))
+    assert sync.sources.upload_reads == []
+
+
+def test_after_a_change_of_the_mode_the_next_run_starts_each_source_again(sync, rules):
+    sync.rule("all", ANY, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.mode("newest", 25)
+    sync.sources.uploads[A] = [entry("new"), *old]
+    sync.sources.upload_reads.clear()
+
+    result = rules.next_run(draft=draft(ANY, [A]))
+
+    assert (result.videos, result.mode_changed, result.baseline_sources) == ((), True, (f"Channel {A}",))
+    assert sync.sources.upload_reads == []
+    sync.run()
+    assert sync.account.added == []
+
+
+def test_a_first_record_of_the_mode_keeps_the_state(sync, rules):
+    sync.rule("all", ANY, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+    with sync.sessions.begin() as session:
+        session.delete(session.get(Setting, STATE_MODE_KEY))
+    sync.sources.uploads[A] = [entry("new"), *old]
+
+    result = rules.next_run(draft=draft(ANY, [A]))
+
+    assert (marks(result), result.mode_changed) == ([("new", Mark.MATCHES)], False)
+
+
+def test_an_invalid_processing_mode_gives_its_error_and_reads_nothing(sync, rules):
+    sync.rule("all", ANY, channels=[A])
+    sync.setting(PROCESSING_MODE_KEY, {"mode": "unknown"})
+
+    result = rules.next_run(draft=draft(ANY, [A]))
+
+    (error,) = result.errors
+    assert error.startswith("The setting 'processing_mode' is not valid: unknown mode 'unknown'")
+    assert sync.sources.upload_reads == []
+
+
+def test_the_feed_of_the_next_run_reads_its_window_with_the_account(sync, rules):
+    sync.rule("feed", ANY)
+    old = [feed_video(f"old{index:02}") for index in range(30)]
+    sync.account.feed = old
+    sync.run()
+    sync.account.feed = [feed_video("new"), *old]
+
+    result = rules.next_run(draft=draft(ANY))
+
+    assert marks(result) == [("new", Mark.MATCHES)]
+    assert rules.feed_reads == 1
+
+
+def test_a_feed_without_state_is_a_baseline_and_needs_no_read(sync, rules):
+    result = rules.next_run(draft=draft(ANY))
+
+    assert result.baseline_sources == (FEED_TITLE,)
+    assert rules.feed_reads == 0
+
+
+def test_the_preview_of_the_next_run_of_a_change_lists_the_new_videos_whose_verdict_changes(sync, rules):
+    rule_id = sync.rule("long", LONG, channels=[A])
+    # The old videos are short, so the change would match each of them, but the run saw them before.
+    old = entries("old", 30, duration_s=60)
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.sources.uploads[A] = [entry("new long"), entry("new short", duration_s=60), *old]
+
+    result = rules.next_run(rule_id, draft({"<": [{"var": "duration_s"}, 120]}, [A]))
+
+    assert marks(result) == [("new long", Mark.NO_LONGER_MATCHES), ("new short", Mark.MATCHES_NOW)]
+
+
+def test_a_channel_that_fails_to_read_in_the_next_run_gives_an_error_and_the_other_channels_still_count(sync, rules):
+    sync.rule("all", ANY, channels=[A, B])
+    sync.sources.uploads[A] = entries("a", 25, A)
+    sync.sources.uploads[B] = entries("b", 25, B)
+    sync.run()
+    sync.sources.uploads[A] = [entry("new", A), *entries("a", 25, A)]
+    sync.sources.errors[B] = PublicSourceError("no answer")
+
+    result = rules.next_run(draft=draft(ANY, [A, B]))
+
+    assert marks(result) == [("new", Mark.MATCHES)]
+    assert result.errors == (f"Channel Channel {B}: no answer",)
+
+
+def test_the_preview_of_the_next_run_writes_nothing(sync, rules):
+    sync.rule("all", ANY, channels=[A])
+    old = entries("old", 30)
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.sources.uploads[A] = [entry("new"), *old]
+    before = sync.seen_rows(A)
+
+    rules.next_run(draft=draft(ANY, [A]))
+
+    assert sync.seen_rows(A).keys() == before.keys()
+    assert sync.account.added == []
 
 
 # The apply.

@@ -285,20 +285,23 @@ class FakeStarter:
     """Replaces the start of the child process and records each start.
 
     Each start takes the keyword arguments of the next ``FakeChild`` from ``plan``. With an empty plan, the child ends
-    at once with exit code 0. A set ``error`` is raised instead of a start.
+    at once with exit code 0. A set ``error`` is raised instead of a start. ``calls`` holds the command and the
+    environment of each start, and ``inputs`` its input text, or None.
     """
 
     def __init__(self):
         self.plan = []
         self.error = None
         self.calls = []
+        self.inputs = []
         self.children = []
         self.child_started = threading.Event()
 
-    def __call__(self, command, env):
+    def __call__(self, command, env, input_text=None):
         if self.error is not None:
             raise self.error
         self.calls.append((list(command), dict(env)))
+        self.inputs.append(input_text)
         child = FakeChild(**(self.plan.pop(0) if self.plan else {}))
         self.children.append(child)
         self.child_started.set()
