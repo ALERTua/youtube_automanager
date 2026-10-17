@@ -22,7 +22,8 @@ metadata:
 - For each source, the engine first reads the whole window, then evaluates the entries from the oldest to the newest.
 - Each add commits its `added_video` row at once. The `seen_video` row of a video comes only after all its adds.
 - A failed add stops that source for the run. The video and the newer ones stay without a record, so the next run reads them again.
-- A read error of a channel writes an `error` action, sends `channel_error`, and the run continues with the other sources.
+- A read error of a channel writes an `error` action, and the run continues with the other sources. The run collects the failed channels and sends one `channel_error` at its end, before the summary, so one YouTube change that breaks each channel read gives one message and not one for each channel. The message lists at most 20 channels.
+- Each add sends `video_added` after its `added_video` row is stored, in a sync run and in an apply. The apply sends no `channel_error`: its channel errors are only in the summary.
 - A dead or missing session does not stop the run. The run reads the channels and evaluates the rules. A matching video waits as deferred with the cause, so a later run with a live session adds it while the video stays in the processing window.
 - Without the account, the feed source gets an error action and keeps its state. The run also gets one error that counts the matching videos that wait for the account.
 - A `NotLoggedInError` during the run goes to `session_died`, and the run tries no more adds.

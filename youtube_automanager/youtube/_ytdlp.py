@@ -8,8 +8,16 @@ from collections.abc import Iterable, Iterator
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
+from youtube_automanager.youtube.user_agent import USER_AGENT
+
 CHANNEL_ID = re.compile(r"UC[0-9A-Za-z_-]{22}")
-BASE_OPTIONS = {"quiet": True, "no_warnings": True, "skip_download": True}
+# yt-dlp puts these headers above its own defaults, so each request names the browser of the cookies.
+BASE_OPTIONS = {
+    "quiet": True,
+    "no_warnings": True,
+    "skip_download": True,
+    "http_headers": {"User-Agent": USER_AGENT},
+}
 
 
 class YtDlpLogger:

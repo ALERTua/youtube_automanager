@@ -60,4 +60,6 @@ metadata:
 
 - Apprise sends one message to many services. A tag on a target routes a message to a subset of the targets. A message has one of four types: info, success, warning and failure.
 - Apprise 2.0.1 has no `msteams://` schema. A message to Microsoft Teams goes through the Power Automate schema `workflow://`.
+- Apprise 2.0.1 limits each HTTP request of a target to 4 s to connect and 4 s between two reads (`URLBase.socket_connect_timeout` and `socket_read_timeout`). A URL changes them with the arguments `cto` and `rto`. The email plugin connects with 15 s. A target can send several requests, for example one for each chat, with a pause of 5.5 s between them (`NotifyBase.request_rate_per_sec`), so Apprise does not limit the time of a whole target. `notify._deliver` therefore sends in a daemon thread and gives up after `DELIVER_TIMEOUT_S` (30 s).
+- The scheduler page sends `scheduler_state` after Pause, Resume, and a save that turns the switch, through `asyncio.to_thread`.
 - Youtarr is an example of a notification design on Apprise. It sends one summary for each run, not one message for each item. It sends to each target separately, so one failed target does not stop the others. It removes the target URLs from its logs, because a target URL holds a token.

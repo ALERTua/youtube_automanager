@@ -16,6 +16,7 @@ from nicegui import ui
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from youtube_automanager import notify
 from youtube_automanager.db.models import Schedule, ScheduleKind
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.scheduler import (
@@ -169,6 +170,10 @@ async def scheduler_page(services: Services) -> None:
         pause_button.set_enabled(status.state is SchedulerState.RUNNING)
         resume_button.set_enabled(status.state is SchedulerState.PAUSED)
 
+    async def tell_state(enabled: bool) -> None:
+        # Apprise blocks, so the send runs in a thread, after the page shows the new state.
+        await asyncio.to_thread(notify.send_to_stored_targets, services.sessions, notify.scheduler_state(not enabled))
+
     async def save() -> None:
         try:
             edited, _times = check_form()
@@ -176,10 +181,14 @@ async def scheduler_page(services: Services) -> None:
             # The preview shows the error text next to the form.
             preview.refresh()
             return
+        before = await services.scheduler.state()
         await asyncio.to_thread(save_schedule, services.sessions, edited)
         await services.scheduler.apply(edited)
         ui.notify(_("The schedule is saved."), type="positive")
         await refresh_status()
+        # A save with the other position of the switch also pauses or resumes the schedule.
+        if before is not SchedulerState.STOPPED and (before is SchedulerState.RUNNING) != edited.enabled:
+            await tell_state(edited.enabled)
 
     async def set_enabled(enabled: bool) -> None:
         await asyncio.to_thread(save_enabled, services.sessions, enabled)
@@ -190,6 +199,7 @@ async def scheduler_page(services: Services) -> None:
         # The form keeps its other edits, so a later save does not undo the pause or the resume.
         enabled_switch.value = enabled
         await refresh_status()
+        await tell_state(enabled)
 
     async def run_now() -> None:
         result = await services.scheduler.run_now()
