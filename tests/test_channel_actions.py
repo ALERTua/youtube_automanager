@@ -376,8 +376,8 @@ def recorded_waits(fake_starter):
     """Wrap ``fake_starter``, so each child records the timeout of each wait. Return the starter and the waits."""
     waits = []
 
-    def start(command, env):
-        child = fake_starter(command, env)
+    def start(command, env, input_text):
+        child = fake_starter(command, env, input_text)
         wait = child.wait
 
         def recording_wait(timeout=None):
@@ -745,7 +745,7 @@ def test_the_web_process_does_not_import_yt_dlp_for_a_search_or_a_subscription_c
         "\n"
         "home = pathlib.Path(tempfile.mkdtemp())\n"
         "settings = Settings(home=home, database_url=f'sqlite:///{home / \"service.sqlite\"}', tz='UTC')\n"
-        "app = create_app(settings, start=lambda command, env: Child(LINES[command[3]]))\n"
+        "app = create_app(settings, start=lambda command, env, input_text: Child(LINES[command[3]]))\n"
         "mount_ui(app)\n"
         "with TestClient(app) as client:\n"
         "    page = client.get('/subscriptions')\n"

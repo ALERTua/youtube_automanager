@@ -26,6 +26,7 @@ from youtube_automanager.db.models import (
 from youtube_automanager.engine import sync as sync_module
 from youtube_automanager.engine.account_session import (
     DEAD_SESSION_TEXT,
+    UPLOAD_REFUSED_TEXT,
     AccountSession,
     AccountUnavailable,
     CheckOutcome,
@@ -483,6 +484,146 @@ def test_the_warning_days_count_in_the_time_zone_of_the_service(harness):
     (warning,) = harness.sent
     assert warning.title.endswith("expire in 2 days")
     assert "2026-10-15 04:00+03:00" in warning.body
+
+
+# The check of an upload
+
+
+def stored_state(harness, *, with_ids=False):
+    """Each stored column of the account and of each cookie version, with the decrypted cookie texts."""
+    with harness.sessions() as session:
+        account = session.scalars(select(Account)).one_or_none()
+        rows = session.scalars(select(CookieVersion).order_by(CookieVersion.id)).all()
+        versions = [
+            ((row.id,) if with_ids else ())
+            + (harness.cipher.decrypt(row.cookies), row.origin, row.state, row.created_at, row.checked_at)
+            for row in rows
+        ]
+        if account is None:
+            return None, versions
+        return (
+            (account.id,) if with_ids else (),
+            harness.cipher.decrypt(account.cookies) if account.cookies else None,
+            account.session_state,
+            account.last_checked_at,
+            account.earliest_cookie_expiry,
+            account.expiry_warning_days,
+        ), versions
+
+
+def test_an_upload_that_youtube_accepts_gets_the_state_of_a_check_followed_by_a_write_back(harness):
+    harness.upload(cookie_text("fake-sidcc-new"))
+    checked, _ = harness.check()
+    checked.write_back()
+    expected = stored_state(harness)
+    # An older upload with two versions, which the new upload replaces.
+    harness.upload()
+    harness.check()[0].write_back()
+
+    account = harness.account_session()
+    result = account.check_upload(cookie_text("fake-sidcc-new"))
+
+    assert result == CheckResult(CheckOutcome.ALIVE)
+    assert harness.youtube.checks[-1] == "fake-sidcc-new"
+    assert harness.versions() == [("fake-sidcc-new", CookieOrigin.UPLOAD, CookieVersionState.GOOD)]
+    assert (harness.account().session_state, harness.account().last_checked_at) == (SessionState.OK, NOW)
+    assert account.write_back() == ("SIDCC",)
+    assert stored_state(harness) == expected
+    assert harness.stored_text() == cookie_text("fake-sidcc-new+1")
+    assert harness.sent == []
+
+
+def test_a_first_upload_that_youtube_accepts_makes_the_account(harness):
+    result = harness.account_session().check_upload(cookie_text())
+
+    assert result.outcome is CheckOutcome.ALIVE
+    assert harness.versions() == [("fake-sidcc-0", CookieOrigin.UPLOAD, CookieVersionState.GOOD)]
+    stored = harness.account()
+    assert (stored.session_state, stored.last_checked_at) == (SessionState.OK, NOW)
+    assert stored.earliest_cookie_expiry == datetime.datetime.fromtimestamp(FAR, datetime.UTC)
+
+
+@pytest.mark.parametrize(
+    ("days", "state", "titles"),
+    [
+        (4, SessionState.OK, []),
+        (3, SessionState.EXPIRING, ["YouTube AutoManager: the YouTube cookies expire in 3 days"]),
+    ],
+)
+def test_an_upload_within_three_days_of_the_expiry_is_expiring_and_gets_the_warning(harness, days, state, titles):
+    expiry = NOW + datetime.timedelta(days=days)
+
+    harness.account_session().check_upload(cookie_text(login_expires=int(expiry.timestamp())))
+
+    assert harness.account().session_state is state
+    assert [notification.title for notification in harness.sent] == titles
+    # The next check sends no second warning for the same day.
+    harness.check()
+    assert [notification.title for notification in harness.sent] == titles
+
+
+@pytest.mark.parametrize("stored", [True, False], ids=["stored cookies", "no stored cookies"])
+def test_an_upload_that_youtube_refuses_changes_nothing_and_sends_no_event(harness, stored):
+    if stored:
+        harness.upload()
+        harness.check()[0].write_back()
+    before = stored_state(harness, with_ids=True)
+    harness.youtube.refused.add("fake-sidcc-new")
+    account = harness.account_session()
+
+    result = account.check_upload(cookie_text("fake-sidcc-new"))
+
+    assert result == CheckResult(CheckOutcome.DEAD, UPLOAD_REFUSED_TEXT)
+    assert harness.youtube.checks[-1] == "fake-sidcc-new"
+    assert account.write_back() == ()
+    assert stored_state(harness, with_ids=True) == before
+    assert harness.sent == []
+
+
+def test_an_upload_whose_check_gives_no_clear_answer_changes_nothing(harness):
+    harness.upload()
+    harness.check()
+    before = stored_state(harness, with_ids=True)
+    harness.youtube.failing = True
+    account = harness.account_session()
+
+    result = account.check_upload(cookie_text("fake-sidcc-new"))
+
+    assert result.outcome is CheckOutcome.FAILED
+    assert (
+        result.detail == "The check of the uploaded cookies failed: yt-dlp failed to check the session: HTTP Error 503"
+    )
+    assert account.write_back() == ()
+    assert stored_state(harness, with_ids=True) == before
+    assert harness.sent == []
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [(None, "COOKIES_KEY is not set"), ("not a key", "A cookie key is not valid")],
+    ids=["no key", "bad key"],
+)
+def test_an_upload_without_a_usable_key_sends_no_request_and_stores_nothing(harness, key, expected):
+    harness.settings = harness.make_settings(key=key)
+
+    result = harness.account_session().check_upload(cookie_text())
+
+    assert result.outcome is CheckOutcome.UNAVAILABLE
+    assert expected in result.detail
+    assert harness.youtube.clients == []
+    assert stored_state(harness) == (None, [])
+
+
+def test_an_upload_that_is_not_a_cookie_file_sends_no_request_and_names_no_value(harness):
+    account = AccountSession(harness.sessions, harness.settings, send=harness.sent.append)
+
+    result = account.check_upload("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID fakeSIDvalue\n")
+
+    assert result.outcome is CheckOutcome.UNAVAILABLE
+    assert result.detail == (
+        "The uploaded cookies are not valid: line 2 of the cookie text is not a line of a Netscape cookie file"
+    )
+    assert stored_state(harness) == (None, [])
 
 
 # The run with the real wiring

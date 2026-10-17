@@ -1,10 +1,11 @@
 """The protocol of a short child process that does one piece of YouTube work for the web process.
 
 The web process never imports yt-dlp. Each piece of YouTube work that a page or a route asks for, for example a
-refresh of the account lists, a channel search or a subscription change, runs in a child process
-``python -m youtube_automanager <command>``, which ``SyncRunner.run_short_child`` starts. The child gets the yt-dlp
-folder of the data folder first on its import path, so a yt-dlp update reaches each piece of work. It holds the sync
-lock while it runs, and a stop of the service stops it.
+refresh of the account lists, a channel search, a subscription change or the check of a cookie upload, runs in a child
+process ``python -m youtube_automanager <command>``, which ``SyncRunner.run_short_child`` starts. The child gets the
+yt-dlp folder of the data folder first on its import path, so a yt-dlp update reaches each piece of work. It holds the
+sync lock while it runs, and a stop of the service stops it. A child that needs a secret, for example a cookie text,
+gets it on its standard input, never on its command line or in its environment.
 
 A child ends with one of these results:
 
@@ -74,13 +75,13 @@ class ChildFailed(ChildError):
     """The child did not start, did not end in time, was stopped, crashed, or gave no result."""
 
 
-def fail(what: str, exit_code: int, cause: str | None) -> int:
+def fail(what: str, exit_code: int, cause: str | None, *, level: int = logging.ERROR) -> int:
     """Write the cause as the last line of stderr, because the parent takes its answer from there. Return the code.
 
-    ``what`` names the work in the log, for example "The account refresh".
+    ``what`` names the work in the log, for example "The account refresh". ``level`` is the level of the log line.
     """
     line = " ".join((cause or "").split())
-    LOG.error("%s failed: %s", what, line)
+    LOG.log(level, "%s failed: %s", what, line)
     print(line, file=sys.stderr, flush=True)
     return exit_code
 
@@ -129,13 +130,15 @@ def work_with_account(settings: Settings, what: str, work: AccountWork) -> int:
         engine.dispose()
 
 
-def run_child(runner: SyncRunner, command: Sequence[str], noun: str, timeout_s: float) -> str:
+def run_child(
+    runner: SyncRunner, command: Sequence[str], noun: str, timeout_s: float, input_text: str | None = None
+) -> str:
     """Run a child of ``runner`` and wait for it. Return the last line of its stderr after a success.
 
-    ``noun`` names the work in the error texts, for example "refresh". Raise a ``ChildError`` when the child fails.
-    The caller reads its result from the returned line.
+    ``noun`` names the work in the error texts, for example "refresh". ``input_text`` goes to the standard input of
+    the child. Raise a ``ChildError`` when the child fails. The caller reads its result from the returned line.
     """
-    end = runner.run_short_child(command, f"The {noun}", timeout_s)
+    end = runner.run_short_child(command, f"The {noun}", timeout_s, input_text)
     if end is None:
         raise ChildBusy(BUSY_TEXT)
     if end.start_error is not None:
