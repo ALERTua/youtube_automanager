@@ -21,7 +21,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.i18n import N_
 from youtube_automanager.web.ui import dashboard, layout
-from youtube_automanager.web.ui.theme import THEME_KEY, Theme, read_theme
+from youtube_automanager.web.ui.theme import THEME_KEY, Theme, first_paint_style, read_theme
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -253,6 +253,30 @@ async def test_the_theme_button_goes_through_dark_light_and_auto_and_stores_each
         user.find(marker="theme").click()
         await eventually(lambda stored=stored: read_theme(sessions) == Theme(stored), f"The stored theme {stored}")
         assert theme_of(user) == (value, icon)
+
+
+def test_the_dark_and_the_system_theme_paint_the_page_dark_before_the_mount():
+    assert first_paint_style(Theme.DARK) == "<style>body:not([class]) { background-color: #121212; }</style>"
+    assert first_paint_style(Theme.AUTO) == (
+        "<style>@media (prefers-color-scheme: dark) { body:not([class]) { background-color: #121212; } }</style>"
+    )
+    assert first_paint_style(Theme.LIGHT) == ""
+
+
+@pytest.mark.parametrize("stored", ["dark", "auto", "light"])
+@pytest.mark.parametrize("path", ["/", "/rules", "/settings"])
+async def test_the_first_html_of_each_page_holds_the_background_of_the_stored_theme(user, sessions, stored, path):
+    store(sessions, Setting(key=THEME_KEY, value=stored))
+
+    response = await user.http_client.get(path)
+
+    html = response.text
+    style = first_paint_style(Theme(stored))
+    head = html[: html.index("<body")]
+    if style:
+        assert style in head
+    else:
+        assert "body:not([class])" not in html
 
 
 @pytest.mark.parametrize(("stored", "value"), [("dark", True), ("light", False), ("auto", None), ("purple", None)])

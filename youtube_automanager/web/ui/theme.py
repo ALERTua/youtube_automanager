@@ -32,6 +32,24 @@ LABELS = {
     Theme.DARK: N_("Theme: dark. Click for the light theme."),
     Theme.LIGHT: N_("Theme: light. Click for the theme of the system."),
 }
+# The background of a page of Quasar in the dark mode.
+DARK_PAGE_COLOR = "#121212"
+# Quasar gives the body its classes when the page mounts, so this rule acts only until then.
+_FIRST_PAINT_RULE = f"body:not([class]) {{ background-color: {DARK_PAGE_COLOR}; }}"
+
+
+def first_paint_style(theme: Theme) -> str:
+    """Return the style for the head of a page that paints the page dark before its scripts run, or an empty text.
+
+    The first HTML of a page names no color scheme, so the browser paints it light, and the dark mode of the page
+    comes only when its scripts mount. A load of each page thus showed a light screen first. The dark theme gets the
+    dark background at once, the theme of the system gets it when the system is dark, and the light theme needs none.
+    """
+    if theme is Theme.DARK:
+        return f"<style>{_FIRST_PAINT_RULE}</style>"
+    if theme is Theme.AUTO:
+        return f"<style>@media (prefers-color-scheme: dark) {{ {_FIRST_PAINT_RULE} }}</style>"
+    return ""
 
 
 def read_theme(sessions: sessionmaker[Session]) -> Theme:
