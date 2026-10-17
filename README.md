@@ -113,16 +113,6 @@ To go back to the old version, stop the service, replace the database file with 
 
 The service makes no copy of a PostgreSQL database. Before you update the image, make a dump with `pg_dump`, for example `pg_dump -Fc -f youtube_automanager.dump <database URL>`.
 
-## Backup
-
-The service keeps all its data in the folder `data`. To make a backup, stop the service and copy the folder `data` together with `.env`. As a smaller backup, copy the database file, by default `data/youtube_automanager.sqlite`, and the line `COOKIES_KEY` of `.env`. Without the key, the service cannot read the stored cookies.
-
-Before a new version changes the schema of a SQLite database, the service copies the database into the folder `data/backups`. The name of a copy holds the old schema revision and the time in UTC. The service keeps the newest 3 copies and deletes the older ones. If the copy fails, the service does not change the database and does not start. The error names the folder of the copies.
-
-To go back to the old version, stop the service, replace the database file with the copy, and start the image of the old version.
-
-The service makes no copy of a PostgreSQL database. Before you update the image, make a dump with `pg_dump`, for example `pg_dump -Fc -f youtube_automanager.dump <database URL>`.
-
 ## Migration from version 0.1
 
 Version 1.0 replaces version 0.1 completely. It reads no YAML configuration, and it uses no Data API. The old data folder and the old configuration do not move to the new service, so you make the rules again in the web UI.
