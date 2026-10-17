@@ -2,7 +2,8 @@
 
 Both read YouTube through yt-dlp, so each runs in a child process, and the web process never imports yt-dlp:
 
-- ``python -m youtube_automanager preview-rule --since=<day> [--rule-id=<id>] [--draft=<json>]`` previews a rule. It
+- ``python -m youtube_automanager preview-rule [--since=<day>] [--rule-id=<id>] [--draft=<json>]`` previews a rule.
+  With a day, it lists the videos since that day, and without a day, it tells what the next sync run does. It
   follows the protocol of ``short_child`` and holds the sync lock like each short child. A preview of a rule with
   channels reads them anonymously, and a preview that reads the subscriptions feed works with the account as a refresh
   does. A preview writes nothing.
@@ -47,8 +48,12 @@ class AppliedRun:
     error_count: int
 
 
-def preview_command(since: datetime.date, *, rule_id: int | None = None, draft: DraftRule | None = None) -> list[str]:
-    command = [sys.executable, "-m", "youtube_automanager", "preview-rule", f"--since={since.isoformat()}"]
+def preview_command(
+    since: datetime.date | None, *, rule_id: int | None = None, draft: DraftRule | None = None
+) -> list[str]:
+    command = [sys.executable, "-m", "youtube_automanager", "preview-rule"]
+    if since is not None:
+        command.append(f"--since={since.isoformat()}")
     if rule_id is not None:
         command.append(f"--rule-id={rule_id}")
     if draft is not None:
@@ -73,11 +78,12 @@ def apply_command(run_id: int, rule_id: int, since: datetime.date) -> list[str]:
 
 
 def preview_once(
-    settings: Settings, since: datetime.date, rule_id: int | None = None, draft: DraftRule | None = None
+    settings: Settings, since: datetime.date | None, rule_id: int | None = None, draft: DraftRule | None = None
 ) -> int:
     """The body of a preview in the child process. Return the exit code of the child.
 
-    The child writes the ``Preview`` as one JSON line at the end of stderr. A rule that is gone or not valid gives a
+    ``since`` is the first day of the listed videos, and None previews the next sync run. The child writes the
+    ``Preview`` as one JSON line at the end of stderr. A rule that is gone or not valid gives a
     preview with only its error. A preview that reads the feed checks the session first, and a failed read of the feed
     ends the child with the exit code of its kind.
     """
@@ -88,6 +94,12 @@ def preview_once(
     def read_shorts(channel_id: str, limit: int) -> set[str]:
         return public.shorts_video_ids(channel_id, limit=limit)
 
+    def preview(sessions: sessionmaker[Session], **feed: rule_apply.ReadFeed) -> Preview:
+        reads = {"read_uploads": public.iter_channel_uploads, "read_shorts": read_shorts, **feed}
+        if since is None:
+            return rule_apply.next_run_preview(sessions, request, **reads)
+        return rule_apply.preview(sessions, request, since, **reads)
+
     engine = make_engine(settings.database_url)
     try:
         sessions = make_session_factory(engine)
@@ -96,22 +108,12 @@ def preview_once(
         except rule_apply.RuleRefused as error:
             return succeed(Preview((), {}, errors=(str(error),)).to_value())
         if not request.reads_feed:
-            result = rule_apply.preview(
-                sessions, request, since, read_uploads=public.iter_channel_uploads, read_shorts=read_shorts
-            )
-            return succeed(result.to_value())
+            return succeed(preview(sessions).to_value())
     finally:
         engine.dispose()
 
     def work(sessions: sessionmaker[Session], client: rule_apply.AccountLike) -> dict:
-        return rule_apply.preview(
-            sessions,
-            request,
-            since,
-            read_uploads=public.iter_channel_uploads,
-            read_shorts=read_shorts,
-            read_feed=client.iter_subscription_feed,
-        ).to_value()
+        return preview(sessions, read_feed=client.iter_subscription_feed).to_value()
 
     return work_with_account(settings, "The rule preview", work)
 
@@ -147,12 +149,13 @@ def apply_once(run_id: int, rule_id: int, since: datetime.date, settings: Settin
 
 
 def preview_in_child(
-    runner: SyncRunner, since: datetime.date, *, rule_id: int | None = None, draft: DraftRule | None = None
+    runner: SyncRunner, since: datetime.date | None, *, rule_id: int | None = None, draft: DraftRule | None = None
 ) -> Preview:
     """Preview a rule in a child process of ``runner`` and wait for it. Raise a ``ChildError`` when it fails.
 
     ``rule_id`` alone previews the saved rule as an apply treats it, ``draft`` alone previews a new rule, and both
-    preview the change of the saved rule to the draft. This call blocks.
+    preview the change of the saved rule to the draft. ``since`` is the first day of the videos, and None previews
+    the next sync run. This call blocks.
     """
     if rule_id is None and draft is None:
         raise ValueError("a preview needs a saved rule, a draft or both")

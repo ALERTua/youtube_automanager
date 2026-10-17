@@ -33,10 +33,14 @@ from youtube_automanager.db.models import (
     RunStatus,
     RunTrigger,
     SeenVideo,
+    SeenVideoState,
+    Setting,
+    utc_now,
 )
 from youtube_automanager.engine import account_session
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.engine.rules import MATCH_ALL
+from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, STATE_MODE_KEY
 from youtube_automanager.rule_actions import apply_once, preview_once
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.settings import Settings
@@ -90,8 +94,10 @@ class FakeYouTube:
         self.shorts = {}
         self.feed = []
         self.added = []
+        self.reads = []
 
     def iter_channel_uploads(self, channel_id):
+        self.reads.append(channel_id)
         uploads = self.uploads.get(channel_id, [])
         if isinstance(uploads, Exception):
             raise uploads
@@ -284,19 +290,36 @@ def added(sessions):
 # The preview in the editor.
 
 
-async def test_the_preview_of_a_new_rule_lists_what_the_draft_matches_and_stores_nothing(
+def read_before(sessions, channel_id, *video_ids):
+    """Store the state of a channel that a run read the day before: its videos as seen, and the time of the read."""
+    with sessions.begin() as session:
+        session.get(Channel, channel_id).last_checked_at = utc_now() - timedelta(days=1)
+        session.add_all(
+            SeenVideo(channel_id=channel_id, video_id=video_id, state=SeenVideoState.SEEN, upload_date=days_back(2))
+            for video_id in video_ids
+        )
+
+
+def seen_count(sessions):
+    with sessions() as session:
+        return len(session.scalars(select(SeenVideo)).all())
+
+
+async def test_the_preview_of_a_new_rule_lists_what_the_next_run_checks_and_stores_nothing(
     user, sessions, account_copy, youtube, children
 ):
+    old = [entry(f"old{index:02}", A, title=f"Old video {index}", day=days_back(2)) for index in range(25)]
+    read_before(sessions, A, *(item.video_id for item in old))
     youtube.uploads[A] = [
         entry("long", A, title="A long video", day=today()),
         entry("short", A, title="A short video", duration_s=30, day=today()),
         entry("live soon", A, title="Live soon", duration_s=None, day=None, live_status="is_upcoming"),
-        entry("old", A, title="An old video", day=days_back(8)),
+        *old,
     ]
     await user.open("/rules")
     await open_editor(user)
-    assert element_of(user, "preview-since").value == days_back(7).isoformat()
-    assert text_of(user, "preview-hint").startswith("The preview lists each video of the rule sources since the day")
+    assert not elements_of(user, "preview-since")
+    assert text_of(user, "preview-hint").startswith("The preview lists the videos of the next run that this rule")
 
     set_value(user, "rule-channels", [A])
     user.find(marker="add-condition").click()
@@ -307,6 +330,7 @@ async def test_the_preview_of_a_new_rule_lists_what_the_draft_matches_and_stores
     set_value(user, "minutes-0", 2)
     await preview_in_editor(user)
 
+    # The old videos match too, but the next run saw them before, so the preview leaves them out.
     assert shown(user, "preview-table") == [("Live soon", "Undecided"), ("A long video", "Matches")]
     assert rows(user, "preview-table")[1] | {"id": "long"} == {
         "id": "long",
@@ -319,32 +343,94 @@ async def test_the_preview_of_a_new_rule_lists_what_the_draft_matches_and_stores
     }
     assert rows(user, "preview-table")[0]["date"] == "No date"
     assert text_of(user, "preview-counts") == "Matches: 1, Undecided: 1"
+    assert not elements_of(user, "preview-baselines")
     (command,) = children.of("preview-rule")
     assert command[4:] == [
-        f"--since={days_back(7).isoformat()}",
-        "--draft=" + DraftRule({"and": [{">=": [{"var": "duration_s"}, 120]}]}, (A,), False).to_json(),
+        "--draft=" + DraftRule({"and": [{">=": [{"var": "duration_s"}, 120]}]}, (A,), False).to_json()
     ]
     with sessions() as session:
         assert session.scalars(select(Rule)).all() == []
-        assert session.scalars(select(SeenVideo)).all() == []
+    assert seen_count(sessions) == 25
     assert youtube.added == []
 
 
-async def test_the_preview_of_a_change_lists_the_videos_whose_result_changes(
+async def test_the_preview_names_the_channels_that_the_next_run_starts_with_a_baseline(
+    user, sessions, account_copy, youtube, children
+):
+    read_before(sessions, A, "old")
+    youtube.uploads[A] = [entry("new", A, title="New in Alpha", day=today()), entry("old", A, day=days_back(2))]
+    youtube.uploads[B] = [entry("beta", B, title="From Beta", day=today())]
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-channels", [A, B])
+
+    await preview_in_editor(user)
+
+    assert shown(user, "preview-table") == [("New in Alpha", "Matches")]
+    assert text_of(user, "preview-baselines") == (
+        "The service has not read these sources yet, so the next run stores their newest videos as seen and adds none "
+        "of them: Beta"
+    )
+    assert youtube.reads == [A]
+
+
+async def test_a_new_rule_on_a_new_channel_previews_only_the_baseline(user, account_copy, youtube, children):
+    youtube.uploads[A] = [entry("new", A, day=today())]
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-channels", [A])
+
+    await preview_in_editor(user)
+
+    assert text_of(user, "preview-empty") == "The next run finds no new video that this rule matches."
+    assert "Alpha" in text_of(user, "preview-baselines")
+    assert youtube.reads == []
+
+
+async def test_the_preview_says_when_a_new_mode_starts_each_source_again(user, sessions, account_copy, youtube):
+    read_before(sessions, A, "old")
+    store(
+        sessions,
+        Setting(key=PROCESSING_MODE_KEY, value={"mode": "newest", "count": 5}),
+        Setting(key=STATE_MODE_KEY, value={"mode": "stop_at_seen"}),
+    )
+    youtube.uploads[A] = [entry("new", A, day=today()), entry("old", A, day=days_back(2))]
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-channels", [A])
+
+    await preview_in_editor(user)
+
+    assert text_of(user, "preview-mode-changed") == (
+        "The processing mode changed, so the next run starts each source again: it stores the newest videos of each "
+        "source as seen and adds none of them."
+    )
+    assert not elements_of(user, "preview-baselines")
+    assert elements_of(user, "preview-empty")
+    assert youtube.reads == []
+
+
+async def test_the_preview_of_a_change_lists_the_new_videos_whose_result_changes(
     user, sessions, account_copy, youtube, children
 ):
     saved_rule(sessions, condition={"and": [LONG]})
+    read_before(sessions, A, "old short")
+    read_before(sessions, B, "old beta")
     youtube.uploads[A] = [
         entry("long", A, title="Long", day=today()),
         entry("short", A, title="Short", duration_s=30, day=today()),
+        entry("old short", A, title="Old short", duration_s=30, day=days_back(2)),
     ]
-    youtube.uploads[B] = [entry("beta", B, title="From Beta", duration_s=30, day=today())]
+    youtube.uploads[B] = [
+        entry("beta", B, title="From Beta", duration_s=30, day=today()),
+        entry("old beta", B, title="Old from Beta", duration_s=30, day=days_back(2)),
+    ]
     await user.open("/rules")
     await open_editor(user, 1)
     assert "your changes change the result" in text_of(user, "preview-hint")
 
     await preview_in_editor(user)
-    assert text_of(user, "preview-empty") == "Your changes change the result for no video since this day."
+    assert text_of(user, "preview-empty") == "Your changes change the result for no new video of the next run."
 
     set_value(user, "operator-0", "<")
     await eventually(lambda: elements_of(user, "minutes-0")[-1].value == 2, "The comparison")
@@ -357,40 +443,38 @@ async def test_the_preview_of_a_change_lists_the_videos_whose_result_changes(
         ("Long", "No longer matches"),
         ("Short", "Matches now"),
     ]
-    assert children.of("preview-rule")[-1][5] == "--rule-id=1"
+    assert children.of("preview-rule")[-1][4] == "--rule-id=1"
     with sessions() as session:
         assert session.get(Rule, 1).condition == {"and": [LONG]}
 
 
-@pytest.mark.parametrize(
-    ("day", "error"),
-    [
-        (lambda: (today() + timedelta(days=1)).isoformat(), "Choose a day that is not in the future."),
-        (lambda: days_back(366).isoformat(), "Choose a day at most 365 days back."),
-        (lambda: None, "Choose the first day of the videos."),
-    ],
-)
-async def test_the_preview_refuses_a_day_out_of_its_range_and_starts_no_child(user, account_copy, children, day, error):
+async def test_the_preview_of_a_rule_that_is_off_says_that_no_run_uses_it(user, sessions, account_copy, youtube):
+    read_before(sessions, A, "old")
+    youtube.uploads[A] = [entry("new", A, title="New", day=today()), entry("old", A, day=days_back(2))]
     await user.open("/rules")
     await open_editor(user)
+    set_value(user, "rule-channels", [A])
+    set_value(user, "rule-enabled", False)
 
-    set_value(user, "preview-since", day())
-    user.find(marker="preview-run").click()
+    await preview_in_editor(user)
 
-    await eventually(lambda: text_of(user, "preview-failed") == error, "The error of the day")
-    assert children.of("preview-rule") == []
+    assert text_of(user, "preview-note") == (
+        "The rule is off, so no run uses it. The preview shows what the next run does with the rule on."
+    )
+    assert shown(user, "preview-table") == [("New", "Matches")]
 
 
-async def test_a_preview_takes_the_day_a_year_back(user, account_copy, children, youtube):
+async def test_the_preview_of_a_rule_that_is_on_has_no_note(user, sessions, account_copy, youtube):
+    read_before(sessions, A, "old")
+    youtube.uploads[A] = [entry("new", A, title="New", day=today()), entry("old", A, day=days_back(2))]
     await user.open("/rules")
     await open_editor(user)
     set_value(user, "rule-channels", [A])
 
-    set_value(user, "preview-since", days_back(365).isoformat())
     await preview_in_editor(user)
 
-    assert text_of(user, "preview-empty") == "The rule matches no video of its sources since this day."
-    assert children.of("preview-rule")[0][4] == f"--since={days_back(365).isoformat()}"
+    assert shown(user, "preview-table") == [("New", "Matches")]
+    assert not elements_of(user, "preview-note")
 
 
 async def test_a_condition_that_is_not_complete_stops_the_preview(user, account_copy, children):
@@ -495,6 +579,42 @@ async def test_an_apply_previews_the_saved_rule_and_adds_the_videos_as_a_run_of_
     await eventually(lambda: not element_of(user, "apply-dialog").value, "The close of the dialog")
     await user.open("/history")
     assert [row["trigger"] for row in rows(user, "runs-table")] == ["Rule apply"]
+
+
+@pytest.mark.parametrize(
+    ("day", "error"),
+    [
+        (lambda: (today() + timedelta(days=1)).isoformat(), "Choose a day that is not in the future."),
+        (lambda: days_back(366).isoformat(), "Choose a day at most 365 days back."),
+        (lambda: None, "Choose the first day of the videos."),
+    ],
+)
+async def test_the_apply_refuses_a_day_out_of_its_range_and_starts_no_child(
+    user, sessions, account_copy, children, day, error
+):
+    saved_rule(sessions)
+    await user.open("/rules")
+    await open_editor(user, 1)
+    await open_apply(user)
+
+    set_value(user, "apply-since", day())
+    user.find(marker="apply-preview").click()
+
+    await eventually(lambda: text_of(user, "apply-result-failed") == error, "The error of the day")
+    assert children.of("preview-rule") == []
+
+
+async def test_an_apply_takes_the_day_a_year_back(user, sessions, account_copy, children, youtube):
+    saved_rule(sessions)
+    await user.open("/rules")
+    await open_editor(user, 1)
+    await open_apply(user)
+
+    set_value(user, "apply-since", days_back(365).isoformat())
+    await preview_in_dialog(user)
+
+    assert elements_of(user, "apply-result-empty")
+    assert children.of("preview-rule")[0][4] == f"--since={days_back(365).isoformat()}"
 
 
 async def test_the_apply_dialog_says_when_the_editor_has_changes_that_are_not_saved(user, sessions, account_copy):
@@ -717,8 +837,16 @@ async def test_each_text_of_the_preview_and_the_apply_goes_through_the_translati
     )
     preview = Preview(videos, {mark: 101 for mark in Mark}, ("Channel Beta: no answer",), ("Alpha",))
     line = json.dumps(preview.to_value()) + "\n"
+    baselines = json.dumps(Preview((), {}, baseline_sources=("Alpha",)).to_value()) + "\n"
+    mode_changed = json.dumps(Preview((), {}, mode_changed=True).to_value()) + "\n"
     children = Children(settings)
-    children.plan = [EndedChild(0, line), EndedChild(0, line), EndedChild(1, "The cause.\n")]
+    children.plan = [
+        EndedChild(0, baselines),
+        EndedChild(0, mode_changed),
+        EndedChild(0, line),
+        EndedChild(0, line),
+        EndedChild(1, "The cause.\n"),
+    ]
     data = {"Long videos", "Alpha", "Channel Beta: no answer", today().isoformat(), "Watch later"}
     data |= {video.title for video in videos}
     time_text = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+")
@@ -726,17 +854,26 @@ async def test_each_text_of_the_preview_and_the_apply_goes_through_the_translati
     async with running_service(settings, children) as user:
         await user.open("/rules")
         await open_editor(user, 1)
+        set_value(user, "rule-enabled", False)
         await preview_in_editor(user)
+        await eventually(lambda: elements_of(user, "preview-baselines"), "The baselines")
+        texts = shown_texts(user)
+        await preview_in_editor(user)
+        await eventually(lambda: elements_of(user, "preview-mode-changed"), "The change of the mode")
+        texts.extend(shown_texts(user))
+        await preview_in_editor(user)
+        await eventually(lambda: elements_of(user, "preview-table"), "The videos")
         set_value(user, "rule-name", "Changed")
         await open_apply(user)
         await preview_in_dialog(user)
-        texts = shown_texts(user)
+        texts.extend(shown_texts(user))
         user.find(marker="apply-run").click()
         await eventually(lambda: "<<The apply failed" in text_of(user, "apply-status"), "The failure")
         texts.extend(shown_texts(user))
 
     for expected in (
         "<<Preview>>",
+        "<<Preview of the next run>>",
         "<<Videos from>>",
         "<<Will be added>>",
         "<<No longer matches>>",

@@ -58,11 +58,13 @@ def _parser() -> argparse.ArgumentParser:
     unsubscribe_parser.add_argument("--channel-id", required=True, help="the UC... id of the channel")
     preview_parser = commands.add_parser(
         "preview-rule",
-        help="list the videos since a day that a rule matches, without a change; the service starts this command in a "
-        "child process",
+        help="list the videos since a day that a rule matches, or the videos of the next run without a day, without "
+        "a change; the service starts this command in a child process",
     )
     preview_parser.add_argument(
-        "--since", type=datetime.date.fromisoformat, required=True, help="the first day of the videos, YYYY-MM-DD"
+        "--since",
+        type=datetime.date.fromisoformat,
+        help="the first day of the videos, YYYY-MM-DD; without it, the preview tells what the next run does",
     )
     preview_parser.add_argument("--rule-id", type=int, help="the id of the saved rule")
     preview_parser.add_argument(
@@ -129,7 +131,7 @@ def _change_subscription(channel_id: str, *, subscribe: bool, title: str | None 
     return change_subscription_once(settings, channel_id, subscribe=subscribe, title=title)
 
 
-def _preview_rule(since: datetime.date, rule_id: int | None, draft: DraftRule | None) -> int:
+def _preview_rule(since: datetime.date | None, rule_id: int | None, draft: DraftRule | None) -> int:
     settings = get_settings()
     setup_logging(settings.verbose)
     return preview_once(settings, since, rule_id, draft)
