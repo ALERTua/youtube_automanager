@@ -316,8 +316,8 @@ def test_the_child_gets_the_command_and_the_environment_of_a_run(runner, fake_st
 def test_the_child_gets_the_timeout_of_the_refresh(db_sessions, db_url, tmp_path, fake_starter):
     waits = []
 
-    def start(command, env):
-        child = fake_starter(command, env)
+    def start(command, env, input_text):
+        child = fake_starter(command, env, input_text)
         wait = child.wait
 
         def recording_wait(timeout=None):

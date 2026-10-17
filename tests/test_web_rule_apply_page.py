@@ -167,7 +167,7 @@ class Children:
         self.commands = []
         self.plan = []
 
-    def __call__(self, command, env):
+    def __call__(self, command, env, input_text):
         self.commands.append(list(command))
         if self.plan:
             return self.plan.pop(0)

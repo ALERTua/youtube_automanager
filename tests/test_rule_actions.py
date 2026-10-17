@@ -636,11 +636,11 @@ def runs(sessions):
 
 
 def test_an_apply_is_a_run_with_its_own_trigger_and_child(db_sessions, db_url, tmp_path, fake_starter):
-    def start(command, env):
+    def start(command, env, input_text):
         # The child of the run writes the count of the added videos.
         with db_sessions.begin() as session:
             session.get(Run, int(command[4].removeprefix("--run-id="))).added_count = 2
-        return fake_starter(command, env)
+        return fake_starter(command, env, input_text)
 
     runner = SyncRunner(
         db_sessions,
@@ -802,7 +802,7 @@ def test_the_web_process_does_not_import_yt_dlp_for_a_preview_or_an_apply():
         "\n"
         "home = pathlib.Path(tempfile.mkdtemp())\n"
         "settings = Settings(home=home, database_url=f'sqlite:///{home / \"service.sqlite\"}', tz='UTC')\n"
-        "app = create_app(settings, start=lambda command, env: Child(LINES[command[3]]))\n"
+        "app = create_app(settings, start=lambda command, env, input_text: Child(LINES[command[3]]))\n"
         "mount_ui(app)\n"
         "since = datetime.date(2026, 10, 5)\n"
         "with TestClient(app) as client:\n"

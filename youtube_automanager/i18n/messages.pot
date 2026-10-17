@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-17 12:34+0300\n"
+"POT-Creation-Date: 2026-10-17 12:37+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1074,6 +1074,15 @@ msgid ""
 "{minutes} min or more. The History page shows the apply as a run."
 msgstr ""
 
+#. Translators: {cause} is the English cause from the service, for example an
+#. HTTP error of YouTube.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The check with YouTube gave no clear answer, so the service stored "
+"nothing. Upload or paste the cookies again. The cause: {cause}"
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 #, python-brace-format
 msgid "The condition is not valid JSON: {error}"
@@ -1088,7 +1097,7 @@ msgid "The cookie rotation is on."
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
-msgid "The cookies are stored."
+msgid "The cookies work and are stored."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -1128,6 +1137,15 @@ msgstr ""
 
 #: youtube_automanager/web/ui/account_lists.py
 msgid "The lists were never refreshed."
+msgstr ""
+
+#. Translators: {time} is the expiry time of the login cookies, for example
+#. "2026-10-12 18:30 EEST".
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The login cookies of this export expired on {time}. Export new cookies "
+"and upload them."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -1263,6 +1281,17 @@ msgstr ""
 msgid ""
 "The service cannot store cookies, because COOKIES_KEY is not valid: "
 "{cause}"
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service, for example that
+#. COOKIES_KEY is not set.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The service cannot use these cookies, so it stored nothing: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The service checks the cookies with YouTube. This takes up to a minute."
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -1645,6 +1674,18 @@ msgstr ""
 msgid ""
 "YouTube does not accept the stored cookies any more ({cause}). Export new"
 " YouTube cookies from your browser and upload them to the service."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"YouTube does not accept these cookies, so the service did not store them."
+" Export new cookies and upload them."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"YouTube does not accept these cookies. The service kept the stored "
+"cookies. Export new cookies and upload them."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py

@@ -1,8 +1,11 @@
-"""The cookie session of the account in the child process of a run or of a session check.
+"""The cookie session of the account in the child process of a run, of a session check or of a cookie upload.
 
 A check reads the page config of the YouTube home page with the current cookie version. A dying session first answers
 as an anonymous user and only later with HTTP 401, and ``AccountClient`` raises ``NotLoggedInError`` for both. When
 the current version is dead, the newest good version gets a check of its own, and the work uses it when it lives.
+
+The check of a cookie upload is the same check with the uploaded text. The text goes into the database only after
+YouTube accepted its session, so a dead export never replaces the stored cookies.
 
 The expiry dates in the cookie file do not show the end of a session, so they give only early warnings. After the
 work, the updated cookies of the client go back to the database through the guarded write-back.
@@ -33,6 +36,10 @@ LOG = logging.getLogger(__name__)
 EXPIRY_WARNING_DAYS = (3, 1, 0)
 DEAD_SESSION_TEXT = (
     "YouTube does not accept the stored cookies any more. "
+    "Export new YouTube cookies from your browser and upload them to the service."
+)
+UPLOAD_REFUSED_TEXT = (
+    "YouTube does not accept the uploaded cookies, so the service did not store them and keeps the stored cookies. "
     "Export new YouTube cookies from your browser and upload them to the service."
 )
 
@@ -108,6 +115,19 @@ def load_stored(sessions: sessionmaker[Session], settings: Settings) -> tuple[Co
     return cipher, stored
 
 
+def _upload_cipher(settings: Settings) -> CookieCipher:
+    """Return the cipher of a new upload. Raise AccountUnavailable with the cause, which never holds the key."""
+    if settings.cookies_key is None:
+        raise AccountUnavailable(
+            "The service cannot store the uploaded cookies, because COOKIES_KEY is not set. Set COOKIES_KEY and upload "
+            "the cookies again."
+        )
+    try:
+        return CookieCipher(settings.cookies_key.get_secret_value())
+    except CookieKeyError as error:
+        raise AccountUnavailable(f"The service cannot store the uploaded cookies: {error}") from None
+
+
 def _warning_threshold(days_left: int | None) -> int | None:
     """Return the smallest warning day that ``days_left`` reached, or None. A date in the past gets no warning."""
     if days_left is None or days_left < 0:
@@ -119,7 +139,8 @@ class AccountSession:
     """The account of one run or one check.
 
     ``check`` checks the session of the current cookie version, and ``open`` gives the checked client to the work.
-    ``died`` takes a session that YouTube refused during the work, and ``write_back`` saves the updated cookies.
+    ``check_upload`` checks an uploaded cookie text instead, and stores it when it lives. ``died`` takes a session that
+    YouTube refused during the work, and ``write_back`` saves the updated cookies.
     ``send`` sends a notification, and ``make_client`` builds the account client from a cookie text.
     """
 
@@ -165,6 +186,41 @@ class AccountSession:
             return CheckResult(outcome, str(error))
         self._version_id = stored.version_id
         return self._verify(stored.text, roll_back=True)
+
+    def check_upload(self, text: str) -> CheckResult:
+        """Check the session of an uploaded cookie text, and store the text only when YouTube accepts the session.
+
+        The check is the check of the stored cookies, with a client of ``text``. A text that YouTube accepts replaces
+        the stored cookies and their versions as a new upload, and its version and the account get the state of a
+        passed check. When YouTube refuses the session, or the check gives no clear answer, nothing changes: the stored
+        cookies, their versions and the account stay as they were, and no session event goes out, because the stored
+        session did not die. A text that is not a cookie file, or a missing cookie key, sends no request.
+        """
+        try:
+            cipher = _upload_cipher(self._settings)
+            try:
+                client = self._make_client(text)
+            except ValueError as error:
+                raise AccountUnavailable(f"The uploaded cookies are not valid: {error}") from None
+        except AccountUnavailable as error:
+            return CheckResult(CheckOutcome.UNAVAILABLE, str(error))
+        try:
+            client.check_session()
+        except NotLoggedInError as error:
+            LOG.warning("YouTube refused the uploaded cookies, so the service keeps the stored cookies: %s", error)
+            return CheckResult(CheckOutcome.DEAD, UPLOAD_REFUSED_TEXT)
+        except AccountError as error:
+            LOG.warning("The check of the uploaded cookies failed, so the service stores nothing: %s", error)
+            return CheckResult(CheckOutcome.FAILED, f"The check of the uploaded cookies failed: {error}")
+        now = self._clock()
+        with self._sessions.begin() as session:
+            self._version_id = cookie_store.save_cookies(session, cipher, text, now=now).id
+            warning = self._write_passed(session, text, now)
+        LOG.info("YouTube accepted the uploaded cookies, and they are stored as cookie version %s", self._version_id)
+        self._cipher, self._client, self._alive = cipher, client, True
+        if warning is not None:
+            self._notify(warning)
+        return CheckResult(CheckOutcome.ALIVE)
 
     def open(self) -> ClientLike:
         """Return the client of the account. Raise AccountUnavailable when the work must go on without the account."""
@@ -240,30 +296,32 @@ class AccountSession:
 
     def _passed(self, text: str) -> None:
         """Write the version as good and the session as live, and send an expiry warning when one is due."""
-        now = self._clock()
+        with self._sessions.begin() as session:
+            warning = self._write_passed(session, text, self._clock())
+        self._alive = True
+        if warning is not None:
+            self._notify(warning)
+
+    def _write_passed(self, session: Session, text: str, now: datetime.datetime) -> notify.Notification | None:
+        """Write that the current version passed a check at ``now``. Return the expiry warning when one is due."""
         expiry = earliest_login_expiry(text)
         days_left = None
         if expiry is not None:
             days_left = (expiry.astimezone(self._zone).date() - now.astimezone(self._zone).date()).days
-        warning = None
-        with self._sessions.begin() as session:
-            cookie_store.mark_good(session, self._version_id, now)
-            account = cookie_store.account_row(session)
-            if account is not None:
-                cookie_store.set_earliest_expiry(account, expiry)
-                expiring = days_left is not None and days_left <= EXPIRY_WARNING_DAYS[0]
-                account.session_state = SessionState.EXPIRING if expiring else SessionState.OK
-                account.last_checked_at = now
-                threshold = _warning_threshold(days_left)
-                if threshold is not None and (
-                    account.expiry_warning_days is None or threshold < account.expiry_warning_days
-                ):
-                    # One warning for each check, also when the check comes after two warning days at once.
-                    account.expiry_warning_days = threshold
-                    warning = notify.cookie_expiry(days_left, expiry.astimezone(self._zone))
-        self._alive = True
-        if warning is not None:
-            self._notify(warning)
+        cookie_store.mark_good(session, self._version_id, now)
+        account = cookie_store.account_row(session)
+        if account is None:
+            return None
+        cookie_store.set_earliest_expiry(account, expiry)
+        expiring = days_left is not None and days_left <= EXPIRY_WARNING_DAYS[0]
+        account.session_state = SessionState.EXPIRING if expiring else SessionState.OK
+        account.last_checked_at = now
+        threshold = _warning_threshold(days_left)
+        if threshold is None or (account.expiry_warning_days is not None and threshold >= account.expiry_warning_days):
+            return None
+        # One warning for each check, also when the check comes after two warning days at once.
+        account.expiry_warning_days = threshold
+        return notify.cookie_expiry(days_left, expiry.astimezone(self._zone))
 
     def _notify(self, notification: notify.Notification) -> None:
         try:

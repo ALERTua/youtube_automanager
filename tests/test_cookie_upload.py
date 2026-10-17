@@ -1,15 +1,11 @@
-"""Tests of the check and the store of a cookie upload. Each cookie value is fake."""
+"""Tests of the checks of a cookie upload before any request to YouTube. Each cookie value is fake."""
 
 import datetime
-import threading
 
 import pytest
 
-from youtube_automanager.db.models import Account, CookieOrigin, CookieVersion, SessionState
-from youtube_automanager.runner import RunAlreadyActive, SyncRunner
-from youtube_automanager.web.ui.cookie_upload import missing_login_cookies, normalized, store_upload
+from youtube_automanager.web.ui.cookie_upload import login_expired_at, missing_login_cookies, normalized
 from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES
-from youtube_automanager.youtube.session import CookieCipher, generate_key, load_cookies
 
 SECRET = "s3cr3tCookieValue"
 # 2030-01-01 00:00 UTC.
@@ -26,18 +22,6 @@ def cookie_text(names=LOGIN_COOKIES, *extra: str, domain: str = ".youtube.com") 
         "\n".join(["# Netscape HTTP Cookie File", *(line(name, domain=domain) for name in sorted(names)), *extra])
         + "\n"
     )
-
-
-@pytest.fixture
-def runner(db_sessions, tmp_path):
-    return SyncRunner(
-        db_sessions, ytdlp_dir=tmp_path / "yt-dlp", database_url="sqlite://", child_timeout_s=1, lock=threading.Lock()
-    )
-
-
-@pytest.fixture
-def cipher():
-    return CookieCipher(generate_key())
 
 
 @pytest.mark.parametrize(
@@ -87,32 +71,35 @@ def test_a_text_that_is_not_a_netscape_cookie_file_gives_an_error_without_a_valu
     assert SECRET not in str(error.value)
 
 
-def test_the_store_keeps_the_text_encrypted_as_a_new_upload(db_sessions, runner, cipher):
-    text = cookie_text()
-    now = datetime.datetime(2026, 10, 12, 18, 0, tzinfo=datetime.UTC)
-    with db_sessions.begin() as session:
-        session.add(Account(session_state=SessionState.DEAD, expiry_warning_days=1))
-
-    store_upload(db_sessions, runner, cipher, text, now=now)
-
-    with db_sessions() as session:
-        account = session.query(Account).one()
-        (version,) = session.query(CookieVersion).all()
-        assert load_cookies(session, cipher) == text
-        assert SECRET.encode() not in account.cookies
-        assert (account.session_state, account.last_checked_at, account.expiry_warning_days) == (
-            SessionState.UNKNOWN,
-            None,
-            None,
-        )
-        assert account.earliest_cookie_expiry == datetime.datetime(2030, 1, 1, tzinfo=datetime.UTC)
-        assert (version.origin, version.created_at) == (CookieOrigin.UPLOAD, now)
+# The expiry of the login cookies
 
 
-def test_the_store_waits_for_no_run_and_stores_nothing_while_the_sync_lock_is_taken(db_sessions, runner, cipher):
-    with runner.lock_held(), pytest.raises(RunAlreadyActive):
-        store_upload(db_sessions, runner, cipher, cookie_text())
+NOW = datetime.datetime(2026, 10, 12, 18, 0, tzinfo=datetime.UTC)
+SECOND = datetime.timedelta(seconds=1)
 
-    with db_sessions() as session:
-        assert session.query(Account).count() == 0
-        assert session.query(CookieVersion).count() == 0
+
+def expiring_at(moment: datetime.datetime, name: str = "SID") -> str:
+    """A full export in which the login cookie ``name`` expires at ``moment`` and each other cookie in 2030."""
+    expires = int(moment.timestamp())
+    return cookie_text(LOGIN_COOKIES - {name}, line(name, expires=expires), line("GPS", expires=expires - 3600))
+
+
+@pytest.mark.parametrize(
+    ("moment", "expired"),
+    [(NOW - SECOND, True), (NOW, True), (NOW + SECOND, False)],
+    ids=["just before now", "at now", "just after now"],
+)
+def test_an_export_whose_login_cookie_expired_by_now_gives_the_expiry(moment, expired):
+    assert login_expired_at(expiring_at(moment), NOW) == (moment if expired else None)
+
+
+def test_each_login_cookie_gives_the_expiry_and_another_cookie_does_not():
+    assert login_expired_at(expiring_at(NOW, "__Secure-3PSIDCC"), NOW) == NOW
+    # GPS is no login cookie, so its expiry in 1970 does not count.
+    assert login_expired_at(cookie_text(LOGIN_COOKIES, line("GPS", expires=1)), NOW) is None
+
+
+def test_an_export_without_a_login_expiry_date_did_not_expire():
+    session_cookies = cookie_text(set(), *(line(name, expires=0) for name in sorted(LOGIN_COOKIES)))
+
+    assert login_expired_at(session_cookies, NOW) is None

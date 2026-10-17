@@ -1,14 +1,18 @@
 """Tests of the settings page. A fake child stands in for each session check, and Apprise plugins of this module stand in
-for each notification service, so no test reads YouTube or sends a real notification. Each cookie value is fake."""
+for each notification service, so no test reads YouTube or sends a real notification. The check of a cookie upload
+runs its real body in the test process, with a fake client for YouTube. Each cookie value is fake."""
 
 import asyncio
+import contextlib
 import datetime
 import importlib.metadata
+import io
 import logging
 import re
 import subprocess
 import sys
 import threading
+from zoneinfo import ZoneInfo
 
 import pytest
 from apprise.decorators import notify as apprise_notify
@@ -22,14 +26,36 @@ from sqlalchemy import select
 from ui_support import element_of, elements_of, eventually, running_service, set_value, store, text_of, texts_of
 
 from youtube_automanager import i18n
-from youtube_automanager.db.models import Account, NotificationTarget, Schedule, ScheduleKind, SessionState, Setting
+from youtube_automanager.cookie_upload_check import check_upload_once
+from youtube_automanager.db.models import (
+    Account,
+    CookieOrigin,
+    CookieVersion,
+    CookieVersionState,
+    NotificationTarget,
+    Schedule,
+    ScheduleKind,
+    SessionState,
+    Setting,
+)
+from youtube_automanager.engine import account_session
 from youtube_automanager.engine.modes import ProcessingMode
 from youtube_automanager.notify import DEFAULT_EVENTS, Event, Level
 from youtube_automanager.rotation import ROTATION_KEY
 from youtube_automanager.runner import SOURCE_ROOT, UNAVAILABLE_EXIT_CODE, sync_lock_held
+from youtube_automanager.short_child import (
+    EXIT_YOUTUBE_ERROR,
+    ChildBusy,
+    ChildFailed,
+    ChildLoggedOut,
+    ChildUnavailable,
+    ChildYouTubeError,
+)
 from youtube_automanager.web.ui.cookie_upload import COMPOSE_KEY_COMMAND, KEY_COMMAND, MAX_FILE_BYTES
+from youtube_automanager.web.ui.settings_page import expired_text, upload_error_text
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError
 from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES
-from youtube_automanager.youtube.session import CookieCipher, generate_key, load_cookies
+from youtube_automanager.youtube.session import CookieCipher, generate_key, load_cookies, save_cookies
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -68,9 +94,9 @@ def _deliver_slow(body, title, notify_type, *args, meta, **kwargs):
     return True
 
 
-def line(name: str, *, domain: str = ".youtube.com") -> str:
+def line(name: str, *, domain: str = ".youtube.com", expires: int = EXPIRES) -> str:
     flag = "TRUE" if domain.startswith(".") else "FALSE"
-    return f"{domain}\t{flag}\t/\tTRUE\t{EXPIRES}\t{name}\t{SECRET}-{name}"
+    return f"{domain}\t{flag}\t/\tTRUE\t{expires}\t{name}\t{SECRET}-{name}"
 
 
 def cookie_text(names=LOGIN_COOKIES, *extra: str) -> str:
@@ -82,21 +108,63 @@ SID_LINE = sorted(LOGIN_COOKIES).index("SID") + 2
 
 
 class CheckingStarter(FakeStarter):
-    """A fake start of the child processes. A session check writes ``state`` into the account, as the child does."""
+    """A fake start of the child processes.
 
-    def __init__(self, sessions):
+    A session check writes ``state`` into the account, as the child does. The check of an upload runs the real body of
+    its child in the test process, unless ``plan`` gives the child.
+    """
+
+    def __init__(self, sessions, settings):
         super().__init__()
         self.sessions = sessions
+        self.settings = settings
         self.state = SessionState.OK
 
-    def __call__(self, command, env):
+    def __call__(self, command, env, input_text=None):
         if command[3:] == ["check-session"] and self.state is not None:
             with self.sessions.begin() as session:
                 account = session.scalars(select(Account)).first()
                 if account is not None:
                     account.session_state = self.state
                     account.last_checked_at = CHECKED_AT
-        return super().__call__(command, env)
+        if command[3:] == ["check-upload"] and not self.plan:
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                code = check_upload_once(self.settings, input_text)
+            self.plan.append({"exit_code": code, "stderr": stderr.getvalue()})
+        return super().__call__(command, env, input_text)
+
+
+class FakeYouTube:
+    """Answers the session check of an upload: ``answer`` is "accept", "refuse" or "fail".
+
+    An answer brings a new value of SIDCC, as YouTube sends one.
+    """
+
+    def __init__(self):
+        self.answer = "accept"
+        self.checks = 0
+
+    def client(self, text):
+        youtube = self
+
+        class Client:
+            def check_session(self):
+                youtube.checks += 1
+                if youtube.answer == "refuse":
+                    raise NotLoggedInError("YouTube answered https://www.youtube.com as to an anonymous user")
+                if youtube.answer == "fail":
+                    raise AccountError("yt-dlp failed to check the session: HTTP Error 503")
+
+            def cookies_text(self):
+                return renewed(text)
+
+        return Client()
+
+
+def renewed(text: str) -> str:
+    """The text with the new value of SIDCC that a check brings."""
+    return text.replace(f"\tSIDCC\t{SECRET}-SIDCC\n", f"\tSIDCC\t{SECRET}-SIDCC-new\n")
 
 
 @pytest.fixture
@@ -106,8 +174,15 @@ def settings(settings):
 
 
 @pytest.fixture
-def fake_starter(sessions):
-    return CheckingStarter(sessions)
+def fake_starter(sessions, settings):
+    return CheckingStarter(sessions, settings)
+
+
+@pytest.fixture(autouse=True)
+def youtube(monkeypatch):
+    fake = FakeYouTube()
+    monkeypatch.setattr(account_session, "AccountClient", fake.client)
+    return fake
 
 
 @pytest.fixture(autouse=True)
@@ -128,6 +203,34 @@ def stored_text(sessions) -> str | None:
 def account(sessions) -> Account | None:
     with sessions() as session:
         return session.scalars(select(Account)).first()
+
+
+def versions(sessions) -> list[tuple]:
+    """The text, the origin and the state of each cookie version."""
+    cipher = CookieCipher(KEY)
+    with sessions() as session:
+        rows = session.scalars(select(CookieVersion).order_by(CookieVersion.id))
+        return [(cipher.decrypt(row.cookies), row.origin, row.state) for row in rows]
+
+
+def stored_rows(sessions) -> tuple[list, list]:
+    """Each stored column of the account and of each cookie version."""
+    with sessions() as session:
+        accounts = [
+            (row.id, row.cookies, row.session_state, row.last_checked_at, row.earliest_cookie_expiry)
+            for row in session.scalars(select(Account))
+        ]
+        rows = session.scalars(select(CookieVersion).order_by(CookieVersion.id))
+        return accounts, [(row.id, row.cookies, row.origin, row.state, row.created_at, row.checked_at) for row in rows]
+
+
+def store_upload(sessions, text: str, state: SessionState) -> None:
+    """Store ``text`` as an upload that a check gave ``state``."""
+    with sessions.begin() as session:
+        save_cookies(session, CookieCipher(KEY), text)
+        stored = session.scalars(select(Account)).one()
+        stored.session_state = state
+        stored.last_checked_at = CHECKED_AT
 
 
 def setting(sessions, key):
@@ -247,47 +350,141 @@ async def test_the_export_steps_are_on_the_page(user):
     assert steps[5].startswith("6. Close the private window without a sign-out.")
 
 
-async def test_an_uploaded_cookie_file_is_stored_and_the_session_is_checked_at_once(user, sessions, fake_starter):
+STORED = "The cookies work and are stored."
+REFUSED_KEPT = (
+    "YouTube does not accept these cookies. The service kept the stored cookies. Export new cookies and upload them."
+)
+REFUSED_NONE = (
+    "YouTube does not accept these cookies, so the service did not store them. Export new cookies and upload them."
+)
+NO_CLEAR_ANSWER = (
+    "The check with YouTube gave no clear answer, so the service stored nothing. Upload or paste the cookies again. "
+    "The cause: "
+)
+
+
+async def test_an_uploaded_cookie_file_is_checked_with_youtube_and_stored_because_it_works(
+    user, sessions, fake_starter, youtube
+):
     text = cookie_text(LOGIN_COOKIES, line("GPS"), line("NID", domain=".google.com"))
     await user.open("/settings")
 
     await upload(user, ("﻿" + text.replace("\n", "\r\n")).encode())
 
-    await eventually(lambda: elements_of(user, "session-state"), "The state of the stored session")
-    await result_is(user, "YouTube accepts the cookies.")
-    await user.should_see("The cookies are stored.")
-    assert stored_text(sessions) == text
-    assert commands(fake_starter) == [["check-session"]]
+    await result_is(user, STORED)
+    assert "text-negative" not in element_of(user, "cookie-result").classes
+    assert user.notify.messages == [STORED]
+    # One check with YouTube, with the text on the standard input of the child, and no second session check.
+    assert commands(fake_starter) == [["check-upload"]]
+    assert fake_starter.inputs == [text]
+    assert youtube.checks == 1
+    # The check brought a new value of SIDCC, which the service saved as a new version.
+    assert versions(sessions) == [
+        (text, CookieOrigin.UPLOAD, CookieVersionState.GOOD),
+        (renewed(text), CookieOrigin.WRITE_BACK, CookieVersionState.UNCHECKED),
+    ]
+    assert stored_text(sessions) == renewed(text)
     assert text_of(user, "session-state") == "OK"
-    assert text_of(user, "session-checked") == "2026-10-12 18:30 EEST"
+    assert TIME.fullmatch(text_of(user, "session-checked"))
     assert text_of(user, "session-expiry") == "2030-01-01 02:00 EET"
     assert element_of(user, "check-session").enabled
 
 
-async def test_a_pasted_cookie_text_is_stored_checked_and_leaves_the_field(user, sessions, fake_starter):
+async def test_a_pasted_cookie_text_is_checked_stored_and_leaves_the_field(user, sessions, fake_starter):
     await user.open("/settings")
 
     await paste(user, cookie_text())
 
-    await result_is(user, "YouTube accepts the cookies.")
-    assert stored_text(sessions) == cookie_text()
+    await result_is(user, STORED)
+    assert stored_text(sessions) == renewed(cookie_text())
     assert element_of(user, "cookie-text").value == ""
-    assert commands(fake_starter) == [["check-session"]]
+    assert commands(fake_starter) == [["check-upload"]]
 
 
-async def test_a_new_upload_replaces_the_stored_cookies_and_their_state(user, sessions, fake_starter):
-    fake_starter.state = SessionState.DEAD
+async def test_a_new_upload_that_works_replaces_the_dead_stored_cookies(user, sessions):
+    store_upload(sessions, cookie_text(LOGIN_COOKIES, line("GPS")), SessionState.DEAD)
     await user.open("/settings")
-    await paste(user, cookie_text())
-    await result_is(user, "YouTube does not accept the cookies. Export new cookies and upload them.")
     assert text_of(user, "session-state") == "Dead"
 
-    fake_starter.state = SessionState.EXPIRING
-    await paste(user, cookie_text(LOGIN_COOKIES, line("GPS")))
+    await paste(user, cookie_text())
 
-    await result_is(user, "YouTube accepts the cookies, but they expire soon. Export new cookies and upload them.")
-    assert stored_text(sessions) == cookie_text(LOGIN_COOKIES, line("GPS"))
-    assert text_of(user, "session-state") == "Expiring"
+    await result_is(user, STORED)
+    assert [version[:2] for version in versions(sessions)] == [
+        (cookie_text(), CookieOrigin.UPLOAD),
+        (renewed(cookie_text()), CookieOrigin.WRITE_BACK),
+    ]
+    assert text_of(user, "session-state") == "OK"
+
+
+@pytest.mark.parametrize(("stored", "expected"), [(True, REFUSED_KEPT), (False, REFUSED_NONE)], ids=["stored", "none"])
+async def test_an_upload_that_youtube_refuses_keeps_the_stored_cookies_and_sends_no_event(
+    user, sessions, fake_starter, youtube, sent, stored, expected
+):
+    # A target of the event of a dead session gets each such event.
+    store(sessions, target(1, "Phone", url="settingsok://phone", events=["cookie_session_dead"]))
+    if stored:
+        store_upload(sessions, cookie_text(LOGIN_COOKIES, line("GPS")), SessionState.OK)
+    before = stored_rows(sessions)
+    youtube.answer = "refuse"
+    await user.open("/settings")
+
+    await paste(user, cookie_text())
+
+    await result_is(user, expected)
+    assert "text-negative" in element_of(user, "cookie-result").classes
+    assert youtube.checks == 1
+    assert stored_rows(sessions) == before
+    assert sent == []
+    assert user.notify.messages == []
+    if stored:
+        assert text_of(user, "session-state") == "OK"
+    else:
+        assert text_of(user, "no-cookies") == "No cookies are stored yet."
+
+
+@pytest.mark.parametrize(
+    ("answer", "plan", "cause"),
+    [
+        (
+            "fail",
+            None,
+            "The check of the uploaded cookies failed: yt-dlp failed to check the session: HTTP Error 503",
+        ),
+        ("accept", {"exit_code": 1, "stderr": "Traceback\n"}, "The cookie check process exited with code 1."),
+    ],
+    ids=["youtube error", "crash"],
+)
+async def test_an_upload_whose_check_gives_no_clear_answer_stores_nothing_and_asks_for_a_new_try(
+    user, sessions, fake_starter, youtube, answer, plan, cause
+):
+    store_upload(sessions, cookie_text(LOGIN_COOKIES, line("GPS")), SessionState.OK)
+    before = stored_rows(sessions)
+    youtube.answer = answer
+    if plan is not None:
+        fake_starter.plan.append(plan)
+    await user.open("/settings")
+
+    await paste(user, cookie_text())
+
+    await result_is(user, NO_CLEAR_ANSWER + cause)
+    assert "text-negative" in element_of(user, "cookie-result").classes
+    assert stored_rows(sessions) == before
+    assert user.notify.messages == []
+
+
+async def test_an_export_whose_login_cookies_expired_names_the_date_and_starts_no_check(user, sessions, fake_starter):
+    # 2026-01-01 00:00 UTC, which is 02:00 in Kyiv.
+    text = cookie_text(LOGIN_COOKIES - {"SID"}, line("SID", expires=1_767_225_600))
+    await user.open("/settings")
+
+    await paste(user, text)
+
+    await result_is(
+        user, "The login cookies of this export expired on 2026-01-01 02:00 EET. Export new cookies and upload them."
+    )
+    assert "text-negative" in element_of(user, "cookie-result").classes
+    assert fake_starter.calls == []
+    assert account(sessions) is None
 
 
 async def test_a_text_without_some_login_cookies_names_them_and_stores_nothing(user, sessions, fake_starter):
@@ -372,18 +569,49 @@ async def test_an_upload_while_the_sync_lock_is_taken_stores_nothing(user, sessi
     assert fake_starter.calls == []
 
 
-async def test_no_page_text_and_no_log_line_holds_a_cookie_value(user, sessions, caplog):
+async def test_no_page_text_no_log_line_and_no_stderr_line_holds_a_cookie_value(
+    user, sessions, youtube, caplog, capsys
+):
     caplog.set_level(logging.DEBUG)
     await user.open("/settings")
 
     await upload(user, cookie_text().encode())
-    await result_is(user, "YouTube accepts the cookies.")
+    await result_is(user, STORED)
+    youtube.answer = "refuse"
+    await paste(user, cookie_text(LOGIN_COOKIES, line("GPS")))
+    await result_is(user, REFUSED_KEPT)
+    youtube.answer = "fail"
+    await paste(user, cookie_text(LOGIN_COOKIES, line("GPS")))
+    await eventually(lambda: text_of(user, "cookie-result").startswith(NO_CLEAR_ANSWER), "The text of no clear answer")
     await paste(user, cookie_text(LOGIN_COOKIES - {"SID"}))
     await eventually(lambda: "SID" in text_of(user, "cookie-result"), "The text of the missing cookie")
 
     assert SECRET not in page_dump(user)
     assert [record.getMessage() for record in caplog.records if SECRET in record.getMessage()] == []
-    assert "Stored new YouTube cookies from the settings page" in caplog.messages
+    assert SECRET not in capsys.readouterr().err
+    assert "The settings page stored new YouTube cookies, because YouTube accepted them" in caplog.messages
+
+
+async def test_the_controls_are_off_while_the_check_of_an_upload_runs(user, sessions, fake_starter):
+    store(sessions, Account(cookies=b"encrypted"))
+    fake_starter.plan.append({"blocking": True, "stderr": "HTTP Error 503\n"})
+    await user.open("/settings")
+
+    await paste(user, cookie_text())
+    await eventually(lambda: fake_starter.children, "The start of the check")
+
+    assert text_of(user, "cookie-result") == "The service checks the cookies with YouTube. This takes up to a minute."
+    for marker in ("check-session", "cookie-upload", "cookie-text", "cookie-store"):
+        assert not element_of(user, marker).enabled, marker
+    user.find(marker="cookie-store").click()
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert len(fake_starter.calls) == 1
+
+    fake_starter.children[0].finish(EXIT_YOUTUBE_ERROR)
+
+    await result_is(user, NO_CLEAR_ANSWER + "HTTP Error 503")
+    for marker in ("check-session", "cookie-upload", "cookie-text", "cookie-store"):
+        assert element_of(user, marker).enabled, marker
 
 
 async def test_the_session_check_button_checks_the_stored_cookies(user, sessions, fake_starter):
@@ -917,23 +1145,57 @@ async def test_each_text_of_the_settings_page_goes_through_the_translation(
     assert untranslated == []
 
 
+def test_each_text_of_an_upload_that_is_not_stored_goes_through_the_translation(monkeypatch):
+    class Marking:
+        def gettext(self, message):
+            return f"<<{message}>>"
+
+    monkeypatch.setattr(i18n, "_translations", Marking())
+    errors = [ChildBusy("x"), ChildLoggedOut("x"), ChildUnavailable("x"), ChildYouTubeError("x"), ChildFailed("x")]
+
+    texts = [upload_error_text(error, had_cookies=had_cookies) for error in errors for had_cookies in (True, False)]
+    texts.append(expired_text(CHECKED_AT, ZoneInfo("UTC")))
+
+    assert [text for text in texts if not (text.startswith("<<") and text.endswith(">>"))] == []
+
+
 # The process of the service.
 
 
-def test_the_settings_page_leaves_yt_dlp_out_of_the_process_of_the_service():
+def test_the_settings_page_and_an_upload_leave_yt_dlp_out_of_the_process_of_the_service():
+    """The check of an upload runs in a child process, so a yt-dlp update reaches the next upload."""
     code = (
-        "import pathlib, sys, tempfile\n"
+        "import io, pathlib, sys, tempfile\n"
         "from fastapi.testclient import TestClient\n"
+        "from youtube_automanager.cookie_upload_check import check_upload_in_child\n"
         "from youtube_automanager.settings import Settings\n"
         "from youtube_automanager.web.app import create_app\n"
         "from youtube_automanager.web.ui import mount_ui\n"
+        "\n"
+        "inputs = []\n"
+        "\n"
+        "class Child:\n"
+        "    returncode = 0\n"
+        "    def __init__(self, input_text):\n"
+        "        inputs.append(input_text)\n"
+        "        self.stderr = io.StringIO('{\"stored\": true}\\n')\n"
+        "    def wait(self, timeout=None):\n"
+        "        return 0\n"
+        "    def poll(self):\n"
+        "        return 0\n"
+        "    def terminate(self):\n"
+        "        pass\n"
+        "    kill = terminate\n"
+        "\n"
         "home = pathlib.Path(tempfile.mkdtemp())\n"
         "settings = Settings(home=home, database_url=f'sqlite:///{home / \"service.sqlite\"}', tz='UTC')\n"
-        "app = create_app(settings)\n"
+        "app = create_app(settings, start=lambda command, env, input_text: Child(input_text))\n"
         "mount_ui(app)\n"
         "with TestClient(app) as client:\n"
         "    page = client.get('/settings')\n"
+        "    check_upload_in_child(client.app.state.services.runner, '# Netscape HTTP Cookie File\\n')\n"
         "assert page.status_code == 200, page.text\n"
+        "assert inputs == ['# Netscape HTTP Cookie File\\n'], inputs\n"
         "assert 'yt_dlp' not in sys.modules, sorted(name for name in sys.modules if name.startswith('yt_dlp'))\n"
     )
 

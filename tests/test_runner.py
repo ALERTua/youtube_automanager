@@ -1,8 +1,10 @@
 import datetime
+import hashlib
 import os
 import subprocess
 import sys
 import threading
+import time
 
 import pytest
 from sqlalchemy import select
@@ -28,6 +30,7 @@ from youtube_automanager.runner import (
     error_text_from_tail,
     mark_interrupted_runs,
     run_once,
+    start_child,
     sync_lock_held,
 )
 from youtube_automanager.settings import Settings
@@ -152,6 +155,59 @@ def test_a_short_child_without_stderr_has_an_empty_last_line(runner, fake_starte
     fake_starter.plan.append({"stderr": "\n \n"})
 
     assert runner.run_short_child(["child"], "The test child", 10).last_line == ""
+
+
+def test_only_a_short_child_with_an_input_text_gets_one(runner, fake_starter):
+    runner.run_short_child(["child"], "The test child", 10, "the input")
+    runner.run_short_child(["child"], "The test child", 10)
+    runner.execute(runner.claim(RunTrigger.MANUAL))
+    runner.check_session()
+
+    assert fake_starter.inputs == ["the input", None, None, None]
+    assert all("the input" not in " ".join(command) + str(env) for command, env in fake_starter.calls)
+
+
+# A real child prints the SHA-256 of its standard input as the last line of its stderr, and never the input itself.
+DIGEST_CHILD = (
+    "import hashlib, sys\n"
+    "data = sys.stdin.read()\n"
+    "print(hashlib.sha256(data.encode('utf-8')).hexdigest(), file=sys.stderr)\n"
+)
+
+
+def sha256(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def test_a_real_child_reads_its_whole_input_text_and_a_child_without_one_reads_nothing(make_runner):
+    runner = make_runner(start=start_child)
+    # More than the buffer of a pipe, with several lines and text that is not ASCII.
+    text = "".join(f"line {number}\tvalue é {number}\n" for number in range(20_000))
+
+    given = runner.run_short_child([sys.executable, "-c", DIGEST_CHILD], "The test child", WAIT_SECONDS * 6, text)
+    none = runner.run_short_child([sys.executable, "-c", DIGEST_CHILD], "The test child", WAIT_SECONDS * 6)
+
+    assert (given.returncode, given.last_line) == (0, sha256(text))
+    assert (none.returncode, none.last_line) == (0, sha256(""))
+
+
+def test_a_real_child_that_reads_no_input_cannot_block_the_service(make_runner, caplog):
+    runner = make_runner(start=start_child)
+    # Much more than the buffer of a pipe, for a child that never reads it.
+    text = "secret-input-line\n" * 200_000
+    started = time.monotonic()
+
+    end = runner.run_short_child([sys.executable, "-c", "import time; time.sleep(20)"], "The test child", 1, text)
+
+    assert end.timed_out
+    assert time.monotonic() - started < 15
+    assert not runner.is_active()
+    # The kill closes the pipe, so the write of the input fails, and the log line names only the error.
+    deadline = time.monotonic() + WAIT_SECONDS
+    while not any("Cannot write the input of the child process" in record.getMessage() for record in caplog.records):
+        assert time.monotonic() < deadline, "The failed write of the input left no log line"
+        time.sleep(0.02)
+    assert [record for record in caplog.records if "secret-input-line" in record.getMessage()] == []
 
 
 def test_failed_child_without_stderr_names_the_exit_code(runner, fake_starter, db_sessions):

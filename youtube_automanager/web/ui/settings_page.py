@@ -5,24 +5,27 @@ or a stored notification URL. No log line of the page holds a cookie value or a 
 the module ``ytdlp_section``. The block of the notification targets is in the module ``notifications_section``, and
 the page shows it last.
 
-The session check runs in a child process of the runner, and a test notification can take up to a minute, so the page
-waits for both in a thread. The page reads and writes the database in a thread, never on the event loop. Each time
-shows in the time zone of the schedule.
+The session check runs in a child process of the runner. An uploaded cookie text gets the same check in a child
+process, which stores the text only when YouTube accepts it. A test notification can take up to a minute, so the page
+waits for each of them in a thread. The page reads and writes the database in a thread, never on the event loop.
+Each time shows in the time zone of the schedule.
 """
 
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from nicegui import events, ui
 
-from youtube_automanager.db.models import SessionState
+from youtube_automanager.cookie_upload_check import check_upload_in_child
+from youtube_automanager.db.models import SessionState, utc_now
 from youtube_automanager.engine.modes import Processing, ProcessingMode
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.rotation import INTERVAL_S
-from youtube_automanager.runner import RunAlreadyActive, SessionCheckOutcome, SessionCheckResult
-from youtube_automanager.short_child import ChildBusy
+from youtube_automanager.runner import SessionCheckOutcome, SessionCheckResult
+from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildUnavailable
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text
 from youtube_automanager.web.ui.cookie_upload import (
@@ -30,9 +33,9 @@ from youtube_automanager.web.ui.cookie_upload import (
     KEY_COMMAND,
     MAX_FILE_BYTES,
     YOUTUBE_DOMAIN,
+    login_expired_at,
     missing_login_cookies,
     normalized,
-    store_upload,
 )
 from youtube_automanager.web.ui.dashboard import SESSION_STATES, StoredState, format_time, read_stored_state
 from youtube_automanager.web.ui.layout import register_page
@@ -123,6 +126,38 @@ def missing_text(missing: tuple[str, ...]) -> str:
     ).format(domain=YOUTUBE_DOMAIN, names=", ".join(missing))
 
 
+def expired_text(expiry: datetime, zone: ZoneInfo) -> str:
+    """Return the text of a cookie text whose login cookies expired at ``expiry``."""
+    # Translators: {time} is the expiry time of the login cookies, for example "2026-10-12 18:30 EEST".
+    return _("The login cookies of this export expired on {time}. Export new cookies and upload them.").format(
+        time=format_time(expiry, zone)
+    )
+
+
+def upload_error_text(error: ChildError, *, had_cookies: bool) -> str:
+    """Return the text of an upload that the service did not store. ``had_cookies`` tells whether cookies are stored."""
+    if isinstance(error, ChildBusy):
+        return child_error_text(error)
+    if isinstance(error, ChildLoggedOut):
+        if had_cookies:
+            return _(
+                "YouTube does not accept these cookies. The service kept the stored cookies. Export new cookies and "
+                "upload them."
+            )
+        return _(
+            "YouTube does not accept these cookies, so the service did not store them. Export new cookies and upload "
+            "them."
+        )
+    if isinstance(error, ChildUnavailable):
+        # Translators: {cause} is the English cause from the service, for example that COOKIES_KEY is not set.
+        return _("The service cannot use these cookies, so it stored nothing: {cause}").format(cause=error)
+    # Translators: {cause} is the English cause from the service, for example an HTTP error of YouTube.
+    return _(
+        "The check with YouTube gave no clear answer, so the service stored nothing. Upload or paste the cookies "
+        "again. The cause: {cause}"
+    ).format(cause=error)
+
+
 # The YouTube cookies.
 
 
@@ -130,7 +165,8 @@ def missing_text(missing: tuple[str, ...]) -> str:
 class CookieState:
     stored: StoredState
     checking: bool = False
-    storing: bool = False
+    # True while the check of an upload runs.
+    uploading: bool = False
 
 
 def _key_help(cause: str | None) -> None:
@@ -170,7 +206,7 @@ async def _cookies_section(services: Services) -> None:
 
     def show_work() -> None:
         """Turn the controls on and off for the work of this moment."""
-        working = state.checking or state.storing
+        working = state.checking or state.uploading
         check_button.set_enabled(not working and state.stored.session is not None)
         if state.checking:
             check_button.props("loading")
@@ -187,7 +223,7 @@ async def _cookies_section(services: Services) -> None:
         show_work()
 
     async def check_session() -> None:
-        if state.checking or state.storing:
+        if state.checking or state.uploading:
             return
         state.checking = True
         show_work()
@@ -204,37 +240,52 @@ async def _cookies_section(services: Services) -> None:
         await reload()
         show_result(text, problem=problem)
 
-    async def store(text: str) -> bool:
-        """Check the cookie text, and store it when it is good. Return True when the text is stored."""
-        if cipher is None or state.checking or state.storing:
-            return False
+    async def store(text: str) -> None:
+        """Check the cookie text, first without a request and then with YouTube, which stores it when it works.
+
+        A text that YouTube refuses, or a check without a clear answer, stores nothing, so the stored cookies stay.
+        """
+        if cipher is None or state.checking or state.uploading:
+            return
         text = normalized(text)
         if not text:
             show_result(_("The text is empty. Upload the cookie file, or paste its text."), problem=True)
-            return False
+            return
         try:
             missing = missing_login_cookies(text)
         except ValueError as error:
             # The cause names only a line number, never a cookie value.
             show_result(_("The text is not a Netscape cookie file: {cause}.").format(cause=error), problem=True)
-            return False
+            return
         if missing:
             show_result(missing_text(missing), problem=True)
-            return False
-        state.storing = True
+            return
+        expired = login_expired_at(text, utc_now())
+        if expired is not None:
+            show_result(expired_text(expired, ZoneInfo(state.stored.timezone)), problem=True)
+            return
+        had_cookies = state.stored.session is not None
+        state.uploading = True
         show_work()
+        show_result(_("The service checks the cookies with YouTube. This takes up to a minute."))
+        failure = None
         try:
-            await asyncio.to_thread(store_upload, services.sessions, services.runner, cipher, text)
-        except RunAlreadyActive:
-            show_result(child_error_text(ChildBusy("")), problem=True)
-            return False
+            await asyncio.to_thread(check_upload_in_child, services.runner, text)
+        except ChildError as error:
+            failure = error
         finally:
-            state.storing = False
+            state.uploading = False
             show_work()
-        LOG.info("Stored new YouTube cookies from the settings page")
-        ui.notify(_("The cookies are stored."), type="positive")
+        # The text and the new state show together.
         await reload()
-        return True
+        if failure is not None:
+            # The cause comes from the child, and it never holds a cookie value.
+            LOG.warning("The settings page did not store the uploaded cookies: %s", failure)
+            show_result(upload_error_text(failure, had_cookies=had_cookies), problem=True)
+            return
+        LOG.info("The settings page stored new YouTube cookies, because YouTube accepted them")
+        ui.notify(_("The cookies work and are stored."), type="positive")
+        show_result(_("The cookies work and are stored."))
 
     async def receive_file(event: events.UploadEventArguments) -> None:
         upload.reset()
@@ -247,8 +298,7 @@ async def _cookies_section(services: Services) -> None:
         except UnicodeDecodeError:
             show_result(_("The file is no text in UTF-8, so it is no cookie file."), problem=True)
             return
-        if await store(text):
-            await check_session()
+        await store(text)
 
     def file_refused() -> None:
         show_result(_("The file is larger than 1 MB, so it is no cookie file of YouTube."), problem=True)
@@ -257,8 +307,7 @@ async def _cookies_section(services: Services) -> None:
         # The field holds cookie values, so it empties at each try, and no cookie value stays on the page.
         text = paste_input.value or ""
         paste_input.value = ""
-        if await store(text):
-            await check_session()
+        await store(text)
 
     @ui.refreshable
     def session_view() -> None:
