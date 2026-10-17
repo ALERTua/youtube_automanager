@@ -19,6 +19,7 @@ from yt_dlp.cookies import YoutubeDLCookieJar
 from yt_dlp.networking.common import Response
 from yt_dlp.networking.exceptions import HTTPError
 from yt_dlp.utils import DownloadError, ExtractorError
+from yt_dlp.version import __version__ as YTDLP_VERSION
 
 from youtube_automanager.youtube import account
 from youtube_automanager.youtube.account import (
@@ -900,3 +901,141 @@ def test_the_yt_dlp_messages_go_to_the_log_of_the_account_module(caplog):
         (logging.WARNING, "warning message"),
         (logging.WARNING, "error message"),
     ]
+
+
+# A yt-dlp release that changed an internal of the client
+
+
+def tab_class():
+    ydl = YoutubeDL()
+    try:
+        return type(ydl.get_info_extractor("YoutubeTab"))
+    finally:
+        ydl.close()
+
+
+def missing(name):
+    """An attribute that is gone, as after a rename in a new release of yt-dlp: each lookup raises AttributeError."""
+
+    def lookup(self):
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute {name!r}")
+
+    return property(lookup)
+
+
+def raising(error):
+    def call(self, *args, **kwargs):
+        raise error
+
+    return call
+
+
+def call_check_session(client, youtube):
+    client.check_session()
+
+
+def call_identity(client, youtube):
+    youtube.answer("account/account_menu", recorded_response("account_menu"))
+    client.identity()
+
+
+@pytest.mark.parametrize(
+    ("name", "replacement", "work", "call", "kind"),
+    [
+        ("_download_webpage", missing("_download_webpage"), call_check_session, "_download_webpage", AttributeError),
+        (
+            "initialize",
+            raising(AttributeError("no _real_initialize")),
+            call_check_session,
+            "initialize",
+            AttributeError,
+        ),
+        ("extract_ytcfg", raising(TypeError("takes 2 arguments")), call_check_session, "extract_ytcfg", TypeError),
+        ("_extract_response", missing("_extract_response"), call_identity, "_extract_response", AttributeError),
+        (
+            "generate_api_headers",
+            raising(KeyError("INNERTUBE_CONTEXT")),
+            call_identity,
+            "generate_api_headers",
+            KeyError,
+        ),
+    ],
+    ids=["download_webpage", "initialize", "extract_ytcfg", "extract_response", "generate_api_headers"],
+)
+def test_a_changed_internal_of_the_tab_extractor_raises_an_account_error_with_the_version_and_the_call(
+    monkeypatch, client, youtube, caplog, name, replacement, work, call, kind
+):
+    monkeypatch.setattr(tab_class(), name, replacement)
+
+    with pytest.raises(AccountError) as caught:
+        work(client, youtube)
+
+    assert not isinstance(caught.value, NotLoggedInError)
+    assert isinstance(caught.value.__cause__, kind)
+    assert f"yt-dlp {YTDLP_VERSION} does not fit the client" in str(caught.value)
+    assert f"YoutubeTab.{call} raised {kind.__name__}" in str(caught.value)
+    (record,) = [record for record in caplog.records if record.exc_info is not None]
+    assert record.exc_info[1] is caught.value.__cause__
+    assert "fake-" not in caplog.text
+
+
+@pytest.mark.parametrize("kind", [AttributeError, TypeError, KeyError])
+def test_a_changed_extract_info_raises_an_account_error(monkeypatch, client, closes, kind):
+    monkeypatch.setattr(account._AccountYoutubeDL, "extract_info", raising(kind("changed")))
+
+    with pytest.raises(AccountError, match=f"YoutubeDL.extract_info raised {kind.__name__}") as caught:
+        client.subscribed_channels()
+
+    assert isinstance(caught.value.__cause__, kind)
+    assert len(closes) == 1
+
+
+def test_a_changed_entry_on_a_later_page_raises_an_account_error(monkeypatch, client, closes):
+    def entries():
+        yield {"_type": "url", "ie_key": "Youtube", "id": VIDEO}
+        raise KeyError("continuationItems")
+
+    def extract_info(ydl, url, **kwargs):
+        ydl.ytcfgs.append(YTCFG)
+        return {"_type": "playlist", "entries": entries()}
+
+    monkeypatch.setattr(account._AccountYoutubeDL, "extract_info", extract_info)
+    feed = client.iter_subscription_feed()
+    next(feed)
+
+    with pytest.raises(AccountError, match=f"the entries of {SUBSCRIPTIONS_URL} raised KeyError"):
+        next(feed)
+
+    assert len(closes) == 1
+
+
+def test_an_error_of_the_own_code_of_the_client_stays_as_it_is(monkeypatch, client, fake):
+    def broken(entry):
+        raise KeyError("a defect of the client")
+
+    monkeypatch.setattr(account, "_subscribed_channel", broken)
+
+    with pytest.raises(KeyError, match="a defect of the client"):
+        client.subscribed_channels()
+
+
+def test_an_error_of_the_login_check_of_the_client_stays_as_it_is(monkeypatch, client, youtube):
+    monkeypatch.setattr(account._AccountYoutubeDL, "_check_login", raising(TypeError("a defect of the client")))
+
+    with pytest.raises(TypeError, match="a defect of the client"):
+        client.check_session()
+
+
+def test_the_locked_yt_dlp_has_each_internal_of_the_client():
+    assert account.missing_internals() == []
+    assert set(account.YTDLP_INTERNALS) == {"YoutubeDL", "YoutubeTab"}
+
+
+@pytest.mark.parametrize(
+    ("owner", "name"),
+    [("YoutubeTab", "_extract_response"), ("YoutubeTab", "generate_api_headers"), ("YoutubeDL", "urlopen")],
+)
+def test_missing_internals_names_each_internal_that_a_release_lacks(monkeypatch, owner, name):
+    monkeypatch.setattr(YoutubeDL if owner == "YoutubeDL" else tab_class(), name, missing(name))
+
+    assert account.missing_internals() == [f"{owner}.{name}"]

@@ -1,14 +1,15 @@
 """The command line of the service: ``serve`` starts the web service. ``run-once`` is one sync, ``check-session`` is one
 session check, ``check-upload`` is one check of a cookie upload, ``refresh-account`` is one refresh of the account
 data, ``find-channels`` is one channel search, and ``subscribe`` and ``unsubscribe`` change one subscription,
-``preview-rule`` is one preview of a rule, and ``apply-rule`` is one apply of a rule. The service starts each command
-except ``serve`` in a child process.
+``preview-rule`` is one preview of a rule, ``apply-rule`` is one apply of a rule, and ``check-ytdlp`` is one check of
+a new yt-dlp release. The service starts each command except ``serve`` in a child process.
 """
 
 import argparse
 import datetime
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from youtube_automanager.account_refresh import refresh_once
 from youtube_automanager.channel_actions import change_subscription_once, find_channels_once
@@ -18,6 +19,7 @@ from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.rule_actions import apply_once, preview_once
 from youtube_automanager.runner import check_session_once, run_once
 from youtube_automanager.settings import get_settings
+from youtube_automanager.ytdlp_check import check_once as check_ytdlp_once
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -88,6 +90,13 @@ def _parser() -> argparse.ArgumentParser:
     apply_parser.add_argument(
         "--since", type=datetime.date.fromisoformat, required=True, help="the first day of the videos, YYYY-MM-DD"
     )
+    check_ytdlp_parser = commands.add_parser(
+        "check-ytdlp",
+        help="check a new yt-dlp release in a folder before it replaces the active one; read the stored cookie text, "
+        "if any, from the standard input; the service starts this command in a child process",
+    )
+    check_ytdlp_parser.add_argument("--folder", type=Path, required=True, help="the folder of the new release")
+    check_ytdlp_parser.add_argument("--version", required=True, help="the PyPI version that the folder holds")
     return parser
 
 
@@ -158,6 +167,14 @@ def _apply_rule(run_id: int, rule_id: int, since: datetime.date) -> int:
     return apply_once(run_id, rule_id, since, settings)
 
 
+def _check_ytdlp(folder: Path, version: str) -> int:
+    settings = get_settings()
+    setup_logging(settings.verbose)
+    # The text comes on the standard input, because the command line and the environment are visible to other
+    # processes.
+    return check_ytdlp_once(folder, version, sys.stdin.read())
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "serve":
@@ -180,6 +197,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _preview_rule(args.since, args.rule_id, args.draft)
     if args.command == "apply-rule":
         return _apply_rule(args.run_id, args.rule_id, args.since)
+    if args.command == "check-ytdlp":
+        return _check_ytdlp(args.folder, args.version)
     return _run_once(args.run_id)
 
 
