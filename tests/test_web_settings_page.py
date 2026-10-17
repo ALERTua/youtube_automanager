@@ -40,7 +40,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.engine import account_session
 from youtube_automanager.engine.modes import ProcessingMode
-from youtube_automanager.notify import DEFAULT_EVENTS, Event, Level
+from youtube_automanager.notify import DEFAULT_EVENTS, EVENT_LEVELS, Event, Level
 from youtube_automanager.rotation import ROTATION_KEY
 from youtube_automanager.runner import SOURCE_ROOT, UNAVAILABLE_EXIT_CODE, sync_lock_held
 from youtube_automanager.short_child import (
@@ -52,6 +52,7 @@ from youtube_automanager.short_child import (
     ChildYouTubeError,
 )
 from youtube_automanager.web.ui.cookie_upload import COMPOSE_KEY_COMMAND, KEY_COMMAND, MAX_FILE_BYTES
+from youtube_automanager.web.ui.notification_targets import EVENT_LABELS, LEVEL_LABELS
 from youtube_automanager.web.ui.settings_page import expired_text, upload_error_text
 from youtube_automanager.youtube.account import AccountError, NotLoggedInError
 from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES
@@ -930,10 +931,10 @@ async def test_a_new_service_has_no_target(user):
     await user.open("/settings")
 
     assert text_of(user, "no-targets") == "No notification target yet. The button Add a target creates one."
-    await user.should_not_see(marker="targets-table")
+    await user.should_not_see(marker="targets-list")
 
 
-async def test_a_new_target_gets_the_default_events_and_the_table_shows_only_its_scheme(user, sessions):
+async def test_a_new_target_gets_the_default_events_and_its_card_shows_only_its_scheme(user, sessions):
     await user.open("/settings")
     await open_editor(user, "target-add")
     assert text_of(user, "target-editor-title") == "New target"
@@ -949,7 +950,7 @@ async def test_a_new_target_gets_the_default_events_and_the_table_shows_only_its
     assert (row.name, row.url, row.min_level, row.enabled) == ("Phone", f"settingsok://{TOKEN}/chat", 0, True)
     assert set(row.events) == {event.value for event in DEFAULT_EVENTS}
     assert not element_of(user, "target-dialog").value
-    await eventually(lambda: elements_of(user, f"target-{row.id}"), "The row of the new target")
+    await eventually(lambda: elements_of(user, f"target-{row.id}"), "The card of the new target")
     assert text_of(user, f"target-{row.id}-name") == "Phone"
     assert text_of(user, f"target-{row.id}-url") == "settingsok://…"
     for event in Event:
@@ -957,6 +958,45 @@ async def test_a_new_target_gets_the_default_events_and_the_table_shows_only_its
     assert element_of(user, f"target-{row.id}-level").value is Level.INFO
     assert element_of(user, f"target-{row.id}-enabled").value is True
     assert TOKEN not in page_dump(user)
+
+
+def child_of(card: ui.element, element: ui.element) -> ui.element | None:
+    """Return the direct child of ``card`` that holds ``element``, or None when ``card`` does not hold it."""
+    while element.parent_slot is not None:
+        parent = element.parent_slot.parent
+        if parent is card:
+            return element
+        element = parent
+    return None
+
+
+async def test_each_checkbox_of_a_target_names_its_event_and_the_level_of_the_event(user, sessions):
+    store(sessions, target(1, "Phone"))
+    await user.open("/settings")
+
+    assert element_of(user, "target-1-event-run_summary").text == "Run summary · Success"
+    assert element_of(user, "target-1-event-run_failed").text == "Run failed · Failure"
+    for event in Event:
+        expected = f"{EVENT_LABELS[event]} · {LEVEL_LABELS[EVENT_LEVELS[event]]}"
+        assert element_of(user, f"target-1-event-{event.value}").text == expected, event
+    assert element_of(user, "target-1-level").props["label"] == "Lowest level"
+    assert element_of(user, "target-1-enabled").text == "Enabled"
+
+
+async def test_a_card_holds_the_controls_of_its_target_in_two_rows(user, sessions):
+    store(sessions, target(1, "Phone"), target(2, "Desk"))
+    await user.open("/settings")
+    first, second = element_of(user, "target-1"), element_of(user, "target-2")
+
+    controls = [f"target-1-{name}" for name in ("name", "url", "level", "enabled", "test", "edit", "delete")]
+    top = {child_of(first, element_of(user, marker)) for marker in controls}
+    events = {child_of(first, element_of(user, f"target-1-event-{event.value}")) for event in Event}
+    assert first.default_slot.children == [*top, *events]
+    assert events == {element_of(user, "target-1-events")}
+    # The class "row" of Quasar wraps the children of a row, and the style "flex-wrap: nowrap" stops it.
+    assert [row._style.get("flex-wrap") for row in first.default_slot.children] == [None, None]
+    assert child_of(second, element_of(user, "target-1-name")) is None
+    assert child_of(first, element_of(user, "target-2-event-run_failed")) is None
 
 
 @pytest.mark.parametrize(
@@ -1008,7 +1048,7 @@ async def test_the_edit_form_shows_the_stored_url_and_a_new_url_replaces_it(user
 
     await user.should_see("The target Desk is saved.")
     assert [(row.name, row.url) for row in targets(sessions)] == [("Desk", f"settingsok://{TOKEN}")]
-    await eventually(lambda: text_of(user, "target-1-name") == "Desk", "The new name in the table")
+    await eventually(lambda: text_of(user, "target-1-name") == "Desk", "The new name in the card")
 
     await open_editor(user, "target-1-edit")
     assert element_of(user, "target-url").value == f"settingsok://{TOKEN}"
@@ -1016,7 +1056,7 @@ async def test_the_edit_form_shows_the_stored_url_and_a_new_url_replaces_it(user
     user.find(marker="target-url").type("settingsfail://other")
     user.find(marker="target-save").click()
     await eventually(lambda: targets(sessions)[0].url == "settingsfail://other", "The new URL")
-    await eventually(lambda: text_of(user, "target-1-url") == "settingsfail://…", "The new scheme in the table")
+    await eventually(lambda: text_of(user, "target-1-url") == "settingsfail://…", "The new scheme in the card")
 
 
 async def test_the_edit_form_refuses_an_empty_url(user, sessions):
@@ -1067,7 +1107,7 @@ async def test_the_edit_of_a_target_that_went_tells_so(user, sessions):
     user.find(marker="target-1-edit").click()
 
     await user.should_see(GONE_TEXT)
-    await eventually(lambda: not elements_of(user, "target-1"), "The row of the gone target goes")
+    await eventually(lambda: not elements_of(user, "target-1"), "The card of the gone target goes")
     assert not element_of(user, "target-dialog").value
     assert not elements_of(user, "target-name")
 
@@ -1101,7 +1141,7 @@ async def test_a_delete_asks_first(user, sessions):
 
     await user.should_see("The target Phone is deleted.")
     assert [row.name for row in targets(sessions)] == ["Desk"]
-    await eventually(lambda: not elements_of(user, "target-1"), "The row of the deleted target goes")
+    await eventually(lambda: not elements_of(user, "target-1"), "The card of the deleted target goes")
     assert elements_of(user, "target-2")
 
 
@@ -1109,7 +1149,7 @@ def choices_of(row: NotificationTarget) -> tuple:
     return row.events, row.min_level, row.enabled
 
 
-async def test_the_table_changes_only_the_draft_until_a_save(user, sessions, caplog):
+async def test_the_cards_change_only_the_draft_until_a_save(user, sessions, caplog):
     caplog.set_level(logging.INFO)
     store(sessions, target(1, "Phone"), target(2, "Desk", events=["video_added", "no_such_event"]))
     await user.open("/settings")
@@ -1149,7 +1189,7 @@ async def test_a_save_of_a_target_that_went_tells_so_and_saves_the_other_changes
     await save(user)
 
     await user.should_see(GONE_TEXT)
-    await eventually(lambda: not elements_of(user, "target-1"), "The row of the gone target goes")
+    await eventually(lambda: not elements_of(user, "target-1"), "The card of the gone target goes")
     assert [row.name for row in targets(sessions)] == ["Desk"]
     assert setting(sessions, ROTATION_KEY) is False
 
@@ -1169,7 +1209,7 @@ async def test_a_delete_keeps_the_draft_of_the_other_targets_and_blocks(user, se
     await eventually(lambda: elements_of(user, "target-delete-confirm"), "The question")
     user.find(marker="target-delete-confirm").click()
 
-    await eventually(lambda: not elements_of(user, "target-2"), "The row of the deleted target goes")
+    await eventually(lambda: not elements_of(user, "target-2"), "The card of the deleted target goes")
     assert element_of(user, "target-1-event-video_added").value is True
     assert element_of(user, "target-1-level").value is Level.FAILURE
     assert element_of(user, "target-3-enabled").value is False
@@ -1201,7 +1241,7 @@ async def test_the_delete_of_the_only_changed_target_ends_the_draft(user, sessio
     assert [row.name for row in targets(sessions)] == ["Desk"]
 
 
-async def test_an_added_or_changed_target_keeps_the_draft_of_the_table(user, sessions):
+async def test_an_added_or_changed_target_keeps_the_draft_of_the_cards(user, sessions):
     store(sessions, target(1, "Phone"))
     await user.open("/settings")
     user.find(marker="target-1-enabled").click()
@@ -1209,12 +1249,12 @@ async def test_an_added_or_changed_target_keeps_the_draft_of_the_table(user, ses
     await open_editor(user, "target-1-edit")
     user.find(marker="target-name").type(" 2")
     user.find(marker="target-save").click()
-    await eventually(lambda: text_of(user, "target-1-name") == "Phone 2", "The new name in the table")
+    await eventually(lambda: text_of(user, "target-1-name") == "Phone 2", "The new name in the card")
     await open_editor(user, "target-add")
     user.find(marker="target-name").type("Desk")
     user.find(marker="target-url").type("settingsok://desk")
     user.find(marker="target-save").click()
-    await eventually(lambda: elements_of(user, "target-2"), "The row of the new target")
+    await eventually(lambda: elements_of(user, "target-2"), "The card of the new target")
 
     assert element_of(user, "target-1-enabled").value is False
     assert element_of(user, "target-2-enabled").value is True
@@ -1353,7 +1393,7 @@ async def test_discard_puts_each_control_back_and_writes_nothing(user, sessions)
     assert (element_of(user, "ytdlp-enabled").value, element_of(user, "ytdlp-channel").value) == (True, "stable")
     assert element_of(user, "ytdlp-time").value == "04:00"
     await user.should_not_see(marker="ytdlp-error")
-    # The table shows the stored choices after its rebuild.
+    # The cards show the stored choices after their rebuild.
     await eventually(lambda: element_of(user, "target-1-event-video_added").value is False, "The stored event")
     assert element_of(user, "target-1-level").value is Level.INFO
     assert element_of(user, "target-1-enabled").value is True
@@ -1386,7 +1426,7 @@ async def test_a_save_writes_only_the_changed_settings(user, sessions):
         (["video_added"], 0, True),
     ]
     assert not element_of(user, "mode-confirm-dialog").value
-    # The table reads the targets again, so it shows the choices of the other page too.
+    # The block reads the targets again, so it shows the choices of the other page too.
     await eventually(lambda: element_of(user, "target-1-enabled").value is False, "The switch of the other page")
     assert element_of(user, "target-2-event-video_added").value is True
     assert element_of(user, "target-1-level").value is Level.WARNING
