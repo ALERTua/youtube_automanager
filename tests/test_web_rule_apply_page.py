@@ -302,9 +302,9 @@ async def test_the_preview_of_a_new_rule_lists_what_the_draft_matches_and_stores
     user.find(marker="add-condition").click()
     await eventually(lambda: elements_of(user, "field-0"), "The condition")
     set_value(user, "field-0", "duration_s")
-    await eventually(lambda: isinstance(elements_of(user, "value-0")[-1], ui.number), "The input of the seconds")
+    await eventually(lambda: elements_of(user, "minutes-0"), "The input of the minutes")
     assert elements_of(user, "operator-0")[-1].value == ">="
-    set_value(user, "value-0", 120)
+    set_value(user, "minutes-0", 2)
     await preview_in_editor(user)
 
     assert shown(user, "preview-table") == [("Live soon", "Undecided"), ("A long video", "Matches")]
@@ -347,7 +347,7 @@ async def test_the_preview_of_a_change_lists_the_videos_whose_result_changes(
     assert text_of(user, "preview-empty") == "Your changes change the result for no video since this day."
 
     set_value(user, "operator-0", "<")
-    await eventually(lambda: elements_of(user, "value-0")[-1].value == 120, "The comparison")
+    await eventually(lambda: elements_of(user, "minutes-0")[-1].value == 2, "The comparison")
     set_value(user, "rule-channels", [A, B])
     await preview_in_editor(user)
 
