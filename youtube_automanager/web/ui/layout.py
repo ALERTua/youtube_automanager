@@ -14,7 +14,15 @@ from nicegui import ui
 
 from youtube_automanager.i18n import _
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.theme import DARK_MODE, ICONS, LABELS, NEXT_THEME, Theme, save_theme
+from youtube_automanager.web.ui.theme import (
+    DARK_MODE,
+    ICONS,
+    LABELS,
+    NEXT_THEME,
+    Theme,
+    first_paint_style,
+    save_theme,
+)
 
 type PageBuilder = Callable[[Services], Awaitable[None]]
 
@@ -55,11 +63,14 @@ def pages() -> list[Page]:
 def frame(current: Page, services: Services, theme: Theme) -> Iterator[None]:
     """Draw the header and the navigation drawer, and put the elements of the ``with`` block into the content frame.
 
-    ``theme`` is the stored color theme. The button of the header goes to the next theme at once, and it stores it.
+    ``theme`` is the stored color theme. The head of the page paints its background for the moment before the scripts
+    of the page run. The button of the header goes to the next theme at once, and it stores it.
     """
     # Translators: the title of the browser tab. {page} is the name of the page, for example "Dashboard".
     title = _("{page} - YouTube AutoManager").format(page=_(current.label))
     ui.page_title(title)
+    if style := first_paint_style(theme):
+        ui.add_head_html(style)
     dark = ui.dark_mode(DARK_MODE[theme]).mark("dark-mode")
     chosen = [theme]
 
