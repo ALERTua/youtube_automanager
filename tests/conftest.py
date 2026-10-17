@@ -31,7 +31,7 @@ from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, SyncRun
 from youtube_automanager.rotation import CookieRotation
 from youtube_automanager.runner import SYNC_LOCK
 from youtube_automanager.settings import Settings
-from youtube_automanager.youtube.ytdlp_updater import UpdateResult, installed_version
+from youtube_automanager.youtube.ytdlp_updater import UpdateResult, installed_version, previous_dir
 
 
 class FakeYtdlpInstall:
@@ -39,20 +39,24 @@ class FakeYtdlpInstall:
 
     Each call takes its outcome from ``plan``: ``{"version": ...}`` puts a fake release of that version into the folder,
     and ``{"error": ..., "version": ...}`` fails the update and leaves the folder as it is. With an empty plan, the
-    folder stays as it is and counts as up to date. A set ``release`` event holds each call until it is set.
+    folder stays as it is and counts as up to date. A version that equals ``skipped`` installs nothing. As the real
+    update does, a new version keeps the replaced release in ``<folder>.previous``. A set ``release`` event holds each
+    call until it is set. ``options`` records the check and the skipped version of each call.
     """
 
     def __init__(self):
         self.plan = []
         self.calls = []
+        self.options = []
         # The sync lock of the runner, and whether it was taken at each call.
         self.lock = SYNC_LOCK
         self.lock_taken = []
         self.started = threading.Event()
         self.release = None
 
-    def __call__(self, target_dir, channel):
+    def __call__(self, target_dir, channel, *, smoke=None, skipped=None):
         self.calls.append((target_dir, channel))
+        self.options.append({"smoke": smoke, "skipped": skipped})
         self.lock_taken.append(self.lock.locked())
         self.started.set()
         if self.release is not None:
@@ -62,7 +66,13 @@ class FakeYtdlpInstall:
         new_version = outcome.get("version")
         if "error" in outcome:
             return UpdateResult(False, channel, old_version, new_version, outcome["error"])
+        if new_version != old_version and new_version == skipped:
+            return UpdateResult(True, channel, old_version, new_version, None, skipped=True)
         if new_version != old_version:
+            previous = previous_dir(target_dir)
+            if old_version is not None:
+                shutil.rmtree(previous, ignore_errors=True)
+                target_dir.rename(previous)
             self.write_release(target_dir, new_version)
         return UpdateResult(True, channel, old_version, new_version, None)
 

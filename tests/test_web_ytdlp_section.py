@@ -8,11 +8,13 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from ui_support import element_of, eventually, running_service, set_value, store, text_of
+from ui_support import element_of, elements_of, eventually, running_service, set_value, store, text_of
 
 from youtube_automanager.db.models import Schedule, ScheduleKind, Setting
 from youtube_automanager.runner import sync_lock_held
-from youtube_automanager.ytdlp_job import LAST_UPDATE_KEY, SETTINGS_KEY
+from youtube_automanager.youtube import ytdlp_updater
+from youtube_automanager.ytdlp_check import check_release_in_child
+from youtube_automanager.ytdlp_job import LAST_UPDATE_KEY, SETTINGS_KEY, SKIPPED_KEY
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -199,6 +201,10 @@ async def test_update_now_shows_a_spinner_and_then_the_result_and_the_new_versio
     assert ytdlp_install.calls == [(settings.ytdlp_dir, "nightly")]
     assert ytdlp_install.lock_taken == [True]
     assert setting(sessions, LAST_UPDATE_KEY)["new_version"] == NEW
+    # The new release replaces the active one only after its check in a child process.
+    [options] = ytdlp_install.options
+    assert options["smoke"].func is check_release_in_child
+    assert options["skipped"] is None
 
 
 @pytest.mark.parametrize(
@@ -256,3 +262,136 @@ async def test_the_next_update_follows_the_time_zone_of_the_schedule(nicegui_glo
         assert text_of(user, "ytdlp-time-help") == "In the time zone of the schedule, UTC."
         next_update = datetime.strptime(text_of(user, "ytdlp-next"), "%Y-%m-%d %H:%M UTC").replace(tzinfo=UTC)
         assert (next_update.hour, next_update.minute) == (4, 0)
+
+
+# The previous version and the yt-dlp of the image
+
+
+def previous(settings):
+    return ytdlp_updater.previous_dir(settings.ytdlp_dir)
+
+
+async def answer(user, marker, confirm):
+    """Answer the open question of ``marker``: confirm it or cancel it."""
+    await eventually(lambda: elements_of(user, f"{marker}-question"), "The question")
+    user.find(marker=f"{marker}-confirm" if confirm else f"{marker}-cancel").click()
+
+
+async def test_the_card_shows_the_previous_and_the_skipped_version(
+    nicegui_globals, settings, sessions, fake_starter, ytdlp_install
+):
+    ytdlp_install.write_release(previous(settings), OLD)
+    ytdlp_install.write_release(settings.ytdlp_dir, NEW)
+    store(sessions, Setting(key=SKIPPED_KEY, value="2026.9.1"))
+
+    async with running_service(settings, fake_starter) as user:
+        await user.open("/settings")
+
+        assert text_of(user, "ytdlp-version") == NEW
+        assert text_of(user, "ytdlp-previous") == OLD
+        assert text_of(user, "ytdlp-skipped") == "2026.9.1"
+        assert element_of(user, "ytdlp-go-back").enabled
+        assert element_of(user, "ytdlp-use-image").enabled
+
+
+async def test_a_new_service_has_nothing_to_go_back_to(user):
+    await user.open("/settings")
+
+    assert text_of(user, "ytdlp-previous") == "None"
+    assert text_of(user, "ytdlp-skipped") == "None"
+    assert not element_of(user, "ytdlp-go-back").enabled
+    assert not element_of(user, "ytdlp-use-image").enabled
+
+
+async def test_go_back_after_a_confirmation_puts_the_previous_version_back_and_skips_the_new_one(
+    nicegui_globals, settings, sessions, fake_starter, ytdlp_install
+):
+    ytdlp_install.write_release(settings.ytdlp_dir, OLD)
+    ytdlp_install.plan.append({"version": NEW})
+
+    async with running_service(settings, fake_starter) as user:
+        await user.open("/settings")
+        user.find(marker="ytdlp-update-now").click()
+        await eventually(lambda: text_of(user, "ytdlp-previous") == OLD, "The kept previous version")
+
+        user.find(marker="ytdlp-go-back").click()
+        await answer(user, "ytdlp-go-back", confirm=False)
+        await asyncio.sleep(SETTLE_SECONDS)
+        assert ytdlp_updater.installed_version(settings.ytdlp_dir) == NEW
+
+        user.find(marker="ytdlp-go-back").click()
+        await eventually(lambda: elements_of(user, "ytdlp-go-back-question"), "The second question")
+        assert text_of(user, "ytdlp-go-back-question") == (
+            f"Go back from yt-dlp {NEW} to {OLD}? The daily update then skips {NEW}, and it installs only a newer "
+            "version."
+        )
+        await answer(user, "ytdlp-go-back", confirm=True)
+
+        expected = f"yt-dlp {OLD} is active now. The daily update skips {NEW}."
+        await eventually(lambda: text_of(user, "ytdlp-result") == expected, "The result")
+        assert text_of(user, "ytdlp-version") == OLD
+        assert text_of(user, "ytdlp-previous") == NEW
+        assert text_of(user, "ytdlp-skipped") == NEW
+
+    assert ytdlp_updater.installed_version(settings.ytdlp_dir) == OLD
+    assert setting(sessions, SKIPPED_KEY) == NEW
+
+
+async def test_use_image_after_a_confirmation_moves_the_release_aside_and_skips_its_version(
+    nicegui_globals, settings, sessions, fake_starter, ytdlp_install
+):
+    ytdlp_install.write_release(settings.ytdlp_dir, NEW)
+
+    async with running_service(settings, fake_starter) as user:
+        await user.open("/settings")
+        user.find(marker="ytdlp-use-image").click()
+        await answer(user, "ytdlp-use-image", confirm=True)
+
+        expected = f"yt-dlp {IMAGE} is active now. The daily update skips {NEW}."
+        await eventually(lambda: text_of(user, "ytdlp-result") == expected, "The result")
+        assert text_of(user, "ytdlp-version") == IMAGE
+        assert text_of(user, "ytdlp-source") == "Image of the service"
+        assert text_of(user, "ytdlp-previous") == NEW
+        assert not element_of(user, "ytdlp-use-image").enabled
+        assert element_of(user, "ytdlp-go-back").enabled
+
+    assert ytdlp_updater.active_version(settings.ytdlp_dir) == (IMAGE, "image")
+    assert setting(sessions, SKIPPED_KEY) == NEW
+
+
+async def test_a_change_while_the_sync_lock_is_taken_changes_nothing(
+    nicegui_globals, settings, sessions, fake_starter, ytdlp_install
+):
+    ytdlp_install.write_release(previous(settings), OLD)
+    ytdlp_install.write_release(settings.ytdlp_dir, NEW)
+
+    async with running_service(settings, fake_starter) as user:
+        await user.open("/settings")
+        user.find(marker="ytdlp-go-back").click()
+        await eventually(lambda: elements_of(user, "ytdlp-go-back-question"), "The question")
+        with sync_lock_held():
+            user.find(marker="ytdlp-go-back-confirm").click()
+            await eventually(lambda: text_of(user, "ytdlp-result").startswith(BUSY_TEXT), "The busy text")
+
+    assert ytdlp_updater.installed_version(settings.ytdlp_dir) == NEW
+    assert setting(sessions, SKIPPED_KEY) is None
+
+
+async def test_a_skipped_daily_update_tells_why_it_installed_nothing(nicegui_globals, settings, sessions, fake_starter):
+    record = {
+        "at": "2026-10-12T01:00:00+00:00",
+        "ok": True,
+        "channel": "stable",
+        "old_version": OLD,
+        "new_version": NEW,
+        "error": None,
+        "skipped": True,
+    }
+    store(sessions, Setting(key=LAST_UPDATE_KEY, value=record))
+
+    async with running_service(settings, fake_starter) as user:
+        await user.open("/settings")
+
+        assert text_of(user, "ytdlp-last-result") == (
+            f"{NEW} is the version that you left, so the daily update does not install it."
+        )
