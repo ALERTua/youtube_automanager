@@ -29,13 +29,18 @@ class Settings(BaseSettings):
     # The key of the stored cookies: one key, or several keys separated by commas with the newest first.
     # Without it, the service cannot store or read the cookies.
     cookies_key: SecretStr | None = None
+    # More host names that the web service accepts, separated by commas. A name that starts with a dot also allows
+    # its subdomains, and "*" turns the check of the host name off.
+    allowed_hosts: str = ""
+    # The password of the web UI. Empty means no password.
+    ui_password: SecretStr | None = None
 
     @field_validator("home", mode="before")
     @classmethod
     def _empty_home_is_default(cls, value):
         return value or HOME_DEFAULT
 
-    @field_validator("database_url", "ytdlp_dir", "tz", "cookies_key", mode="before")
+    @field_validator("database_url", "ytdlp_dir", "tz", "cookies_key", "ui_password", mode="before")
     @classmethod
     def _empty_value_is_default(cls, value):
         if value == "":
