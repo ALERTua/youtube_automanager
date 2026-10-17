@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from sqlalchemy import make_url
 
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
+from youtube_automanager.db.backup import backup_before_upgrade
 from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.retention import clean_history
 from youtube_automanager.rotation import CookieRotation
@@ -34,10 +35,12 @@ STOP_TIMEOUT_SECONDS = 10
 
 
 def _prepare_database(url: str) -> None:
-    """Create the folder of a SQLite file, and bring the schema to the newest version."""
+    """Create the folder of a SQLite file, copy the file before a pending migration, and bring the schema to the newest
+    version. A failed copy stops the start before the migration."""
     parsed = make_url(url)
     if parsed.get_backend_name() == "sqlite" and parsed.database and parsed.database != ":memory:":
         Path(parsed.database).parent.mkdir(parents=True, exist_ok=True)
+    backup_before_upgrade(url)
     upgrade_to_head(url)
 
 
