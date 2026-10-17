@@ -1,7 +1,8 @@
 """The command line of the service: ``serve`` starts the web service. ``run-once`` is one sync, ``check-session`` is one
-session check, ``refresh-account`` is one refresh of the account data, ``find-channels`` is one channel search, and
-``subscribe`` and ``unsubscribe`` change one subscription, ``preview-rule`` is one preview of a rule, and
-``apply-rule`` is one apply of a rule. The service starts each command except ``serve`` in a child process.
+session check, ``check-upload`` is one check of a cookie upload, ``refresh-account`` is one refresh of the account
+data, ``find-channels`` is one channel search, and ``subscribe`` and ``unsubscribe`` change one subscription,
+``preview-rule`` is one preview of a rule, and ``apply-rule`` is one apply of a rule. The service starts each command
+except ``serve`` in a child process.
 """
 
 import argparse
@@ -11,6 +12,7 @@ from collections.abc import Sequence
 
 from youtube_automanager.account_refresh import refresh_once
 from youtube_automanager.channel_actions import change_subscription_once, find_channels_once
+from youtube_automanager.cookie_upload_check import check_upload_once
 from youtube_automanager.engine.rule_preview import DraftRule
 from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.rule_actions import apply_once, preview_once
@@ -31,6 +33,11 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "check-session",
         help="check the session of the stored YouTube cookies; the service starts it in a child process",
+    )
+    commands.add_parser(
+        "check-upload",
+        help="read a cookie text from the standard input, check its session with YouTube, and store it when YouTube "
+        "accepts it; the service starts this command in a child process",
     )
     commands.add_parser(
         "refresh-account",
@@ -113,6 +120,14 @@ def _check_session() -> int:
     return check_session_once(settings)
 
 
+def _check_upload() -> int:
+    settings = get_settings()
+    setup_logging(settings.verbose)
+    # The text comes on the standard input, because the command line and the environment are visible to other
+    # processes.
+    return check_upload_once(settings, sys.stdin.read())
+
+
 def _refresh_account() -> int:
     settings = get_settings()
     setup_logging(settings.verbose)
@@ -149,6 +164,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _serve()
     if args.command == "check-session":
         return _check_session()
+    if args.command == "check-upload":
+        return _check_upload()
     if args.command == "refresh-account":
         return _refresh_account()
     if args.command == "find-channels":

@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TextIO
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session, sessionmaker
@@ -136,20 +136,38 @@ class ChildProcess(Protocol):
     def kill(self) -> None: ...
 
 
-type ChildStarter = Callable[[Sequence[str], Mapping[str, str]], ChildProcess]
+# A starter gets the command, the environment and the input text of the child, or None when the child gets no input.
+type ChildStarter = Callable[[Sequence[str], Mapping[str, str], str | None], ChildProcess]
 
 
-def start_child(command: Sequence[str], env: Mapping[str, str]) -> subprocess.Popen[str]:
-    """Start the child with its stdout on the stdout of the service and its stderr in a pipe."""
-    return subprocess.Popen(
+def start_child(command: Sequence[str], env: Mapping[str, str], input_text: str | None = None) -> subprocess.Popen[str]:
+    """Start the child with its stdout on the stdout of the service and its stderr in a pipe.
+
+    ``input_text`` goes to the standard input of the child, and the input ends after it. A thread writes it, so a child
+    that does not read its input cannot block the service. Without ``input_text``, the child gets no input.
+    """
+    child = subprocess.Popen(
         command,
         env=env,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL if input_text is None else subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
     )
+    if input_text is not None:
+        threading.Thread(target=_write_input, args=(child.stdin, input_text), name="child-stdin", daemon=True).start()
+    return child
+
+
+def _write_input(stream: TextIO, text: str) -> None:
+    """Write the input text of a child to its standard input, and close it. No log line holds the text."""
+    try:
+        with stream:
+            stream.write(text)
+    except (OSError, ValueError) as error:
+        # A child that ends before it reads all of its input closes the pipe. The name of the error holds no input.
+        LOG.warning("Cannot write the input of the child process: %s", type(error).__name__)
 
 
 def child_command(run_id: int) -> list[str]:
@@ -374,17 +392,19 @@ class SyncRunner:
             outcome, account.session_state, account.last_checked_at, account.earliest_cookie_expiry, detail
         )
 
-    def run_short_child(self, command: Sequence[str], name: str, timeout_s: float) -> _ChildEnd | None:
+    def run_short_child(
+        self, command: Sequence[str], name: str, timeout_s: float, input_text: str | None = None
+    ) -> _ChildEnd | None:
         """Run a child that works with the cookies, and tell how it ended. The call blocks until the child ends.
 
         The child holds the sync lock, so a run never works on the cookies at the same time, and ``stop`` stops the
-        child. Return None and start nothing when a run, a session check, another child or a yt-dlp update holds the
-        lock.
+        child. ``input_text`` goes to the standard input of the child, never to its command line or its environment.
+        Return None and start nothing when a run, a session check, another child or a yt-dlp update holds the lock.
         """
         if not self._lock.acquire(blocking=False):
             return None
         try:
-            return self._run_process(command, name, timeout_s)
+            return self._run_process(command, name, timeout_s, input_text)
         finally:
             self._lock.release()
 
@@ -400,10 +420,13 @@ class SyncRunner:
             return RunStatus.FAILED, INTERRUPTED_ERROR
         return RunStatus.FAILED, end.error_text or f"The sync process exited with code {end.returncode}."
 
-    def _run_process(self, command: Sequence[str], name: str, timeout_s: float) -> _ChildEnd:
+    def _run_process(
+        self, command: Sequence[str], name: str, timeout_s: float, input_text: str | None = None
+    ) -> _ChildEnd:
         """Start a child, copy its stderr, wait up to ``timeout_s`` seconds, and tell how it ended.
 
-        ``stop`` terminates the child. A child that does not end in time gets killed.
+        The child gets ``input_text`` on its standard input. ``stop`` terminates the child. A child that does not end
+        in time gets killed.
         """
         env = child_environment(self._ytdlp_dir, self._database_url)
         with self._state_lock:
@@ -411,7 +434,7 @@ class SyncRunner:
                 return _ChildEnd(stopped=True)
             # The start happens under the lock, so `stop` either sees this child or stops the work before it starts.
             try:
-                child = self._start(command, env)
+                child = self._start(command, env, input_text)
             except (OSError, subprocess.SubprocessError) as error:
                 LOG.error("%s: cannot start the child process: %s", name, error)
                 return _ChildEnd(start_error=str(error))

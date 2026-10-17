@@ -1,4 +1,5 @@
 import datetime
+import io
 
 import pytest
 from fastapi import FastAPI
@@ -40,6 +41,17 @@ def test_check_session_runs_the_session_check_body(settings, logging_setups, mon
     assert cli.main(["check-session"]) == 3
 
     assert calls == [settings]
+    assert logging_setups == [True]
+
+
+def test_check_upload_gives_the_standard_input_to_the_upload_check_body(settings, logging_setups, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "check_upload_once", lambda given, text: calls.append((given, text)) or 4)
+    monkeypatch.setattr("sys.stdin", io.StringIO("# Netscape HTTP Cookie File\nthe rest\n"))
+
+    assert cli.main(["check-upload"]) == 4
+
+    assert calls == [(settings, "# Netscape HTTP Cookie File\nthe rest\n")]
     assert logging_setups == [True]
 
 
