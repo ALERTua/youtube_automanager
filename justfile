@@ -6,10 +6,13 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 # The folder of this file with forward slashes. A single-quoted string of just has no escapes, so '\\' would be two
 # backslashes, and only the double-quoted "\\" is one.
 project_dir := replace(justfile_directory(), "\\", "/")
-# The local service keeps its database and its yt-dlp releases in the folder data next to this file.
+# The local service keeps its database and its yt-dlp releases in the folder data next to this file. The file .env
+# also configures the container, where DATABASE_URL, YTDLP_DIR and HOME point into /data, and on Windows /data is a
+# folder at the root of the drive. So the local recipes set these three names themselves, and the [env] attribute of a
+# recipe wins over .env. LOCAL_DATABASE_URL gives the local service another database, for example PostgreSQL.
 data_dir := project_dir + "/data"
-database_url := env("DATABASE_URL", "sqlite:///" + data_dir + "/youtube_automanager.sqlite")
-ytdlp_dir := env("YTDLP_DIR", data_dir + "/yt-dlp")
+database_url := env("LOCAL_DATABASE_URL", "sqlite:///" + data_dir + "/youtube_automanager.sqlite")
+ytdlp_dir := data_dir + "/yt-dlp"
 image := "youtube_automanager"
 container := "youtube_automanager"
 
@@ -24,6 +27,7 @@ upgrade:
 # Start the web service with the scheduler on http://localhost:PORT, with the data in the folder data
 [env("DATABASE_URL", database_url)]
 [env("YTDLP_DIR", ytdlp_dir)]
+[env("HOME", data_dir)]
 serve PORT=env("PORT", "8080"):
     New-Item -ItemType Directory -Force "{{data_dir}}" | Out-Null; $env:PORT = "{{PORT}}"; \
     uv run python -m youtube_automanager serve
@@ -31,12 +35,14 @@ serve PORT=env("PORT", "8080"):
 # Check the stored YouTube cookies of the local service once
 [env("DATABASE_URL", database_url)]
 [env("YTDLP_DIR", ytdlp_dir)]
+[env("HOME", data_dir)]
 check-session:
     uv run python -m youtube_automanager check-session
 
 # Copy the subscriptions and the playlists of the account into the local database once
 [env("DATABASE_URL", database_url)]
 [env("YTDLP_DIR", ytdlp_dir)]
+[env("HOME", data_dir)]
 refresh-account:
     uv run python -m youtube_automanager refresh-account
 
