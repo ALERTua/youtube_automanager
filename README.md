@@ -179,7 +179,7 @@ You need [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/ju
 | Recipe | What it does |
 |---|---|
 | `just install` | Installs the dependencies of the service and of the development tools. |
-| `just serve` | Starts the service on http://localhost:8080, with its data in the folder `data`. |
+| `just serve` | Starts the service on http://localhost:8080, with its data in the folder `data`. It ignores `DATABASE_URL`, `YTDLP_DIR` and `HOME` of `.env`, because these values are for the container. To use another database, set `LOCAL_DATABASE_URL`. |
 | `just test` | Runs the tests on each core of the machine. |
 | `just test-serial` | Runs the tests in one process, for example `just test-serial --durations=0`. |
 | `just lint` | Formats the code and fixes the lint findings. |
