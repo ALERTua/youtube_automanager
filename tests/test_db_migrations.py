@@ -274,6 +274,44 @@ def test_the_rule_apply_trigger_keeps_the_runs_and_their_actions_and_downgrade_m
         engine.dispose()
 
 
+def test_the_catch_up_day_of_a_rule_keeps_the_rules_and_their_channels_in_both_directions(database_url):
+    config = alembic_config(database_url)
+    command.upgrade(config, "8d3e61b2c4a7")
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("INSERT INTO playlist (playlist_id, title, is_own) VALUES ('WL', 'Watch later', true)")
+            )
+            connection.execute(
+                text("INSERT INTO channel (channel_id, title, is_subscribed) VALUES ('UCa', 'Alpha', true)")
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO rule (id, name, enabled, position, condition, target_playlist_id, no_shorts, "
+                    "created_at, updated_at) VALUES (1, 'all', true, 1, '{}', 'WL', false, CURRENT_TIMESTAMP, "
+                    "CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(text("INSERT INTO rule_channel (rule_id, channel_id) VALUES (1, 'UCa')"))
+
+        command.upgrade(config, "head")
+
+        with engine.begin() as connection:
+            # A stored rule gets no catch-up.
+            assert connection.execute(text("SELECT id, catch_up_since FROM rule")).all() == [(1, None)]
+            connection.execute(text("UPDATE rule SET catch_up_since = '2026-10-05' WHERE id = 1"))
+
+        command.downgrade(config, "8d3e61b2c4a7")
+
+        assert "catch_up_since" not in {column["name"] for column in inspect(engine).get_columns("rule")}
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT id, name FROM rule")).all() == [(1, "all")]
+            assert connection.execute(text("SELECT rule_id, channel_id FROM rule_channel")).all() == [(1, "UCa")]
+    finally:
+        engine.dispose()
+
+
 def test_comparison_finds_a_column_that_the_migrations_lack(sqlite_url):
     upgrade_to_head(sqlite_url)
     engine = create_engine(sqlite_url)

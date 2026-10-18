@@ -15,7 +15,7 @@ import functools
 import json
 import logging
 import math
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -35,7 +35,7 @@ from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
 from youtube_automanager.web.ui.dashboard import format_time
-from youtube_automanager.web.ui.dates import today_button, today_in
+from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day, today_button, today_in
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
     FIELDS,
@@ -75,9 +75,7 @@ LONG_CELL = """
 </q-td>
 """
 
-# The first day of an apply and of its preview is this many days back by default.
-DEFAULT_DAYS_BACK = 7
-# The first day is at most this many days back.
+# The first day of an apply and of the older videos of a rule is at most this many days back.
 MAX_DAYS_BACK = 365
 # The table of a preview shows this many videos on one page.
 PREVIEW_PAGE_SIZE = 20
@@ -87,7 +85,10 @@ SECONDS_PER_ADD = 10
 # The label and the color of each result of a preview, in the order of the counts.
 MARKS = {
     Mark.WILL_ADD: (N_("Will be added"), "positive"),
-    Mark.ALREADY_ADDED: (N_("Already added"), "grey"),
+    Mark.ALREADY_ADDED: (N_("Already in the playlist"), "grey"),
+    Mark.WAITS_FOR_FIELD: (N_("Waits: no value yet for a field of the rule"), "warning"),
+    Mark.WAITS_FOR_LIVE: (N_("Waits: the video is upcoming or live"), "warning"),
+    Mark.WAITS_FOR_ACCOUNT: (N_("Waits for the YouTube account"), "warning"),
     Mark.MATCHES: (N_("Matches"), "positive"),
     Mark.MATCHES_NOW: (N_("Matches now"), "positive"),
     Mark.NO_LONGER_MATCHES: (N_("No longer matches"), "negative"),
@@ -132,6 +133,8 @@ class RuleRecord:
     # In the order of the channel titles.
     channel_ids: tuple[str, ...]
     updated_at: datetime
+    # The first day of the older videos that the next run also adds. None when the rule has no catch-up.
+    catch_up_since: date | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +170,7 @@ class RuleDraft:
     playlist_id: str
     no_shorts: bool
     condition: Any
+    catch_up_since: date | None = None
 
 
 @dataclass(frozen=True)
@@ -210,6 +214,7 @@ def read_stored(sessions: sessionmaker[Session], default_timezone: str) -> Store
                 no_shorts=rule.no_shorts,
                 channel_ids=tuple(sorted(links.get(rule.id, ()), key=lambda channel_id: order.get(channel_id, 0))),
                 updated_at=rule.updated_at,
+                catch_up_since=rule.catch_up_since,
             )
             for rule in session.scalars(select(Rule).order_by(Rule.position, Rule.id))
         ]
@@ -245,6 +250,7 @@ def save_rule(sessions: sessionmaker[Session], rule_id: int | None, draft: RuleD
         rule.target_playlist_id = draft.playlist_id
         rule.no_shorts = draft.no_shorts
         rule.condition = draft.condition
+        rule.catch_up_since = draft.catch_up_since
         # The change tracking compares a JSON value with Python ==, which takes 1 for true. The save always writes the
         # condition of the editor.
         flag_modified(rule, "condition")
@@ -340,6 +346,19 @@ def parse_since(text: str | None, today: date) -> date:
     return day
 
 
+def parse_catch_up(text: str | None, today: date) -> date | None:
+    """Return the day of the field Also add videos from, or None for an empty field.
+
+    Raise ValueError with a message for the user when the day is in the future or more than MAX_DAYS_BACK days back.
+    """
+    if not (text or "").strip():
+        return None
+    try:
+        return parse_since(text, today)
+    except ValueError as error:
+        raise ValueError(_("Also add videos from: {reason}").format(reason=error)) from None
+
+
 def day_input(today: date) -> ui.input:
     """Add the input of the first day of an apply and of its preview, with the default day."""
     earliest = today - timedelta(days=MAX_DAYS_BACK)
@@ -381,6 +400,58 @@ def counts_text(preview: Preview) -> str:
             part = _("{result}: {count}").format(result=_(label), count=preview.count(mark))
             parts.append(part)
     return ", ".join(parts)
+
+
+def next_run_notes(preview: Preview, draft: DraftRule, *, enabled: bool) -> list[tuple[str, str]]:
+    """Return the notes of a preview of the next run, each with the end of its marker, in plain words."""
+    notes = []
+    if not enabled:
+        notes.append(
+            (_("The rule is off, so no run uses it. The preview shows what the next run does with the rule on."), "off")
+        )
+    if preview.mode_changed:
+        if draft.catch_up_since is None:
+            text = _(
+                "A setting of the service changed how far a run reads the channels. So the next run adds no video "
+                "that is already on the channels. After that run, the rule adds the videos that come later."
+            )
+        else:
+            text = _(
+                "A setting of the service changed how far a run reads the channels. So the next run adds only the "
+                "videos from the day in Also add videos from. After that run, the rule adds the videos that come later."
+            )
+        notes.append((text, "mode-changed"))
+    elif preview.baseline_sources and draft.catch_up_since is None:
+        notes.append(
+            (
+                _(
+                    "The next run does not add the videos that are already on these channels: {channels}. Set Also "
+                    "add videos from to add them from that day."
+                ).format(channels=", ".join(preview.baseline_sources)),
+                "not-added",
+            )
+        )
+    if preview.count(Mark.WAITS_FOR_ACCOUNT):
+        notes.append(
+            (
+                _(
+                    "The YouTube account is not available now, so the matching videos wait for it. Upload new YouTube "
+                    "cookies on the Settings page."
+                ),
+                "account",
+            )
+        )
+    if preview.catch_up_adds > APPLY_LIMIT:
+        notes.append(
+            (
+                _(
+                    "The next run adds the {limit} oldest of the {count} videos from the day in Also add videos from. "
+                    "The runs after it add the rest."
+                ).format(limit=APPLY_LIMIT, count=preview.catch_up_adds),
+                "limit",
+            )
+        )
+    return notes
 
 
 def add_text(count: int) -> str:
@@ -438,37 +509,32 @@ class PreviewView:
         with self.container:
             ui.label(text).classes("text-negative whitespace-pre-wrap").mark(f"{self.marker}-failed")
 
-    def show(self, preview: Preview, note: str | None = None) -> None:
-        """Show the result. ``note`` comes first, for example that the rule is off."""
+    def note(self, text: str) -> None:
+        """Show only a note, for example that the result is old."""
         self.container.clear()
         with self.container:
-            if note:
-                ui.label(note).classes("text-warning").mark(f"{self.marker}-note")
+            ui.label(text).classes("text-warning").mark(f"{self.marker}-note")
+
+    def show(self, preview: Preview, notes: Sequence[tuple[str, str]] = (), footer: str | None = None) -> None:
+        """Show the result. Each of ``notes`` is a text and the end of its marker, and it comes before the list, for
+        example that the rule is off. ``footer`` comes under the list."""
+        self.container.clear()
+        with self.container:
+            for text, name in notes:
+                ui.label(text).classes("text-warning").mark(f"{self.marker}-{name}")
             for error in preview.errors:
                 ui.label(error).classes("text-negative").mark(f"{self.marker}-error")
-            if preview.mode_changed:
-                ui.label(
-                    _(
-                        "The processing mode changed, so the next run starts each source again: it stores the newest "
-                        "videos of each source as seen and adds none of them."
-                    )
-                ).classes("text-warning").mark(f"{self.marker}-mode-changed")
-            elif preview.baseline_sources:
-                ui.label(
-                    _(
-                        "The service has not read these sources yet, so the next run stores their newest videos as "
-                        "seen and adds none of them: {sources}"
-                    ).format(sources=", ".join(preview.baseline_sources))
-                ).classes("text-warning").mark(f"{self.marker}-baselines")
             if preview.cut_sources:
                 ui.label(
                     _(
-                        "The read stops after {limit} videos of a source, so the older videos of these sources are "
+                        "The read stops after {limit} videos of a channel, so the older videos of these channels are "
                         "not in the list: {sources}"
                     ).format(limit=READ_LIMIT, sources=", ".join(preview.cut_sources))
                 ).classes("text-warning").mark(f"{self.marker}-cut")
             if not preview.videos:
                 ui.label(self.empty_text).mark(f"{self.marker}-empty")
+                if footer:
+                    ui.label(footer).classes("text-grey-7").mark(f"{self.marker}-footer")
                 return
             ui.label(counts_text(preview)).mark(f"{self.marker}-counts")
             table = (
@@ -490,6 +556,8 @@ class PreviewView:
                         shown=len(preview.videos), total=preview.total
                     )
                 ).mark(f"{self.marker}-more")
+            if footer:
+                ui.label(footer).classes("text-grey-7").mark(f"{self.marker}-footer")
 
 
 def _marker(name: str, path: tuple[int, ...]) -> str:
@@ -522,6 +590,8 @@ class RuleEditor:
         self.root: Group | None = from_tree(rule.condition) if rule else Group()
         self.saving = False
         self.previewing = False
+        # The number of the changes of the form. A preview that ends after a change shows no old result.
+        self.changes = 0
 
     def build(self) -> None:
         rule = self.rule
@@ -534,18 +604,73 @@ class RuleEditor:
         if rule is not None and self.root is None:
             ui.label(_("The visual editor cannot show this condition. Edit it as JsonLogic.")).classes("text-grey-7")
             self.json_input = (
-                ui.textarea(value=json_text(rule.condition))
+                ui.textarea(value=json_text(rule.condition), on_change=self._rule_changed)
                 .props("outlined autogrow")
                 .classes("w-full font-mono")
                 .mark("rule-json")
             )
         elif self.root is not None:
             self._condition_editor(self.root)
-        self.no_shorts_switch = ui.switch(_("No Shorts"), value=rule.no_shorts if rule else False).mark(
-            "rule-no-shorts"
-        )
+        self.no_shorts_switch = ui.switch(
+            _("No Shorts"), value=rule.no_shorts if rule else False, on_change=self._rule_changed
+        ).mark("rule-no-shorts")
+        self._catch_up_part()
         self._preview_part()
         self._actions()
+
+    def _catch_up_part(self) -> None:
+        """Add the field Also add videos from with its Today button.
+
+        A new rule starts with DEFAULT_DAYS_BACK days back, and a saved rule with its stored day, which the next run
+        clears after its catch-up.
+        """
+        rule = self.rule
+        timezone = self.stored.timezone
+        today = today_in(timezone)
+        if rule is None:
+            value: date | None = default_first_day(timezone)
+        else:
+            value = rule.catch_up_since
+        earliest = today - timedelta(days=MAX_DAYS_BACK)
+        with ui.row().classes("items-center gap-2"):
+            self.catch_up_input = (
+                ui.input(
+                    _("Also add videos from"),
+                    value=None if value is None else value.isoformat(),
+                    on_change=self._preview_old,
+                )
+                .props(f"type=date outlined dense clearable min={earliest.isoformat()} max={today.isoformat()}")
+                .classes("w-56")
+                .mark("rule-catch-up")
+            )
+            today_button(self.catch_up_input, timezone).mark("rule-catch-up-today")
+        ui.label(
+            _(
+                "The next run also adds the videos from this day that the rule matches, the oldest first. Leave the "
+                "field empty to add only new videos."
+            )
+        ).classes("text-grey-7").mark("rule-catch-up-hint")
+
+    def _rule_changed(self) -> None:
+        """Take a change of the condition, the channels or No Shorts.
+
+        Such a change can match older videos, so the field Also add videos from gets DEFAULT_DAYS_BACK days back,
+        unless it already holds an earlier day.
+        """
+        first = default_first_day(self.stored.timezone)
+        try:
+            current = date.fromisoformat((self.catch_up_input.value or "").strip())
+        except ValueError:
+            current = None
+        if current is None or first < current:
+            self.catch_up_input.set_value(first.isoformat())
+        self._preview_old()
+
+    def _preview_old(self) -> None:
+        """Remove the preview after a change of the form, because the preview no longer shows what a save stores."""
+        self.changes += 1
+        if not self.previewing:
+            self.preview_view.clear()
 
     def _sources(self) -> None:
         """Add the channels that the rule reads and its target playlist."""
@@ -558,6 +683,7 @@ class RuleEditor:
                 value=channel_ids,
                 multiple=True,
                 with_input=True,
+                on_change=self._rule_changed,
             )
             .props("outlined dense use-chips")
             .classes("w-full")
@@ -575,7 +701,13 @@ class RuleEditor:
         if rule and rule.playlist_id not in own:
             own[rule.playlist_id] = self.stored.playlist_title(rule.playlist_id)
         self.playlist_select = (
-            ui.select(own, label=_("Target playlist"), value=rule.playlist_id if rule else None, with_input=True)
+            ui.select(
+                own,
+                label=_("Target playlist"),
+                value=rule.playlist_id if rule else None,
+                with_input=True,
+                on_change=self._preview_old,
+            )
             .props("outlined dense")
             .classes("w-full")
             .mark("rule-playlist")
@@ -591,12 +723,14 @@ class RuleEditor:
     def _actions(self) -> None:
         """Add the switch that turns the rule on and off, the hint about new videos, the error and the buttons."""
         rule = self.rule
-        self.enabled_switch = ui.switch(_("Enabled"), value=rule.enabled if rule else True).mark("rule-enabled")
+        self.enabled_switch = ui.switch(
+            _("Enabled"), value=rule.enabled if rule else True, on_change=self._preview_old
+        ).mark("rule-enabled")
         ui.label(
             _(
-                "A run acts only on new videos. It does not go back to the videos that are already on the channels of "
-                "the rule, also after a change or when you turn the rule on again. To add older videos of a saved "
-                "rule, use Apply to videos from a date."
+                "Each run adds the new videos that the rule matches. The videos that are already on the channels come "
+                "only from the day in Also add videos from. A rule that is off adds nothing and keeps that day for "
+                "the first run after you turn it on."
             )
         ).classes("text-grey-7").mark("rule-new-videos-hint")
         self.error_label = ui.label().classes("text-negative whitespace-pre-wrap").mark("editor-error")
@@ -615,20 +749,11 @@ class RuleEditor:
 
     def _preview_part(self) -> None:
         """Add the preview of the form: the hint, the button and the result."""
-        if self.rule is None:
-            hint = _(
-                "The preview lists the videos of the next run that this rule matches or cannot decide yet. A run "
-                "checks only the videos that came since the last run, as far as the processing mode reads. It adds "
-                "nothing."
-            )
-            empty = _("The next run finds no new video that this rule matches.")
-        else:
-            hint = _(
-                "The preview lists the videos of the next run for which your changes change the result: a video "
-                "that the rule matches now, or no longer matches. A run checks only the videos that came since the "
-                "last run, as far as the processing mode reads. It adds nothing."
-            )
-            empty = _("Your changes change the result for no new video of the next run.")
+        hint = _(
+            "The preview shows what the next run does with the rule as the form shows it now: the videos that it "
+            "will add, and the matching videos that wait. The preview adds nothing."
+        )
+        empty = _("The next run adds no video for this rule.")
         with ui.card().props("flat bordered").classes("w-full gap-2 p-2").mark("preview-part"):
             ui.label(_("Preview of the next run")).classes("text-subtitle1")
             ui.label(hint).classes("text-grey-7").mark("preview-hint")
@@ -649,6 +774,12 @@ class RuleEditor:
 
     def _changed(self) -> None:
         self.condition_view.refresh()
+        self._rule_changed()
+
+    def _set(self, item: Group | Leaf, name: str, value: Any) -> None:
+        """Change one part of the condition that needs no new view."""
+        setattr(item, name, value)
+        self._rule_changed()
 
     def _add(self, group: Group, item: Group | Leaf) -> None:
         group.items.append(item)
@@ -664,7 +795,7 @@ class RuleEditor:
                 ui.select(
                     {kind: _(label) for kind, label in GROUP_KINDS.items()},
                     value=group.kind,
-                    on_change=lambda event: setattr(group, "kind", GroupKind(event.value)),
+                    on_change=lambda event: self._set(group, "kind", GroupKind(event.value)),
                 ).props("outlined dense").classes("w-64").mark(_marker("group-kind", path))
                 ui.space()
                 if parent is not None:
@@ -714,7 +845,7 @@ class RuleEditor:
                 ui.checkbox(
                     _("Case-sensitive"),
                     value=leaf.case_sensitive,
-                    on_change=lambda event: setattr(leaf, "case_sensitive", bool(event.value)),
+                    on_change=lambda event: self._set(leaf, "case_sensitive", bool(event.value)),
                 ).mark(_marker("case", path))
             ui.button(icon="close", on_click=lambda: self._remove(parent, path[-1])).props("flat round dense").classes(
                 "ml-auto"
@@ -722,7 +853,7 @@ class RuleEditor:
 
     def _value_input(self, leaf: Leaf, path: tuple[int, ...]) -> None:
         def set_value(value: Any) -> None:
-            leaf.value = value
+            self._set(leaf, "value", value)
 
         marker = _marker("value", path)
         match value_kind(leaf.field, leaf.operator):
@@ -809,7 +940,12 @@ class RuleEditor:
             playlist_id=playlist_id,
             no_shorts=bool(self.no_shorts_switch.value),
             condition=self.read_condition(),
+            catch_up_since=self.read_catch_up(),
         )
+
+    def read_catch_up(self) -> date | None:
+        """Return the day of the field Also add videos from. Raise ValueError with a message for the user."""
+        return parse_catch_up(self.catch_up_input.value, today_in(self.stored.timezone))
 
     def has_changes(self) -> bool:
         """Tell whether the form differs from the saved rule. A form that cannot be saved counts as changed."""
@@ -821,8 +957,8 @@ class RuleEditor:
         except ValueError:
             return True
         return (
-            (draft.name, draft.enabled, draft.playlist_id, draft.no_shorts)
-            != (rule.name, rule.enabled, rule.playlist_id, rule.no_shorts)
+            (draft.name, draft.enabled, draft.playlist_id, draft.no_shorts, draft.catch_up_since)
+            != (rule.name, rule.enabled, rule.playlist_id, rule.no_shorts, rule.catch_up_since)
             or set(draft.channel_ids) != set(rule.channel_ids)
             or not _same_tree(draft.condition, rule.condition)
         )
@@ -834,31 +970,27 @@ class RuleEditor:
     # The preview and the apply.
 
     async def preview(self) -> None:
-        """Preview what the next run does with the form: a new rule alone, or the change of the saved rule.
-
-        The preview adds nothing.
-        """
+        """Preview what the next run does with the rule of the form, also for a saved rule. The preview adds nothing."""
         if self.previewing:
             return
         try:
             draft = DraftRule(
-                self.read_condition(), tuple(self.channel_select.value or ()), bool(self.no_shorts_switch.value)
+                self.read_condition(),
+                tuple(self.channel_select.value or ()),
+                bool(self.no_shorts_switch.value),
+                self.playlist_select.value or None,
+                self.read_catch_up(),
             )
         except ValueError as error:
             self.preview_view.failed(str(error))
             return
+        changes = self.changes
         self.previewing = True
         self.preview_button.props("loading")
         self.preview_button.disable()
         self.preview_view.working()
         try:
-            result: Preview | str = await asyncio.to_thread(
-                preview_in_child,
-                self.services.runner,
-                None,
-                rule_id=None if self.rule is None else self.rule.id,
-                draft=draft,
-            )
+            result: Preview | str = await asyncio.to_thread(preview_in_child, self.services.runner, None, draft=draft)
         except ChildError as error:
             LOG.warning("The preview of a rule failed: %s", error)
             result = _("The preview failed. {reason}").format(reason=child_error_text(error))
@@ -869,13 +1001,17 @@ class RuleEditor:
             return
         self.preview_button.props(remove="loading")
         self.preview_button.enable()
+        if changes != self.changes:
+            self.preview_view.note(_("The form changed while the preview ran. Press Preview again."))
+            return
         if isinstance(result, str):
             self.preview_view.failed(result)
             return
-        note = None
-        if not self.enabled_switch.value:
-            note = _("The rule is off, so no run uses it. The preview shows what the next run does with the rule on.")
-        self.preview_view.show(result, note)
+        self.preview_view.show(
+            result,
+            next_run_notes(result, draft, enabled=bool(self.enabled_switch.value)),
+            _("The next run also checks each new video that comes before the run starts."),
+        )
 
     def apply(self) -> None:
         if self.rule is not None and self.open_apply is not None:

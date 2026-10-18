@@ -15,6 +15,11 @@ rule, a changed rule and a changed processing mode act only on new videos. Each 
 the time of that read: ``channel.last_checked_at`` for a channel, and the setting FEED_READ_KEY for the feed. A source
 with that time was read before, so it never gets a second baseline, also when it has no stored video.
 
+Before the sources, the run does the catch-up of each enabled rule with a catch-up day: it adds the matching videos
+of the rule since that day as an apply does, the oldest first, and at most APPLY_LIMIT of them. The editor gives a new
+or changed rule such a day, so the older videos of a baseline still reach the playlist. The day goes away after a
+catch-up that added each matching video without an error.
+
 Without a live session of the account, the run still reads the channels and evaluates the rules, but adds nothing. A
 matching video waits as deferred, so a later run with a live session adds it while the video stays in the processing
 window. The feed needs the account, so it gets an error in such a run.
@@ -62,6 +67,7 @@ from youtube_automanager.engine.modes import (
     ids_to_keep,
     moved_mark,
 )
+from youtube_automanager.engine.rule_preview import APPLY_LIMIT
 from youtube_automanager.engine.rules import RuleError, Verdict, evaluate, fields_read, validate
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube import public
@@ -131,6 +137,20 @@ class Source:
     @property
     def is_feed(self) -> bool:
         return self.key == FEED_SOURCE
+
+
+@dataclass(frozen=True)
+class CatchUp:
+    """An enabled rule with a catch-up day: the run first adds its matching videos since that day.
+
+    ``channel_ids`` is empty for a rule that reads the feed. ``updated_at`` is the time of the last save of the rule
+    that the run read, so the run clears the day only of the same version of the rule.
+    """
+
+    rule: RuleSpec
+    channel_ids: frozenset[str]
+    since: datetime.date
+    updated_at: datetime.datetime
 
 
 @dataclass(frozen=True)
@@ -247,9 +267,11 @@ class SyncRun:
         self._send = send
         self._clock = clock
         self._account: AccountLike | None = None
-        # The cause when the run goes on without the account, and the number of matching videos that wait for it.
+        # The cause when the run goes on without the account, and the ids of the matching videos that wait for it.
         self._no_account: str | None = None
-        self._waiting = 0
+        self._waiting: set[str] = set()
+        # The adds of the catch-up as (playlist id, video id). The sync of the same run skips them without an action.
+        self._caught_up: set[tuple[str, str]] = set()
         self._shorts: dict[str, frozenset[str] | None] = {}
         self._channel_titles: dict[str, str] = {}
         self._playlist_titles: dict[str, str] = {}
@@ -258,13 +280,15 @@ class SyncRun:
         self.report = RunReport()
 
     def run(self) -> RunReport:
-        processing, sources = self._prepare()
+        processing, sources, catch_ups = self._prepare()
+        for catch_up in catch_ups:
+            self._catch_up(catch_up)
         outcomes: dict[str, _Outcome | None] = {}
         for source in sources:
             outcomes[source.key] = self._sync_source(processing, source)
         self._clean_up(processing, [source.key for source in sources], outcomes)
         if self._waiting:
-            self._error(f"{self._waiting} matching video(s) wait for the YouTube account: {self._no_account}")
+            self._error(f"{len(self._waiting)} matching video(s) wait for the YouTube account: {self._no_account}")
         LOG.info(
             "Run %s finished: %d video(s) added, %d video(s) seen, %d error(s)",
             self._run_id,
@@ -279,7 +303,7 @@ class SyncRun:
 
     # The preparation of the run.
 
-    def _prepare(self) -> tuple[Processing, list[Source]]:
+    def _prepare(self) -> tuple[Processing, list[Source], list[CatchUp]]:
         with self._sessions.begin() as session:
             processing = load_processing(session)
             self._apply_mode(session, processing)
@@ -297,6 +321,7 @@ class SyncRun:
 
         by_channel: dict[str, list[RuleSpec]] = {}
         feed_rules: list[RuleSpec] = []
+        catch_ups: list[CatchUp] = []
         for rule in rules:
             try:
                 spec = rule_spec(rule)
@@ -304,6 +329,8 @@ class SyncRun:
                 self._error(f"Rule {rule.name}: {error}", rule_id=rule.id)
                 continue
             channels = channels_of.get(rule.id)
+            if rule.catch_up_since is not None:
+                catch_ups.append(CatchUp(spec, frozenset(channels or ()), rule.catch_up_since, rule.updated_at))
             if channels:
                 for channel_id in channels:
                     by_channel.setdefault(channel_id, []).append(spec)
@@ -315,8 +342,14 @@ class SyncRun:
         ]
         if feed_rules:
             sources.append(Source(FEED_SOURCE, FEED_TITLE, tuple(feed_rules)))
-        LOG.info("Run %s: %d source(s), processing mode %s", self._run_id, len(sources), processing.describe())
-        return processing, sources
+        LOG.info(
+            "Run %s: %d source(s), %d catch-up(s), processing mode %s",
+            self._run_id,
+            len(sources),
+            len(catch_ups),
+            processing.describe(),
+        )
+        return processing, sources, catch_ups
 
     def _apply_mode(self, session: Session, processing: Processing) -> None:
         """Record the mode of the stored state. A new mode removes the state of each source: its videos, its mark and
@@ -341,6 +374,96 @@ class SyncRun:
         session.execute(update(Channel).values(mark_date=None, last_checked_at=None))
         session.execute(delete(Setting).where(Setting.key.in_([FEED_MARK_KEY, FEED_READ_KEY])))
         row.value = value
+
+    # The catch-up of one rule.
+
+    def _catch_up(self, catch_up: CatchUp) -> None:
+        """Add the matching videos since the catch-up day of a rule, the oldest first, at most APPLY_LIMIT of them.
+
+        The catch-up reads and evaluates as an apply does. Its adds are adds of the run. It clears the day of the rule
+        only when it added each matching video without an error. A failed add, a read error and a missing account
+        keep the day, so the next run tries again.
+        """
+        # The engine of an apply imports this module, so it loads here.
+        from youtube_automanager.engine.rule_apply import RuleReader, RuleVersion, videos_to_add
+
+        rule = catch_up.rule
+        errors = len(self.report.errors)
+
+        def error(text: str, **where: Any) -> None:
+            self._error(f"Rule {rule.name}, videos since {catch_up.since.isoformat()}: {text}", **where)
+
+        reader = RuleReader(
+            read_uploads=self._read_uploads,
+            read_shorts=self._shorts_once,
+            read_feed=lambda: self._account_client().iter_subscription_feed(),
+            error=error,
+            titles=self._channel_titles,
+        )
+        version = RuleVersion(rule, catch_up.channel_ids, catch_up.since)
+        try:
+            read = reader.read(version.source_keys, catch_up.since)
+        except NotLoggedInError as failure:
+            error(f"Cannot read {FEED_TITLE}: {self._lose_session(failure)}")
+            return
+        except AccountUnavailable as failure:
+            # The sync of the feed writes the same error, so the catch-up only keeps its day.
+            LOG.info("Run %s: rule %s waits for the account to read the feed: %s", self._run_id, rule.name, failure)
+            return
+        except AccountError as failure:
+            error(f"Cannot read {FEED_TITLE}: {failure}")
+            return
+        with self._sessions() as session:
+            added = set(session.scalars(select(AddedVideo.video_id).where(AddedVideo.playlist_id == rule.playlist_id)))
+        matching = videos_to_add(reader, version, read, added)
+        todo = matching[:APPLY_LIMIT]
+        for index, video in enumerate(todo):
+            try:
+                self._add(video, rule, rule.playlist_id, first_time=False)
+            except _NoAccount:
+                self._waiting.update(waiting.video_id for waiting in todo[index:])
+                return
+            except _SourceStopped:
+                return
+            self._caught_up.add((rule.playlist_id, video.video_id))
+        LOG.info(
+            "Run %s: the catch-up of rule %s added %d video(s), and %d wait for the next run",
+            self._run_id,
+            rule.name,
+            len(todo),
+            len(matching) - len(todo),
+        )
+        if len(matching) > len(todo) or len(self.report.errors) > errors:
+            return
+        with self._sessions.begin() as session:
+            # Only the version of the rule that this run read. A save during the run changes the time of change, also
+            # a save that adds a channel and keeps the day, so the next run reads the new channel. The clear keeps the
+            # time of change, because the user did not change the rule.
+            session.execute(
+                update(Rule)
+                .where(
+                    Rule.id == rule.id,
+                    Rule.catch_up_since == catch_up.since,
+                    Rule.updated_at == catch_up.updated_at,
+                )
+                .values(catch_up_since=None, updated_at=Rule.updated_at)
+            )
+
+    def _shorts_once(self, channel_id: str, limit: int) -> frozenset[str]:
+        """Read the Shorts of a channel once in the run, for the catch-up and the sync together.
+
+        Raise PublicSourceError again when the read failed before in this run.
+        """
+        if channel_id not in self._shorts:
+            try:
+                self._shorts[channel_id] = frozenset(self._read_shorts(channel_id, limit))
+            except PublicSourceError, ValueError:
+                self._shorts[channel_id] = None
+                raise
+        ids = self._shorts[channel_id]
+        if ids is None:
+            raise PublicSourceError("The Shorts of the channel failed to read before in this run.")
+        return ids
 
     # One source.
 
@@ -442,7 +565,7 @@ class SyncRun:
             self._record(source, video, SeenVideoState.SEEN)
             return
         if waits_for is not None:
-            self._waiting += 1
+            self._waiting.add(video.video_id)
             reason = f"It matches, but it waits for the YouTube account. {waits_for}"
         elif undecided:
             reason = f"No value yet for a field of rule {', '.join(rule.name for rule in undecided)}"
@@ -508,7 +631,8 @@ class SyncRun:
         with self._sessions() as session:
             added_before = session.get(AddedVideo, (playlist_id, video.video_id)) is not None
         if added_before:
-            if first_time:
+            # A video that the catch-up of this run added is no news for the history.
+            if first_time and (playlist_id, video.video_id) not in self._caught_up:
                 self._action(
                     RunActionKind.SKIPPED,
                     video=video,

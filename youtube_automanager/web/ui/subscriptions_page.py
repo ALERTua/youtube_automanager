@@ -28,11 +28,12 @@ from youtube_automanager.channel_actions import (
     subscribe_in_child,
     unsubscribe_in_child,
 )
-from youtube_automanager.db.models import Channel, Rule, RuleChannel
+from youtube_automanager.db.models import Channel, Rule, RuleChannel, Schedule
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
+from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day
 from youtube_automanager.web.ui.layout import register_page
 
 LOG = logging.getLogger(__name__)
@@ -173,6 +174,26 @@ def read_lists(sessions: sessionmaker[Session]) -> StoredLists:
         ]
     channels.sort(key=lambda channel: (channel.title.casefold(), channel.channel_id))
     return StoredLists(channels, rules)
+
+
+def add_to_rule(
+    sessions: sessionmaker[Session], default_timezone: str, rule_id: int, channel: SelectedChannel
+) -> AddOutcome:
+    """Make the rule read the channel, and let the next run also add the videos of the last DEFAULT_DAYS_BACK days.
+
+    The day is a day in the time zone of the schedule. This call blocks.
+    """
+    with sessions() as session:
+        timezone = session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
+    return add_channel_to_rule(
+        sessions,
+        rule_id,
+        channel.channel_id,
+        title=channel.title,
+        handle=channel.handle,
+        thumbnail_url=channel.thumbnail_url,
+        catch_up_since=default_first_day(timezone),
+    )
 
 
 def filter_channels(lists: StoredLists, channel_filter: ChannelFilter) -> list[ChannelRecord]:
@@ -370,15 +391,7 @@ async def subscriptions_page(services: Services) -> None:
         rule = next((rule for rule in state.lists.rules if rule.id == state.rule_id), None)
         if channel is None or rule is None:
             return
-        outcome = await asyncio.to_thread(
-            add_channel_to_rule,
-            services.sessions,
-            rule.id,
-            channel.channel_id,
-            title=channel.title,
-            handle=channel.handle,
-            thumbnail_url=channel.thumbnail_url,
-        )
+        outcome = await asyncio.to_thread(add_to_rule, services.sessions, services.settings.tz, rule.id, channel)
         if outcome is AddOutcome.ADDED:
             ui.notify(_("Rule {rule} now reads {title}.").format(rule=rule.name, title=channel.title), type="positive")
         elif outcome is AddOutcome.ALREADY_IN_RULE:
@@ -456,10 +469,11 @@ async def subscriptions_page(services: Services) -> None:
             ).props("outlined dense").classes("w-full").mark("rule-select")
             ui.label(
                 _(
-                    "The rule acts only on new videos of this channel. The current videos of the channel become a "
-                    "baseline, and the rule adds none of them."
-                )
-            ).mark("fact-baseline")
+                    "The next run adds the videos of this channel from the last {days} days that the rule matches. "
+                    "After that, the rule adds each new video of the channel. To add older videos, open the rule and "
+                    "change Also add videos from."
+                ).format(days=DEFAULT_DAYS_BACK)
+            ).mark("fact-catch-up")
             if chosen is not None and not chosen.channel_ids:
                 ui.label(
                     _(

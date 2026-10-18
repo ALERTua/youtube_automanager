@@ -4,7 +4,7 @@ import json
 import re
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from nicegui import ui
@@ -382,11 +382,17 @@ async def test_a_rule_made_on_the_page_adds_the_matching_new_videos_in_the_next_
     assert rule_channels(sessions, stored.id) == [A]
     await names_are(user, ["Levels of Alpha"])
 
-    # The first run of a new source only records the videos that are there.
-    old = [entry("soup", A, title="4 Levels of Soup")]
+    assert stored.catch_up_since == days_back(7)
+
+    # The first run adds the matching videos since the day of the field, and records the videos that are there.
+    old = [
+        entry("soup", A, title="4 Levels of Soup", day=days_back(1)),
+        entry("cake", A, title="5 Levels of Cake", day=days_back(8)),
+    ]
     sync.sources.uploads[A] = old
     sync.run()
-    assert sync.account.added == []
+    assert sync.account.added == [("PLhome", "soup")]
+    assert sync.catch_up_since(stored.id) is None
     sync.sources.uploads[A] = [
         entry("pizza", A, title="4 Levels of Pizza"),
         entry("tea", A, title="3 Levels of Tea", duration_s=60),
@@ -395,8 +401,8 @@ async def test_a_rule_made_on_the_page_adds_the_matching_new_videos_in_the_next_
     ]
     sync.run()
 
-    assert sync.account.added == [("PLhome", "pizza")]
-    assert sync.added_rows() == {("PLhome", "pizza"): stored.id}
+    assert sync.account.added == [("PLhome", "soup"), ("PLhome", "pizza")]
+    assert sync.added_rows() == {("PLhome", "soup"): stored.id, ("PLhome", "pizza"): stored.id}
 
 
 async def test_a_rule_without_channels_and_conditions_takes_each_new_video_of_the_feed(
@@ -418,13 +424,15 @@ async def test_a_rule_without_channels_and_conditions_takes_each_new_video_of_th
     row = table_rows(user)[0]
     assert (row["channels"], row["condition"]) == ("Subscriptions feed", "Each video")
 
-    sync.account.feed = [feed_video("first", A)]
+    # The day of the field is 7 days back, so the first run adds the recent video and not the older one.
+    old = [feed_video("first", A, day=days_back(1)), feed_video("older", A, day=days_back(8))]
+    sync.account.feed = old
     sync.run()
-    assert sync.account.added == []
-    sync.account.feed = [feed_video("second", B), feed_video("first", A)]
+    assert sync.account.added == [("WL", "first")]
+    sync.account.feed = [feed_video("second", B), *old]
     sync.run()
 
-    assert sync.account.added == [("WL", "second")]
+    assert sync.account.added == [("WL", "first"), ("WL", "second")]
 
 
 @pytest.mark.parametrize(
@@ -629,9 +637,9 @@ async def test_the_editor_offers_the_stored_channels_and_the_own_playlists(user,
         (C, "Gamma (@gamma), not subscribed"),
     ]
     assert text_of(user, "rule-new-videos-hint") == (
-        "A run acts only on new videos. It does not go back to the videos that are already on the channels of the "
-        "rule, also after a change or when you turn the rule on again. To add older videos of a saved rule, use Apply "
-        "to videos from a date."
+        "Each run adds the new videos that the rule matches. The videos that are already on the channels come only "
+        "from the day in Also add videos from. A rule that is off adds nothing and keeps that day for the first run "
+        "after you turn it on."
     )
     assert element_of(user, "rule-enabled").value is True
     assert element_of(user, "rule-no-shorts").value is False
@@ -772,6 +780,125 @@ async def test_a_new_rule_goes_to_the_end_of_the_order(user, sessions, account_c
         ("Third", 10),
     ]
     await names_are(user, ["Second", "First", "Third"])
+
+
+# The field Also add videos from.
+
+
+def days_back(days: int):
+    return today_in("Europe/Kyiv") - timedelta(days=days)
+
+
+async def test_a_new_rule_starts_with_seven_days_back_and_the_save_stores_the_day(user, sessions, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+
+    assert element_of(user, "rule-catch-up").value == days_back(7).isoformat()
+    set_value(user, "rule-name", "Recent")
+    set_value(user, "rule-playlist", "WL")
+    await save(user)
+
+    assert stored_rules(sessions)[0].catch_up_since == days_back(7)
+
+
+async def test_an_empty_field_saves_no_catch_up(user, sessions, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+
+    set_value(user, "rule-name", "Only new")
+    set_value(user, "rule-playlist", "WL")
+    set_value(user, "rule-catch-up", None)
+    await save(user)
+
+    assert stored_rules(sessions)[0].catch_up_since is None
+
+
+async def test_a_saved_rule_opens_with_an_empty_field_and_a_change_of_the_rule_fills_it(user, sessions, account_copy):
+    store(sessions, rule(1, "Saved"))
+    await user.open("/rules")
+    await open_editor(user, 1)
+    assert element_of(user, "rule-catch-up").value is None
+
+    # The name and the playlist do not change which videos match.
+    set_value(user, "rule-name", "Renamed")
+    set_value(user, "rule-playlist", "PLhome")
+    assert element_of(user, "rule-catch-up").value is None
+
+    set_value(user, "rule-no-shorts", True)
+    assert element_of(user, "rule-catch-up").value == days_back(7).isoformat()
+
+    await save(user)
+    assert stored_rule(sessions, 1).catch_up_since == days_back(7)
+
+
+@pytest.mark.parametrize("change", ["channels", "condition", "json"])
+async def test_a_change_of_the_channels_or_the_condition_fills_the_field(user, sessions, account_copy, change):
+    if change == "json":
+        store(sessions, rule(1, "Saved", {"and": []}))
+    else:
+        store(sessions, rule(1, "Saved", {"and": [LEVELS]}))
+    await user.open("/rules")
+    await open_editor(user, 1)
+    assert element_of(user, "rule-catch-up").value is None
+
+    if change == "channels":
+        set_value(user, "rule-channels", [A])
+    elif change == "condition":
+        set_value(user, "value-0", "Levels")
+    else:
+        set_value(user, "rule-json", '{"==": [1, 1]}')
+
+    assert element_of(user, "rule-catch-up").value == days_back(7).isoformat()
+
+
+async def test_a_change_of_the_rule_keeps_an_earlier_day(user, sessions, account_copy):
+    store(sessions, rule(1, "Saved", {"and": [LEVELS]}))
+    await user.open("/rules")
+    await open_editor(user, 1)
+    set_value(user, "rule-catch-up", days_back(30).isoformat())
+
+    set_value(user, "value-0", "Levels")
+
+    assert element_of(user, "rule-catch-up").value == days_back(30).isoformat()
+
+
+async def test_a_saved_rule_with_a_day_that_waits_for_the_next_run_opens_with_that_day(user, sessions, account_copy):
+    saved = rule(1, "Saved")
+    saved.catch_up_since = days_back(3)
+    store(sessions, saved)
+    await user.open("/rules")
+    await open_editor(user, 1)
+
+    assert element_of(user, "rule-catch-up").value == days_back(3).isoformat()
+
+
+async def test_the_today_button_puts_today_into_the_field(user, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+
+    user.find(marker="rule-catch-up-today").click()
+
+    await eventually(lambda: element_of(user, "rule-catch-up").value == days_back(0).isoformat(), "Today in the field")
+
+
+@pytest.mark.parametrize(
+    ("days", "error"),
+    [
+        (-1, "Also add videos from: Choose a day that is not in the future."),
+        (366, "Also add videos from: Choose a day at most 365 days back."),
+    ],
+)
+async def test_a_day_out_of_the_range_is_refused(user, sessions, account_copy, days, error):
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-name", "Out of range")
+    set_value(user, "rule-playlist", "WL")
+    set_value(user, "rule-catch-up", days_back(days).isoformat())
+
+    user.find(marker="editor-save").click()
+
+    await error_is(user, error)
+    assert stored_rules(sessions) == []
 
 
 @pytest.fixture

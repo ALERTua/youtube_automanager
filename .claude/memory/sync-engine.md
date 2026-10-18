@@ -1,6 +1,6 @@
 ---
 name: sync-engine
-description: "Read this file before you change the sync engine, its processing modes, or the state that it keeps in the database."
+description: "Read this file before you change the sync engine, its processing modes, the catch-up of a rule, the preview of a rule, or the state that it keeps in the database."
 metadata:
   type: reference
 ---
@@ -12,10 +12,22 @@ metadata:
 - Each full read of a source writes the time of the read: `channel.last_checked_at` for a channel, and the setting `feed_last_read_at` for the feed. A baseline and a read that gives no entries also write it.
 - A source that stops at a failed add, or that fails to read, keeps the time of its last full read. A newer time would let the next run stop above the videos that stay without a record.
 - A source that was read before has state, also without `seen_video` rows and without a mark. An empty channel thus gets no second baseline, and its first video gets an evaluation.
-- A source without stored state and without a read time gets a baseline: the engine stores the window of the mode as seen, with no evaluation and no add. An upcoming or live entry of a baseline is stored as deferred.
+- A source without stored state and without a read time gets a baseline: the engine stores the window of the mode as seen, with no evaluation and no add. An upcoming or live entry of a baseline is stored as deferred. The catch-up of a rule is the only way that the videos of a baseline reach a playlist in a sync run.
 - At the end of a finished run, a source that no enabled rule reads loses its `seen_video` rows, its mark and its read time. A channel that a rule reads again thus starts with a baseline.
 - A source that failed in the run keeps all its `seen_video` rows.
 - The clean-up of a sync run never deletes an `added_video` row. The daily cleanup in `retention.py` runs at 03:30 and at the start of the service. It deletes a row only when its `added_at` is older than `ADDED_VIDEO_KEEP_DAYS` (732) days and no source keeps its video in `seen_video`. A row whose video a source keeps stays at any age, because a sync run can reach that video again.
+
+## The catch-up of a rule
+
+- `rule.catch_up_since` is a day in the time zone of the service, or null. The next sync run of any trigger first does the catch-up of each enabled rule with a day, in the order of the rules. Then it syncs the sources as before, so a source without state still gets its baseline.
+- The catch-up reads the sources of the rule since the day with `RuleReader` of `engine.rule_apply`, and `videos_to_add` picks the videos as an apply does. It skips each video with an `added_video` row for the target playlist, each upcoming or live video and each video that the rule cannot decide. It adds the oldest first, and at most `APPLY_LIMIT` (100) videos for each rule in one run.
+- The adds of the catch-up go through `SyncRun._add`, so they are normal adds of the run: `added_video` rows, `added` actions, the added count, `video_added` and the summary. The sync of the same run writes no `skipped` action for a video that the catch-up added, through `SyncRun._caught_up`.
+- The run clears the day only when the catch-up added each video that it picked and wrote no error. A failed add, a read error, a dead session or a missing account keeps the day, so the next run tries again. A disabled rule keeps its day. The clear updates the row only when its day and its `updated_at` still equal the values that `_prepare` read. A save during the run changes `updated_at`, also a save that adds a channel and keeps the day, so the day stays and the next run reads the new channel. The clear sets `updated_at=Rule.updated_at`, so it does not change the time of change itself. `UTCDateTime` writes the bound time in UTC, so the equality works on SQLite.
+- A video that the rule cannot decide does not keep the day. Otherwise a feed video without a channel id and a rule with `no_shorts` would keep the day for ever. An upcoming video does not keep it either: a baseline stores it as deferred, and a later sync adds it.
+- Without the account, a feed rule keeps its day without an error of its own, because the sync of the feed writes that error. The videos of the catch-up that wait for the account count in the one error of the run about the account, with each video once.
+- The catch-up and the sync share the Shorts of a channel through `SyncRun._shorts_once`, so a run reads them at most once. A failed read of the Shorts in the catch-up gives the sync no second error.
+- `sync.py` imports `engine.rule_apply` inside `_catch_up`, because `rule_apply` imports `sync`.
+- The editor gives a new rule the day `DEFAULT_DAYS_BACK` (7) days back. A change of the condition, the channels or No Shorts sets that day too, unless the field holds an earlier day. "Add to rule" of the Subscriptions page does the same through `add_channel_to_rule(catch_up_since=...)`. The day then covers each channel of the rule, not only the new one.
 
 ## The order of the work
 
@@ -37,7 +49,7 @@ metadata:
 - Mode `stop_at_seen` stops when it has read at least 20 entries and met a seen entry. A deferred entry is never a stop point.
 - After the 20 newest entries, mode `stop_at_seen` also stops at the first dated entry that is older than the day of the last read minus 2 days. A source whose stored videos all vanished thus reads only the recent days, not the whole channel. An entry without a date never stops the read.
 - The change tracking of SQLAlchemy compares a JSON value with Python `==`, so a change of a `setting` value from `true` to `1` writes no UPDATE. Replace the row, or compare the types first.
-- The setting `processing_mode_of_state` holds the mode of the stored state. When the mode changes, the engine removes all `seen_video` rows, all marks and all read times, so each source gets a baseline. The videos that came between the last run and the change are then not evaluated.
+- The setting `processing_mode_of_state` holds the mode of the stored state. When the mode changes, the engine removes all `seen_video` rows, all marks and all read times, so each source gets a baseline. The videos that came between the last run and the change are then not evaluated, unless a rule has a catch-up day that reaches them.
 - Mode `mark_date` keeps the mark of a channel in `channel.mark_date`, and the mark of the feed in the setting `feed_mark_date`. A source that was read before but has no mark uses the day of its last read as the mark.
 - A flat date comes from relative text, and the text gets less exact with age, for example "1 week ago". An older entry can thus get a date on or after the mark. Mode `mark_date` therefore also stops at the first stored seen video of the mark day, because the upload order is stable. A deferred entry below that stop point gets no new check.
 
@@ -50,8 +62,11 @@ metadata:
 ## The preview and the apply of one rule
 
 - `engine.rule_apply` reads the sources of one rule since a day and evaluates the rule as a sync run does, with the same Shorts check. The read of a source stops at the first dated entry before the day, or after `READ_LIMIT` (500) entries. An entry without a date never stops it.
-- The preview writes nothing. It runs in the child `preview-rule` through `run_short_child`, and only a rule that reads the feed needs the account. The draft of the editor goes to the child as ASCII JSON in one argument `--draft=<json>`.
-- The preview of the editor gives the child no `--since`, so `next_run_preview` tells what the next sync run does. It reads each source with `load_source_state`, `has_state` and `collect` of the sync, and it lists only the videos that the run evaluates: the new ones and the deferred ones. A source without stored state gets a baseline in the next run, so the preview reads nothing of it and names it in `baseline_sources`. When `resets_state` sees another mode in the stored state, each source gets a baseline, and the preview sets `mode_changed`. Only the apply dialog lists the older videos since a day.
+- The preview writes nothing. It runs in the child `preview-rule` through `run_short_child`, and only a rule that reads the feed needs the account. The draft of the editor goes to the child as ASCII JSON in one argument `--draft=<json>`. The draft holds the condition, the channels, `no_shorts`, the target playlist and the catch-up day, and `DraftRule.from_json` refuses a draft with another set of keys.
+- The preview of the editor gives the child only the draft, also for a saved rule, and no `--since`, so `next_run_preview` tells what the next sync run does with the rule of the form. It merges two reads, each video once, newest first. The catch-up read lists the videos since the day of the draft. The sync read uses `load_source_state`, `has_state` and `collect` of the sync, and it lists the new and the deferred videos of each source with state. A video of both reads gets the mark of the sync, because the sync adds also an upcoming video that matches, and the catch-up does not.
+- The marks of the next run are `will_add`, `already_added`, `waits_for_field`, `waits_for_live` and `waits_for_account`. `catch_up_adds` counts the videos that the catch-up would add, also beyond `APPLY_LIMIT`, and the editor then says that the next runs add the rest.
+- A source without stored state gets a baseline in the next run, so the sync read skips it and the preview names it in `baseline_sources`. When `resets_state` sees another mode in the stored state, each source gets a baseline, and the preview sets `mode_changed`.
+- A run without usable cookies defers each match. The child of a preview of a rule with channels calls `load_stored` without a request to YouTube, and gives its cause to `next_run_preview` as `account`. Each matching video then gets `waits_for_account`. A rule that reads the feed goes through `work_with_account`, which fails without a live session.
 - The apply is a run with the trigger `rule_apply`: `apply_in_child` calls `SyncRunner.claim` without a wait and `SyncRunner.execute` with the command of the child `apply-rule`. It writes `added_video` rows and `added` actions, but never `seen_video`, a mark or a read time. It adds at most `APPLY_LIMIT` (100) videos, the oldest first, and a failed add stops it.
 - An add sends two requests with the cookies, a read of the page config and the change, 5 s or more apart. An apply of 100 videos thus takes more than 1000 s. `SCHEDULED_WAIT_S` is 1800 s, so a scheduled run that comes during such an apply starts late, but it is not lost.
 - An apply reads back to the day that the user chose, at most `MAX_DAYS_BACK` (365) days. It thus reaches a video also after the sync removes its `seen_video` rows. The `added_video` row is the only record that stops a second add, so the row must stay longer than the state of the sync. `ADDED_VIDEO_KEEP_DAYS` must stay greater than `MAX_DAYS_BACK`, and a test makes sure of it.

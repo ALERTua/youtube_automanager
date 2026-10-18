@@ -202,6 +202,9 @@ class Rule(Base):
     condition: Mapped[Any] = mapped_column(JSON)
     target_playlist_id: Mapped[str] = mapped_column(ForeignKey("playlist.playlist_id"))
     no_shorts: Mapped[bool]
+    # The next sync run first adds the matching videos since this day, and then clears the day. A day in the time zone
+    # of the service. None means no catch-up.
+    catch_up_since: Mapped[date | None]
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
 

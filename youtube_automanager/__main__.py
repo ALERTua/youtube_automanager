@@ -79,7 +79,8 @@ def _parser() -> argparse.ArgumentParser:
     preview_parser.add_argument(
         "--draft",
         type=DraftRule.from_json,
-        help="the condition, the channels and no Shorts of a rule from the editor as JSON; give it as --draft=JSON",
+        help="the condition, the channels, no Shorts, the target playlist and the first day of the older videos of a "
+        "rule from the editor as JSON; give it as --draft=JSON",
     )
     apply_parser = commands.add_parser(
         "apply-rule",

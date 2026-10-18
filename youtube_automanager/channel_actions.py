@@ -15,6 +15,7 @@ channel belong to the sync engine, and this module never writes them.
 """
 
 import dataclasses
+import datetime
 import enum
 import sys
 from dataclasses import dataclass
@@ -222,17 +223,24 @@ def add_channel_to_rule(
     title: str,
     handle: str | None = None,
     thumbnail_url: str | None = None,
+    catch_up_since: datetime.date | None = None,
 ) -> AddOutcome:
     """Make the rule ``rule_id`` read the channel. This call blocks.
 
     A channel that the stored list does not have gets its ``channel`` row first, with ``is_subscribed`` false. The next
     refresh of the account lists corrects the flag when the account is subscribed. A stored row stays as it is.
+
+    With ``catch_up_since``, the next run also adds the matching videos of the rule since that day. A rule that already
+    has an earlier catch-up day keeps it.
     """
     with sessions.begin() as session:
-        if session.get(Rule, rule_id) is None:
+        rule = session.get(Rule, rule_id)
+        if rule is None:
             return AddOutcome.NO_RULE
         if session.get(RuleChannel, (rule_id, channel_id)) is not None:
             return AddOutcome.ALREADY_IN_RULE
+        if catch_up_since is not None and (rule.catch_up_since is None or catch_up_since < rule.catch_up_since):
+            rule.catch_up_since = catch_up_since
         if session.get(Channel, channel_id) is None:
             session.add(
                 Channel(

@@ -459,7 +459,7 @@ class SyncHarness:
             if session.get(Channel, channel_id) is None:
                 session.add(Channel(channel_id=channel_id, title=title or f"Channel {channel_id}", is_subscribed=True))
 
-    def rule(self, name, condition, *, channels=(), target="WL", no_shorts=False, enabled=True):
+    def rule(self, name, condition, *, channels=(), target="WL", no_shorts=False, enabled=True, catch_up_since=None):
         self.playlist(target)
         for channel_id in channels:
             self.channel(channel_id)
@@ -472,6 +472,7 @@ class SyncHarness:
                 condition=condition,
                 target_playlist_id=target,
                 no_shorts=no_shorts,
+                catch_up_since=catch_up_since,
             )
             session.add(rule)
             session.flush()
@@ -539,6 +540,10 @@ class SyncHarness:
     def run_row(self):
         with self.sessions() as session:
             return session.get(Run, self.run_id)
+
+    def catch_up_since(self, rule_id):
+        with self.sessions() as session:
+            return session.get(Rule, rule_id).catch_up_since
 
     def mark(self, channel_id):
         return self.channel_row(channel_id).mark_date
