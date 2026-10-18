@@ -1,11 +1,12 @@
 """The notification targets of the settings page: the reads and the writes of the ``notification_target`` table.
 
 A target URL holds the token of its service. The page shows a stored URL only in the edit form of its target, because
-the user needs to see the URL to change it. The web UI has no login, so the deployer must protect the access to the
-UI. A record of this module holds only the scheme of the URL, for example ``tgram://…``, for the cards of the targets.
-Only ``load_target`` reads the URL itself, for a test notification and for the edit form. A change of a target keeps
-the stored URL when it gets no new URL. This module imports no NiceGUI, so its functions have tests of their own. Each
-function that reads or writes the database blocks.
+the user needs to see the URL to change it. The web UI has no password by default, and ``UI_PASSWORD`` in ``.env``
+adds one. The password goes over plain HTTP, so the deployer must reach the service through a VPN or a reverse proxy
+with HTTPS. A record of this module holds only the scheme of the URL, for example ``tgram://…``, for the cards of the
+targets. Only ``load_target`` reads the URL itself, for a test notification and for the edit form. A change of a target
+keeps the stored URL when it gets no new URL. This module imports no NiceGUI, so its functions have tests of their own.
+Each function that reads or writes the database blocks.
 """
 
 import enum

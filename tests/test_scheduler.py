@@ -163,7 +163,9 @@ def test_the_shortest_interval_gives_run_times():
 
 
 @pytest.mark.parametrize("stored", [1, 60, MIN_INTERVAL_S - 1])
-def test_a_stored_interval_below_the_shortest_reads_as_the_shortest_with_one_warning(db_sessions, caplog, stored):
+def test_a_stored_interval_below_the_shortest_becomes_the_shortest_in_the_row_with_one_warning(
+    db_sessions, caplog, stored
+):
     load_schedule(db_sessions, "UTC")
     with db_sessions.begin() as session:
         row = session.get(Schedule, 1)
@@ -175,12 +177,18 @@ def test_a_stored_interval_below_the_shortest_reads_as_the_shortest_with_one_war
 
     assert spec.interval_s == MIN_INTERVAL_S
     warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
-    assert [record.getMessage() for record in warnings] == [
-        f"The stored interval of {stored} s is below the shortest interval, so the schedule uses {MIN_INTERVAL_S} s"
-    ]
+    message = (
+        f"The stored interval of {stored} s is below the shortest interval, so the schedule row now holds "
+        f"{MIN_INTERVAL_S} s"
+    )
+    assert [record.getMessage() for record in warnings] == [message]
     with db_sessions() as session:
-        # The row keeps its value until the next save.
-        assert session.get(Schedule, 1).interval_s == stored
+        assert session.get(Schedule, 1).interval_s == MIN_INTERVAL_S
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=scheduler_module.__name__):
+        assert load_schedule(db_sessions, "UTC").interval_s == MIN_INTERVAL_S
+    assert not [record for record in caplog.records if record.levelno == logging.WARNING]
 
 
 def test_a_short_stored_interval_of_a_cron_schedule_stays_as_it_is(db_sessions, caplog):

@@ -1,8 +1,9 @@
 """The notification targets block of the settings page: a card for each target and the form that edits a target.
 
 Each card shows only the scheme of its URL, because a URL holds the token of its service. The form that changes a
-target shows its stored URL, because the user needs to see the URL to change it. The web UI has no login, so the
-deployer must protect the access to the UI. No log line of the block holds a target URL.
+target shows its stored URL, because the user needs to see the URL to change it. The web UI has no password by
+default, and ``UI_PASSWORD`` in ``.env`` adds one. The password goes over plain HTTP, so the deployer must reach the
+service through a VPN or a reverse proxy with HTTPS. No log line of the block holds a target URL.
 
 The events, the lowest level and the switch of each card are part of the draft of the page, and the floating Save
 of the page writes only the choices that changed. The form adds or changes a target at once, and a delete acts at once
