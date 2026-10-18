@@ -241,6 +241,8 @@ def test_the_commands_name_the_child_and_keep_each_value_one_argument():
     ]
     assert draft.to_json().isascii()
     assert DraftRule.from_json(draft.to_json()) == draft
+    full = DraftRule(draft.condition, (A,), True, "PLx", SINCE)
+    assert DraftRule.from_json(full.to_json()) == full
     assert preview_command(SINCE, rule_id=3)[-1] == "--rule-id=3"
     assert preview_command(None, draft=draft)[3:] == ["preview-rule", "--draft=" + draft.to_json()]
     assert apply_command(7, 3, SINCE) == [
@@ -261,6 +263,11 @@ def test_the_commands_name_the_child_and_keep_each_value_one_argument():
         "{}",
         '{"condition": {}, "channel_ids": "UCx", "no_shorts": false}',
         '{"condition": {}, "channel_ids": [], "no_shorts": 0}',
+        # The draft of an older version, without the target playlist and the day.
+        '{"condition": {}, "channel_ids": [], "no_shorts": false}',
+        '{"condition": {}, "channel_ids": [], "no_shorts": false, "playlist_id": 1, "catch_up_since": null}',
+        '{"condition": {}, "channel_ids": [], "no_shorts": false, "playlist_id": null, "catch_up_since": "May"}',
+        '{"condition": {}, "channel_ids": [], "no_shorts": false, "playlist_id": null, "catch_up_since": 20261005}',
     ],
 )
 def test_a_text_that_is_not_a_draft_is_refused(text):
@@ -374,7 +381,8 @@ def test_the_preview_of_the_next_run_lists_only_the_new_videos_of_a_channel_that
     assert preview_once(settings, None, draft=DraftRule(LONG, (A,), False)) == 0
 
     result = Preview.from_value(json.loads(last_stderr_line(capsys)))
-    assert [(item.video_id, item.mark) for item in result.videos] == [("new long", Mark.MATCHES)]
+    # The settings of the test store no cookies, so the run would defer the match.
+    assert [(item.video_id, item.mark) for item in result.videos] == [("new long", Mark.WAITS_FOR_ACCOUNT)]
     assert (result.baseline_sources, result.mode_changed) == ((), False)
     assert fake_public.reads == [A]
 
@@ -405,7 +413,7 @@ def test_the_preview_of_the_next_run_of_a_feed_rule_reads_the_feed_with_the_acco
     assert preview_once(settings, None, draft=DraftRule(ANY, (), False)) == 0
 
     result = Preview.from_value(json.loads(last_stderr_line(capsys)))
-    assert [(item.video_id, item.mark) for item in result.videos] == [("f1", Mark.MATCHES)]
+    assert [(item.video_id, item.mark) for item in result.videos] == [("f1", Mark.WILL_ADD)]
     assert fake_client.created == 1
 
 

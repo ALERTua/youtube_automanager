@@ -13,6 +13,8 @@ from test_sync import ANY, DAY, LONG, A, B, C, entries, entry, feed_video, upcom
 from youtube_automanager.db.models import (
     AddedVideo,
     Channel,
+    Rule,
+    RuleChannel,
     Run,
     RunActionKind,
     RunStatus,
@@ -63,8 +65,8 @@ def day(days_back):
     return DAY - datetime.timedelta(days=days_back)
 
 
-def draft(condition=ANY, channels=(), no_shorts=False):
-    return DraftRule(condition, tuple(channels), no_shorts)
+def draft(condition=ANY, channels=(), no_shorts=False, playlist_id=None, since=None):
+    return DraftRule(condition, tuple(channels), no_shorts, playlist_id, since)
 
 
 class Harness:
@@ -93,7 +95,7 @@ class Harness:
             read_feed=self.read_feed,
         )
 
-    def next_run(self, rule_id=None, draft=None):
+    def next_run(self, rule_id=None, draft=None, account=None):
         request = load_request(self.sessions, rule_id, draft)
         return next_run_preview(
             self.sessions,
@@ -101,6 +103,7 @@ class Harness:
             read_uploads=self.sources.read_uploads,
             read_shorts=self.sources.read_shorts,
             read_feed=self.read_feed,
+            account=account,
         )
 
     def apply(self, rule_id, since=SINCE):
@@ -488,7 +491,7 @@ def test_the_preview_of_the_next_run_lists_what_the_next_run_evaluates(sync, rul
     result = rules.next_run(draft=draft(LONG, [A]))
 
     # Each old video matches too, but the run saw it before, so the preview leaves it out.
-    assert marks(result) == [("soon", Mark.UNDECIDED), ("new long", Mark.MATCHES)]
+    assert marks(result) == [("soon", Mark.WAITS_FOR_FIELD), ("new long", Mark.WILL_ADD)]
     assert (result.baseline_sources, result.mode_changed, result.errors, result.cut_sources) == ((), False, (), ())
     sync.run()
     assert sync.account.added == wl("new long")
@@ -504,7 +507,7 @@ def test_the_preview_of_the_next_run_reads_only_the_window_of_the_mode(sync, rul
 
     result = rules.next_run(draft=draft(ANY, [A]))
 
-    assert marks(result) == [("new", Mark.MATCHES)]
+    assert marks(result) == [("new", Mark.WILL_ADD)]
     assert sync.sources.consumed[A] == MIN_CHECKED
 
 
@@ -517,7 +520,7 @@ def test_the_preview_of_the_next_run_checks_a_deferred_video_again(sync, rules):
 
     result = rules.next_run(draft=draft(ANY, [A]))
 
-    assert marks(result) == [("soon", Mark.MATCHES)]
+    assert marks(result) == [("soon", Mark.WILL_ADD)]
 
 
 def test_mode_newest_previews_the_newest_entries_that_the_run_did_not_see(sync, rules):
@@ -530,7 +533,7 @@ def test_mode_newest_previews_the_newest_entries_that_the_run_did_not_see(sync, 
 
     result = rules.next_run(draft=draft(ANY, [A]))
 
-    assert marks(result) == [("new00", Mark.MATCHES), ("new01", Mark.MATCHES), ("new02", Mark.MATCHES)]
+    assert marks(result) == [("new00", Mark.WILL_ADD), ("new01", Mark.WILL_ADD), ("new02", Mark.WILL_ADD)]
     sync.run()
     assert sync.account.added == wl("new02", "new01", "new00")
 
@@ -545,7 +548,7 @@ def test_mode_mark_date_previews_the_videos_since_the_mark(sync, rules):
 
     result = rules.next_run(draft=draft(ANY, [A]))
 
-    assert marks(result) == [("new", Mark.MATCHES)]
+    assert marks(result) == [("new", Mark.WILL_ADD)]
     sync.run()
     assert sync.account.added == wl("new")
 
@@ -562,7 +565,7 @@ def test_a_source_without_state_is_a_baseline_of_the_next_run_and_the_preview_do
 
     result = rules.next_run(draft=draft(ANY, [A, B]))
 
-    assert marks(result) == [("new", Mark.MATCHES)]
+    assert marks(result) == [("new", Mark.WILL_ADD)]
     assert result.baseline_sources == ("Beta",)
     assert sync.sources.upload_reads == [A]
 
@@ -605,7 +608,7 @@ def test_a_first_record_of_the_mode_keeps_the_state(sync, rules):
 
     result = rules.next_run(draft=draft(ANY, [A]))
 
-    assert (marks(result), result.mode_changed) == ([("new", Mark.MATCHES)], False)
+    assert (marks(result), result.mode_changed) == ([("new", Mark.WILL_ADD)], False)
 
 
 def test_an_invalid_processing_mode_gives_its_error_and_reads_nothing(sync, rules):
@@ -628,7 +631,7 @@ def test_the_feed_of_the_next_run_reads_its_window_with_the_account(sync, rules)
 
     result = rules.next_run(draft=draft(ANY))
 
-    assert marks(result) == [("new", Mark.MATCHES)]
+    assert marks(result) == [("new", Mark.WILL_ADD)]
     assert rules.feed_reads == 1
 
 
@@ -639,7 +642,7 @@ def test_a_feed_without_state_is_a_baseline_and_needs_no_read(sync, rules):
     assert rules.feed_reads == 0
 
 
-def test_the_preview_of_the_next_run_of_a_change_lists_the_new_videos_whose_verdict_changes(sync, rules):
+def test_the_preview_of_the_next_run_of_a_change_evaluates_only_the_draft(sync, rules):
     rule_id = sync.rule("long", LONG, channels=[A])
     # The old videos are short, so the change would match each of them, but the run saw them before.
     old = entries("old", 30, duration_s=60)
@@ -649,7 +652,7 @@ def test_the_preview_of_the_next_run_of_a_change_lists_the_new_videos_whose_verd
 
     result = rules.next_run(rule_id, draft({"<": [{"var": "duration_s"}, 120]}, [A]))
 
-    assert marks(result) == [("new long", Mark.NO_LONGER_MATCHES), ("new short", Mark.MATCHES_NOW)]
+    assert marks(result) == [("new short", Mark.WILL_ADD)]
 
 
 def test_a_channel_that_fails_to_read_in_the_next_run_gives_an_error_and_the_other_channels_still_count(sync, rules):
@@ -662,7 +665,7 @@ def test_a_channel_that_fails_to_read_in_the_next_run_gives_an_error_and_the_oth
 
     result = rules.next_run(draft=draft(ANY, [A, B]))
 
-    assert marks(result) == [("new", Mark.MATCHES)]
+    assert marks(result) == [("new", Mark.WILL_ADD)]
     assert result.errors == (f"Channel Channel {B}: no answer",)
 
 
@@ -678,6 +681,314 @@ def test_the_preview_of_the_next_run_writes_nothing(sync, rules):
 
     assert sync.seen_rows(A).keys() == before.keys()
     assert sync.account.added == []
+
+
+# The catch-up of the next run.
+
+MESH = {"regex": [{"var": "title"}, "meshtastic", "i"]}
+
+
+def test_the_next_run_adds_what_the_preview_of_a_new_rule_on_a_channel_without_state_will_add(sync, rules):
+    sync.channel(A, "Ivan RIO")
+    sync.playlist("WL")
+    soon = entry("mesh soon", title="Meshtastic live", duration_s=None, day=None, live_status="is_upcoming")
+    uploads = [
+        soon,
+        entry("mesh new", title="Meshtastic node", day=day(1)),
+        entry("solder", title="Soldering", day=day(2)),
+        entry("mesh old", title="Meshtastic relay", day=day(6)),
+        entry("mesh too old", title="Meshtastic v1", day=day(9)),
+        *entries("old", 25, day=day(10)),
+    ]
+    sync.sources.uploads[A] = uploads
+
+    result = rules.next_run(draft=draft(MESH, [A], playlist_id="WL", since=SINCE))
+
+    assert marks(result) == [
+        ("mesh soon", Mark.WAITS_FOR_LIVE),
+        ("mesh new", Mark.WILL_ADD),
+        ("mesh old", Mark.WILL_ADD),
+    ]
+    assert (result.baseline_sources, result.catch_up_adds) == (("Ivan RIO",), 2)
+
+    rule_id = sync.rule("test", MESH, channels=[A], catch_up_since=SINCE)
+    report = sync.run()
+
+    will_add = [video.video_id for video in result.videos if video.mark is Mark.WILL_ADD]
+    assert sync.account.added == wl(*reversed(will_add))
+    assert sync.actions() == [(ADDED, "mesh old", rule_id, "WL"), (ADDED, "mesh new", rule_id, "WL")]
+    assert (sync.run_row().added_count, len(report.added), report.errors) == (2, 2, [])
+    assert [notification.event for notification in sync.sent].count(Event.VIDEO_ADDED) == 2
+    assert sync.catch_up_since(rule_id) is None
+    # The sync of the same run still stores the newest videos of the channel, and the upcoming one waits.
+    assert len(sync.seen(A)) == MIN_CHECKED
+    assert sync.seen(A)["mesh soon"] is SeenVideoState.DEFERRED
+
+    # The upcoming video becomes a video, and the next run adds it.
+    sync.sources.uploads[A] = [entry("mesh soon", title="Meshtastic live"), *uploads[1:]]
+    sync.run()
+    assert sync.account.added == wl("mesh old", "mesh new", "mesh soon")
+
+
+def test_the_next_run_adds_what_the_preview_of_a_new_rule_on_a_channel_that_another_rule_reads_will_add(sync, rules):
+    sync.rule("other", {">=": [{"var": "duration_s"}, 100000]}, channels=[A])
+    old = [entry("mesh old", title="Meshtastic relay", day=day(5)), *entries("old", 25, day=day(10))]
+    sync.sources.uploads[A] = old
+    sync.run()
+    sync.sources.uploads[A] = [
+        entry("mesh new", title="Meshtastic node"),
+        entry("plain new", title="Soldering"),
+        *old,
+    ]
+
+    result = rules.next_run(draft=draft(MESH, [A], playlist_id="WL", since=SINCE))
+
+    # The new video is in both reads and shows once.
+    assert marks(result) == [("mesh new", Mark.WILL_ADD), ("mesh old", Mark.WILL_ADD)]
+    assert (result.baseline_sources, result.catch_up_adds) == ((), 2)
+
+    rule_id = sync.rule("test", MESH, channels=[A], catch_up_since=SINCE)
+    sync.run()
+
+    assert sync.account.added == wl("mesh old", "mesh new")
+    # The sync of the same run meets the new video that the catch-up added, and it writes no skip for it.
+    assert sync.actions() == [(ADDED, "mesh old", rule_id, "WL"), (ADDED, "mesh new", rule_id, "WL")]
+    assert sync.catch_up_since(rule_id) is None
+
+
+def test_the_preview_without_a_day_adds_no_video_of_a_channel_without_state(sync, rules):
+    sync.channel(A, "Ivan RIO")
+    sync.sources.uploads[A] = [entry("mesh new", title="Meshtastic node", day=day(1))]
+
+    result = rules.next_run(draft=draft(MESH, [A], playlist_id="WL"))
+
+    assert (result.videos, result.baseline_sources, result.catch_up_adds) == ((), ("Ivan RIO",), 0)
+    assert sync.sources.upload_reads == []
+
+
+def test_the_preview_marks_the_videos_in_the_playlist_and_the_videos_that_wait_for_the_account(sync, rules):
+    sync.channel(A)
+    rules.store_added("in playlist")
+    sync.sources.uploads[A] = [
+        entry("new", day=day(1)),
+        entry("unknown", duration_s=None, day=day(2)),
+        entry("in playlist", day=day(3)),
+    ]
+
+    result = rules.next_run(draft=draft(LONG, [A], playlist_id="WL", since=SINCE), account="No cookies are stored.")
+
+    assert marks(result) == [
+        ("new", Mark.WAITS_FOR_ACCOUNT),
+        ("unknown", Mark.WAITS_FOR_FIELD),
+        ("in playlist", Mark.ALREADY_ADDED),
+    ]
+    assert result.catch_up_adds == 0
+
+
+def test_the_preview_counts_each_video_of_the_catch_up_also_beyond_the_limit_of_one_run(sync, rules):
+    sync.channel(A)
+    sync.sources.uploads[A] = entries("v", APPLY_LIMIT + 5)
+
+    result = rules.next_run(draft=draft(ANY, [A], playlist_id="WL", since=SINCE))
+
+    assert (result.catch_up_adds, result.count(Mark.WILL_ADD)) == (APPLY_LIMIT + 5, APPLY_LIMIT + 5)
+
+
+def test_the_preview_of_a_saved_rule_alone_reads_its_stored_day(sync, rules):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    sync.sources.uploads[A] = [entry("v0", day=day(1))]
+
+    result = rules.next_run(rule_id)
+
+    assert marks(result) == [("v0", Mark.WILL_ADD)]
+
+
+def test_a_failed_add_keeps_the_day_and_a_later_run_adds_the_rest(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    sync.sources.uploads[A] = [entry("v2", day=day(1)), entry("v1", day=day(2)), entry("v0", day=day(3))]
+    sync.account.add_errors[("WL", "v1")] = AccountError("YouTube refused the change")
+
+    report = sync.run()
+
+    assert sync.account.added == wl("v0")
+    assert report.errors == ["Cannot add video v1 to Playlist WL: YouTube refused the change"]
+    assert sync.catch_up_since(rule_id) == SINCE
+
+    del sync.account.add_errors[("WL", "v1")]
+    sync.run()
+
+    assert sync.account.added == wl("v0", "v1", "v2")
+    assert sync.catch_up_since(rule_id) is None
+
+
+def test_a_run_without_the_account_keeps_the_day_and_counts_the_videos_that_wait(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    sync.sources.uploads[A] = [entry("v1", day=day(1)), entry("v0", day=day(2))]
+    sync.account_error = AccountUnavailable("No YouTube cookies are stored.")
+
+    report = sync.run()
+
+    assert sync.account.added == []
+    assert report.errors == ["2 matching video(s) wait for the YouTube account: No YouTube cookies are stored."]
+    assert sync.catch_up_since(rule_id) == SINCE
+
+    sync.account_error = None
+    sync.run()
+
+    assert sync.account.added == wl("v0", "v1")
+    assert sync.catch_up_since(rule_id) is None
+
+
+def test_a_session_that_youtube_refuses_during_the_catch_up_keeps_the_day(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    sync.sources.uploads[A] = [entry("v0", day=day(1))]
+    sync.account.add_errors[("WL", "v0")] = NotLoggedInError("logged out")
+
+    sync.run()
+
+    assert len(sync.session_deaths) == 1
+    assert sync.catch_up_since(rule_id) == SINCE
+
+
+def test_a_read_error_of_the_catch_up_keeps_the_day(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    sync.sources.errors[A] = PublicSourceError("no answer")
+
+    report = sync.run()
+
+    assert f"Rule all, videos since {SINCE.isoformat()}: Channel Channel {A}: no answer" in report.errors
+    assert sync.catch_up_since(rule_id) == SINCE
+
+
+def test_a_feed_rule_without_the_account_keeps_the_day(sync):
+    rule_id = sync.rule("feed", ANY, catch_up_since=SINCE)
+    sync.account_error = AccountUnavailable("No YouTube cookies are stored.")
+
+    sync.run()
+
+    assert sync.catch_up_since(rule_id) == SINCE
+
+
+def test_the_catch_up_of_a_feed_rule_reads_the_feed_since_the_day(sync):
+    rule_id = sync.rule("feed", ANY, catch_up_since=SINCE)
+    sync.account.feed = [feed_video("f1", day=day(1)), feed_video("f0", day=day(8))]
+
+    sync.run()
+
+    assert sync.account.added == wl("f1")
+    assert sync.catch_up_since(rule_id) is None
+
+
+def test_more_matches_than_the_limit_take_more_runs_and_the_day_stays_until_the_last_one(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    videos = entries("v", APPLY_LIMIT + 5)
+    sync.sources.uploads[A] = videos
+    ids = video_ids(videos)
+
+    sync.run()
+
+    assert sync.account.added == wl(*reversed(ids[5:]))
+    assert sync.catch_up_since(rule_id) == SINCE
+
+    sync.run()
+
+    assert sync.account.added == wl(*reversed(ids[5:]), *reversed(ids[:5]))
+    assert sync.catch_up_since(rule_id) is None
+
+
+def test_the_catch_up_keeps_the_time_of_change_of_the_rule(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    with sync.sessions() as session:
+        changed = session.get(Rule, rule_id).updated_at
+    sync.sources.uploads[A] = [entry("v0", day=day(1))]
+
+    sync.run()
+
+    with sync.sessions() as session:
+        stored = session.get(Rule, rule_id)
+        assert (stored.catch_up_since, stored.updated_at) == (None, changed)
+
+
+def test_a_new_day_from_a_save_during_the_run_stays(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    later = day(2)
+
+    def read_and_save(channel_id):
+        # The user saves the rule with another day while the run reads the channel.
+        with sync.sessions.begin() as session:
+            session.get(Rule, rule_id).catch_up_since = later
+        return iter([entry("v0", day=day(1))])
+
+    sync.sources.read_uploads = read_and_save
+
+    sync.run()
+
+    assert sync.catch_up_since(rule_id) == later
+
+
+def test_a_save_during_the_run_that_adds_a_channel_and_keeps_the_day_keeps_the_day(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    sync.channel(B)
+    sync.sources.uploads[A] = [entry("a0", day=day(1))]
+    sync.sources.uploads[B] = [entry("b0", B, day=day(1))]
+    read_uploads = sync.sources.read_uploads
+    saves = []
+
+    def read_and_save(channel_id):
+        if not saves:
+            # The user saves the rule with a new channel and the same day while the catch-up reads the channel A.
+            with sync.sessions.begin() as session:
+                stored = session.get(Rule, rule_id)
+                stored.updated_at += datetime.timedelta(minutes=1)
+                session.add(RuleChannel(rule_id=rule_id, channel_id=B))
+            saves.append(channel_id)
+        return read_uploads(channel_id)
+
+    sync.sources.read_uploads = read_and_save
+
+    sync.run()
+
+    assert sync.account.added == wl("a0")
+    assert sync.catch_up_since(rule_id) == SINCE
+
+    # The next run reads the new channel too, and then clears the day.
+    sync.run()
+
+    assert sync.account.added == wl("a0", "b0")
+    assert sync.catch_up_since(rule_id) is None
+
+
+def test_a_disabled_rule_keeps_its_day_and_adds_nothing(sync):
+    rule_id = sync.rule("all", ANY, channels=[A], enabled=False, catch_up_since=SINCE)
+    sync.sources.uploads[A] = [entry("v0", day=day(1))]
+
+    sync.run()
+
+    assert sync.account.added == []
+    assert sync.catch_up_since(rule_id) == SINCE
+
+
+def test_the_catch_up_skips_the_videos_that_the_service_added_before(sync, rules):
+    rule_id = sync.rule("all", ANY, channels=[A], catch_up_since=SINCE)
+    rules.store_added("v0")
+    sync.sources.uploads[A] = [entry("v1", day=day(1)), entry("v0", day=day(2))]
+
+    sync.run()
+
+    assert sync.account.added == wl("v1")
+    assert sync.actions() == [(ADDED, "v1", rule_id, "WL")]
+    assert sync.catch_up_since(rule_id) is None
+
+
+def test_the_catch_up_and_the_sync_read_the_shorts_of_a_channel_once(sync):
+    sync.rule("all", ANY, channels=[A], no_shorts=True, catch_up_since=SINCE)
+    sync.sources.uploads[A] = [entry("short", day=day(1)), entry("video", day=day(2))]
+    sync.sources.shorts[A] = {"short"}
+
+    sync.run()
+
+    assert sync.account.added == wl("video")
+    assert sync.sources.shorts_reads == [(A, SHORTS_LIMIT)]
 
 
 # The apply.

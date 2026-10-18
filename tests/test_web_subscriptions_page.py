@@ -3,7 +3,7 @@
 import asyncio
 import json
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from nicegui import ui
@@ -17,6 +17,7 @@ from youtube_automanager.account_cache import REFRESHED_AT_KEY
 from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, Schedule, ScheduleKind, Setting
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
+from youtube_automanager.web.ui.dates import today_in
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -552,12 +553,17 @@ async def test_a_found_channel_goes_into_a_rule_with_a_new_channel_row(user, ses
     await open_channel(user, FOUND, "found-table")
 
     await choose_rule(user, 1)
-    # The rule has a channel, so it does not read the subscriptions feed, and only the baseline fact shows.
-    assert text_of(user, "fact-baseline").startswith("The rule acts only on new videos of this channel.")
+    # The rule has a channel, so it does not read the subscriptions feed, and only the fact of the older videos shows.
+    assert text_of(user, "fact-catch-up") == (
+        "The next run adds the videos of this channel from the last 7 days that the rule matches. After that, the "
+        "rule adds each new video of the channel. To add older videos, open the rule and change Also add videos from."
+    )
     assert elements_of(user, "fact-feed") == []
     user.find(marker="rule-save").click()
 
     await eventually(lambda: (1, FOUND) in rule_links(sessions), "The link of the rule and the channel")
+    with sessions() as session:
+        assert session.get(Rule, 1).catch_up_since == today_in("Europe/Kyiv") - timedelta(days=7)
     row = stored_channel(sessions, FOUND)
     assert (row.title, row.handle, row.thumbnail_url, row.is_subscribed) == (
         "Found Channel",
@@ -585,7 +591,7 @@ async def test_a_rule_without_channels_tells_that_it_stops_to_read_the_feed(user
     # Before a choice, the save is off, and the feed fact does not show.
     assert element_of(user, "rule-save").enabled is False
     assert elements_of(user, "fact-feed") == []
-    assert elements_of(user, "fact-baseline")
+    assert elements_of(user, "fact-catch-up")
 
     set_value(user, "rule-select", 1)
 

@@ -62,6 +62,7 @@ metadata:
 - In `/feed/channels`, the `subscribeEndpoint` of a channel has `channelIds` and `params` `EgIIARgAUAE%3D`, and its `unsubscribeEndpoint` has `params` `CgIIARgA`.
 - The subscriptions feed does not have most videos of 180 s or shorter. In a sample, it had 5 of 82 such videos and all 82 longer videos.
 - A session from a browser tab that stays open can end about 20 minutes after the export of its cookies. The yt-dlp wiki gives the export method: a private window with only `https://www.youtube.com/robots.txt` open, which you close after the export. All private windows of Firefox share one session, so a second independent session needs a new private window after all private windows are closed.
+- A cookie export from a private window stayed valid at least 6.7 days without a rotation and without a write-back, with a read every 30 minutes. A session with the rotation every 600 s lived the same time.
 - Chromium with Device Bound Session Credentials gives cookies that live a few hours after export. Export from Firefox.
 - Google checks `PSIDTS` against the IP address of the session.
 - A read check makes YouTube send new values of `SIDCC`, `__Secure-1PSIDCC` and `__Secure-3PSIDCC`, and remove the short-lived `ST-*` cookies.

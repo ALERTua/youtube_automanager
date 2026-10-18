@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-18 12:03+0300\n"
+"POT-Creation-Date: 2026-10-18 14:24+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -28,16 +28,22 @@ msgid ""
 "videos that came since the last run are not checked."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
-msgid ""
-"A run acts only on new videos. It does not go back to the videos that are"
-" already on the channels of the rule, also after a change or when you "
-"turn the rule on again. To add older videos of a saved rule, use Apply to"
-" videos from a date."
-msgstr ""
-
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "A run is already active, so no new run started."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid ""
+"A setting of the service changed how far a run reads the channels. So the"
+" next run adds no video that is already on the channels. After that run, "
+"the rule adds the videos that come later."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid ""
+"A setting of the service changed how far a run reads the channels. So the"
+" next run adds only the videos from the day in Also add videos from. "
+"After that run, the rule adds the videos that come later."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -115,7 +121,16 @@ msgid "All playlists"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
-msgid "Already added"
+msgid "Already in the playlist"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Also add videos from"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
+msgid "Also add videos from: {reason}"
 msgstr ""
 
 #: youtube_automanager/web/ui/notifications_section.py
@@ -366,6 +381,14 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Each rule already reads this channel."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid ""
+"Each run adds the new videos that the rule matches. The videos that are "
+"already on the channels come only from the day in Also add videos from. A"
+" rule that is off adds nothing and keeps that day for the first run after"
+" you turn it on."
 msgstr ""
 
 #: youtube_automanager/web/ui/service_settings.py
@@ -1064,6 +1087,12 @@ msgid ""
 "tgram://bottoken/ChatID for Telegram."
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+msgid ""
+"The YouTube account is not available now, so the matching videos wait for"
+" it. Upload new YouTube cookies on the Settings page."
+msgstr ""
+
 #. Translators: {cause} is the English cause from the service, for example that
 #. no cookies are stored.
 #: youtube_automanager/web/ui/account_lists.py
@@ -1151,6 +1180,10 @@ msgid "The file is no text in UTF-8, so it is no cookie file."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
+msgid "The form changed while the preview ran. Press Preview again."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
 msgid "The history keeps the actions of the rule."
 msgstr ""
 
@@ -1185,7 +1218,40 @@ msgid ""
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
-msgid "The next run finds no new video that this rule matches."
+msgid "The next run adds no video for this rule."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
+"The next run adds the videos of this channel from the last {days} days "
+"that the rule matches. After that, the rule adds each new video of the "
+"channel. To add older videos, open the rule and change Also add videos "
+"from."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
+msgid ""
+"The next run adds the {limit} oldest of the {count} videos from the day "
+"in Also add videos from. The runs after it add the rest."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid ""
+"The next run also adds the videos from this day that the rule matches, "
+"the oldest first. Leave the field empty to add only new videos."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "The next run also checks each new video that comes before the run starts."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
+msgid ""
+"The next run does not add the videos that are already on these channels: "
+"{channels}. Set Also add videos from to add them from that day."
 msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
@@ -1206,30 +1272,16 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid ""
-"The preview lists the videos of the next run for which your changes "
-"change the result: a video that the rule matches now, or no longer "
-"matches. A run checks only the videos that came since the last run, as "
-"far as the processing mode reads. It adds nothing."
-msgstr ""
-
-#: youtube_automanager/web/ui/rules_page.py
-msgid ""
-"The preview lists the videos of the next run that this rule matches or "
-"cannot decide yet. A run checks only the videos that came since the last "
-"run, as far as the processing mode reads. It adds nothing."
-msgstr ""
-
-#: youtube_automanager/web/ui/rules_page.py
-msgid ""
-"The processing mode changed, so the next run starts each source again: it"
-" stores the newest videos of each source as seen and adds none of them."
+"The preview shows what the next run does with the rule as the form shows "
+"it now: the videos that it will add, and the matching videos that wait. "
+"The preview adds nothing."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 #, python-brace-format
 msgid ""
-"The read stops after {limit} videos of a source, so the older videos of "
-"these sources are not in the list: {sources}"
+"The read stops after {limit} videos of a channel, so the older videos of "
+"these channels are not in the list: {sources}"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -1242,12 +1294,6 @@ msgid ""
 "The rotation renews the session of the stored cookies about each "
 "{minutes} minutes, the way an open YouTube tab does. It is on by default."
 " A saved change acts at the next turn of the rotation, without a restart."
-msgstr ""
-
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid ""
-"The rule acts only on new videos of this channel. The current videos of "
-"the channel become a baseline, and the rule adds none of them."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -1335,13 +1381,6 @@ msgstr ""
 msgid ""
 "The service deletes older runs with their actions at its start and each "
 "day at {time} ({zone})."
-msgstr ""
-
-#: youtube_automanager/web/ui/rules_page.py
-#, python-brace-format
-msgid ""
-"The service has not read these sources yet, so the next run stores their "
-"newest videos as seen and adds none of them: {sources}"
 msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
@@ -1631,6 +1670,18 @@ msgstr ""
 msgid "Videos seen"
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Waits for the YouTube account"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Waits: no value yet for a field of the rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Waits: the video is upcoming or live"
+msgstr ""
+
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Warning"
 msgstr ""
@@ -1714,10 +1765,6 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "YouTube found no channel for this text."
-msgstr ""
-
-#: youtube_automanager/web/ui/rules_page.py
-msgid "Your changes change the result for no new video of the next run."
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py

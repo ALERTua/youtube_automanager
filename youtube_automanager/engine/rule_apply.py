@@ -7,8 +7,10 @@ the date, or after READ_LIMIT entries. An entry without a date, for example an u
 The evaluation is the evaluation of a sync run: a rule with ``no_shorts`` gets the Shorts check of ``rule_spec``, and a
 rule that needs ``is_short`` reads the Shorts of a channel at most once, and only when it gives UNKNOWN.
 
-The preview of the next run reads no date. It reads each source as the next sync run does, with the processing mode
-and the stored state, and it lists only the videos that the run evaluates.
+The preview of the next run reads each source as the next sync run does, with the processing mode and the stored
+state, and it lists the videos that the run evaluates. A rule with a catch-up day also lists the videos since that day,
+because the next sync run first adds them as an apply does. ``SyncRun`` does that catch-up with ``RuleReader`` and
+``videos_to_add`` of this module.
 
 An apply adds the matching videos to the target playlist of the rule, the oldest first, at most APPLY_LIMIT of them. It
 writes an ``added_video`` row and an ``added`` action for each add, as a sync run does, but it never writes
@@ -116,10 +118,12 @@ type ReadFeed = Callable[[], Iterable[Any]]
 
 @dataclass(frozen=True)
 class RuleVersion:
-    """One version of a rule, the saved one or a draft: its evaluation form and the channels that it reads."""
+    """One version of a rule, the saved one or a draft: its evaluation form, the channels that it reads, and the first
+    day of the older videos that the next run also adds."""
 
     spec: RuleSpec
     channel_ids: frozenset[str]
+    catch_up_since: datetime.date | None = None
 
     @property
     def source_keys(self) -> frozenset[str]:
@@ -189,20 +193,27 @@ def saved_version(session: Session, rule_id: int) -> RuleVersion:
     except RuleError as error:
         raise RuleRefused(f"Rule {rule.name}: {error}") from None
     channels = session.scalars(select(RuleChannel.channel_id).where(RuleChannel.rule_id == rule_id))
-    return RuleVersion(spec, frozenset(channels))
+    return RuleVersion(spec, frozenset(channels), rule.catch_up_since)
 
 
 def draft_version(draft: DraftRule, rule_id: int | None = None) -> RuleVersion:
-    """Return the version of a draft from the editor. Raise RuleRefused when its condition is not valid."""
+    """Return the version of a draft from the editor. Raise RuleRefused when its condition is not valid.
+
+    A draft without a target playlist gets an empty playlist id, which no stored add has.
+    """
     # A rule that no session holds, so ``rule_spec`` builds the draft exactly as it builds a saved rule.
     rule = Rule(
-        id=rule_id, name=DRAFT_NAME, condition=draft.condition, no_shorts=draft.no_shorts, target_playlist_id=""
+        id=rule_id,
+        name=DRAFT_NAME,
+        condition=draft.condition,
+        no_shorts=draft.no_shorts,
+        target_playlist_id=draft.playlist_id or "",
     )
     try:
         spec = rule_spec(rule)
     except RuleError as error:
         raise RuleRefused(f"The condition is not valid: {error}") from None
-    return RuleVersion(spec, frozenset(draft.channel_ids))
+    return RuleVersion(spec, frozenset(draft.channel_ids), draft.catch_up_since)
 
 
 def load_request(sessions: sessionmaker[Session], rule_id: int | None, draft: DraftRule | None) -> PreviewRequest:
@@ -375,16 +386,24 @@ def _found(taken: Mapping[str, Iterable[tuple[Video, str | None]]]) -> tuple[Fou
         for video, channel_title in videos:
             listed.setdefault(video.video_id, (video, channel_title))
             sources_of.setdefault(video.video_id, set()).add(key)
-    found = [
+    return _newest_first(
         Found(video, channel_title, frozenset(sources_of[video_id]))
         for video_id, (video, channel_title) in listed.items()
-    ]
-    # Newest first, and an entry without a date first of all. A sort in reverse keeps the order of equal keys, so the
-    # entries of one day stay in the order of the read.
-    found.sort(
-        key=lambda item: (item.video.upload_date is None, item.video.upload_date or datetime.date.min), reverse=True
     )
-    return tuple(found)
+
+
+def _newest_first(found: Iterable[Found]) -> tuple[Found, ...]:
+    """Sort the videos newest first, and an entry without a date first of all.
+
+    A sort in reverse keeps the order of equal keys, so the entries of one day stay in the order of the read.
+    """
+    return tuple(
+        sorted(
+            found,
+            key=lambda item: (item.video.upload_date is None, item.video.upload_date or datetime.date.min),
+            reverse=True,
+        )
+    )
 
 
 def _take(listing: Iterable[Any], since: datetime.date) -> tuple[list[tuple[Video, str | None]], bool]:
@@ -445,14 +464,21 @@ def next_run_preview(
     read_uploads: ReadUploads,
     read_shorts: ReadShorts,
     read_feed: ReadFeed = _no_feed,
+    account: str | None = None,
 ) -> Preview:
-    """Tell what the next sync run does with the videos of the sources of ``request``. The preview writes nothing.
+    """Tell what the next sync run does with the rule of ``request``: the draft, or the saved rule without a draft.
 
-    The read follows the sync run: the processing mode and the stored state of each source decide how far it reads,
-    and only the videos that the run evaluates count, the new ones and the deferred ones. A source without stored
-    state gets a baseline in the next run, and so does each source when the mode of the stored state is another mode.
-    The preview reads no such source and names it in ``baseline_sources``. The marks are the marks of ``preview``. A
-    failed read of the feed raises its error.
+    The preview writes nothing. It lists the videos of two reads, each video once, newest first:
+
+    - The catch-up: the videos since the first day of the rule, which the run reads first, as an apply reads them.
+    - The sync: the videos that the run evaluates after the catch-up, the new ones and the deferred ones. The
+      processing mode and the stored state of each source decide how far the read goes. A source without stored state
+      gets a baseline, and so does each source when the mode of the stored state is another mode. The preview reads
+      no such source and names it in ``baseline_sources``.
+
+    A video of both reads gets the mark of the sync, because the sync of the run also adds an upcoming video that
+    matches. ``account`` is the cause when the YouTube account is not available, so each matching video waits for it.
+    A failed read of the feed raises its error.
     """
     errors: list[str] = []
 
@@ -460,6 +486,9 @@ def next_run_preview(
         LOG.warning("Preview of the next run: %s", text)
         errors.append(text)
 
+    version = request.draft if request.draft is not None else request.saved
+    if version is None:
+        raise ValueError("a preview needs a saved rule, a draft or both")
     with sessions() as session:
         titles = _channel_titles(session)
         try:
@@ -469,49 +498,112 @@ def next_run_preview(
         mode_changed = resets_state(session, processing)
         states: dict[str, SourceState] = {}
         baselines: list[str] = []
-        for key in sorted(request.source_keys, key=source_order):
+        for key in sorted(version.source_keys, key=source_order):
             known, mark, read_at = load_source_state(session, key)
             read_before = None if read_at is None else read_at.date()
             if mode_changed or not has_state(processing, known, mark, read_before):
                 baselines.append(key)
             else:
                 states[key] = SourceState(known, mark, read_before)
-        added = _added(session, request)
+        added = _added_to(session, version.spec.playlist_id)
     reader = RuleReader(
         read_uploads=read_uploads, read_shorts=read_shorts, read_feed=read_feed, error=error, titles=titles
     )
-    read = reader.read_next_run(states, processing)
-    listed, counts = _listed(reader, request, read, added, titles)
+    synced = reader.read_next_run(states, processing)
+    caught = SourcesRead((), ())
+    if version.catch_up_since is not None:
+        caught = reader.read(version.source_keys, version.catch_up_since)
+    synced_ids = {found.video.video_id for found in synced.found}
+    marks: dict[str, Mark | None] = {}
+    merged: list[Found] = []
+    catch_up_adds = 0
+    for found in caught.found:
+        (verdict,) = reader.verdicts(found, [version])
+        mark = _catch_up_mark(found.video, verdict, added, account)
+        catch_up_adds += mark is Mark.WILL_ADD
+        if found.video.video_id not in synced_ids:
+            marks[found.video.video_id] = mark
+            merged.append(found)
+    for found in synced.found:
+        (verdict,) = reader.verdicts(found, [version])
+        marks[found.video.video_id] = _sync_mark(verdict, found.video, added, account)
+        merged.append(found)
+    listed, counts = _counted(((found, marks[found.video.video_id]) for found in _newest_first(merged)), titles)
     return Preview(
         listed,
         counts,
         tuple(errors),
+        cut_sources=tuple(reader.title(key) for key in caught.cut),
         baseline_sources=tuple(reader.title(key) for key in baselines),
         mode_changed=mode_changed,
+        catch_up_adds=catch_up_adds,
     )
+
+
+def _sync_mark(verdict: Verdict, video: Video, added: set[str], account: str | None) -> Mark | None:
+    """Return what the sync of the next run does with a video that it evaluates, or None when the rule does not match.
+
+    The sync adds also an upcoming or live video that matches.
+    """
+    if verdict is Verdict.NO_MATCH:
+        return None
+    if video.video_id in added:
+        return Mark.ALREADY_ADDED
+    if verdict is Verdict.UNKNOWN:
+        return Mark.WAITS_FOR_FIELD
+    if account is not None:
+        return Mark.WAITS_FOR_ACCOUNT
+    return Mark.WILL_ADD
+
+
+def _catch_up_mark(video: Video, verdict: Verdict, added: set[str], account: str | None) -> Mark | None:
+    """Return what the catch-up of the next run does with a video, or None when the rule does not match it.
+
+    The catch-up adds a video as an apply does, so it never adds an upcoming or live one.
+    """
+    if verdict is Verdict.NO_MATCH:
+        return None
+    if video.video_id in added:
+        return Mark.ALREADY_ADDED
+    if verdict is Verdict.UNKNOWN:
+        return Mark.WAITS_FOR_FIELD
+    if not video.is_finished:
+        return Mark.WAITS_FOR_LIVE
+    if account is not None:
+        return Mark.WAITS_FOR_ACCOUNT
+    return Mark.WILL_ADD
 
 
 def _channel_titles(session: Session) -> dict[str, str]:
     return {row.channel_id: row.title for row in session.scalars(select(Channel))}
 
 
+def _added_to(session: Session, playlist_id: str) -> set[str]:
+    """The ids of the videos that the service added to the playlist ``playlist_id``."""
+    return set(session.scalars(select(AddedVideo.video_id).where(AddedVideo.playlist_id == playlist_id)))
+
+
 def _added(session: Session, request: PreviewRequest) -> set[str]:
     """The ids of the videos in the target playlist of a saved rule alone, for the marks of an apply."""
     if request.saved is None or request.draft is not None:
         return set()
-    return set(
-        session.scalars(select(AddedVideo.video_id).where(AddedVideo.playlist_id == request.saved.spec.playlist_id))
-    )
+    return _added_to(session, request.saved.spec.playlist_id)
 
 
 def _listed(
     reader: RuleReader, request: PreviewRequest, read: SourcesRead, added: set[str], titles: Mapping[str, str]
 ) -> tuple[tuple[PreviewVideo, ...], dict[Mark, int]]:
     """Mark each found video. Return at most PREVIEW_LIMIT of the listed videos, and the count of each mark."""
+    return _counted(((found, _mark(reader, request, found, added)) for found in read.found), titles)
+
+
+def _counted(
+    marked: Iterable[tuple[Found, Mark | None]], titles: Mapping[str, str]
+) -> tuple[tuple[PreviewVideo, ...], dict[Mark, int]]:
+    """List each video with a mark. Return at most PREVIEW_LIMIT of the listed videos, and the count of each mark."""
     listed: list[PreviewVideo] = []
     counts: dict[Mark, int] = {}
-    for found in read.found:
-        mark = _mark(reader, request, found, added)
+    for found, mark in marked:
         if mark is None:
             continue
         counts[mark] = counts.get(mark, 0) + 1
@@ -561,6 +653,20 @@ def _preview_video(found: Found, mark: Mark, titles: Mapping[str, str]) -> Previ
 
 
 # The apply.
+
+
+def videos_to_add(reader: RuleReader, version: RuleVersion, read: SourcesRead, added: set[str]) -> list[Video]:
+    """Return the videos of ``read`` that an apply or a catch-up of ``version`` adds, the oldest first.
+
+    A video that the service added to the target playlist before is not added again, and ``added`` holds the ids of
+    those videos. An upcoming or live video and a video that the rule cannot decide are not added.
+    """
+    matching = [
+        found.video
+        for found in read.found
+        if _apply_mark(found.video, reader.verdicts(found, [version])[0], added) is Mark.WILL_ADD
+    ]
+    return matching[::-1]
 
 
 class RuleApply:
@@ -642,15 +748,11 @@ class RuleApply:
             added = set(
                 session.scalars(select(AddedVideo.video_id).where(AddedVideo.playlist_id == version.spec.playlist_id))
             )
-        # A video that the service added to the target playlist before is not added again. The read gives each video
-        # once, and the sync lock keeps a sync run out during the apply, so an add needs no second check.
-        matching = [
-            found.video
-            for found in read.found
-            if _apply_mark(found.video, reader.verdicts(found, [version])[0], added) is Mark.WILL_ADD
-        ]
-        # The oldest first, so the limit leaves the newest videos to the next apply.
-        todo = matching[::-1][:APPLY_LIMIT]
+        # The read gives each video once, and the sync lock keeps a sync run out during the apply, so an add needs no
+        # second check.
+        matching = videos_to_add(reader, version, read, added)
+        # The limit leaves the newest videos to the next apply.
+        todo = matching[:APPLY_LIMIT]
         self.report.left = len(matching) - len(todo)
         try:
             for video in todo:

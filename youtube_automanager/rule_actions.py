@@ -89,15 +89,16 @@ def preview_once(
     """
     # The engine imports yt-dlp, so only the child loads it.
     from youtube_automanager.engine import rule_apply
+    from youtube_automanager.engine.account_session import AccountUnavailable, load_stored
     from youtube_automanager.youtube import public
 
     def read_shorts(channel_id: str, limit: int) -> set[str]:
         return public.shorts_video_ids(channel_id, limit=limit)
 
-    def preview(sessions: sessionmaker[Session], **feed: rule_apply.ReadFeed) -> Preview:
+    def preview(sessions: sessionmaker[Session], account: str | None = None, **feed: rule_apply.ReadFeed) -> Preview:
         reads = {"read_uploads": public.iter_channel_uploads, "read_shorts": read_shorts, **feed}
         if since is None:
-            return rule_apply.next_run_preview(sessions, request, **reads)
+            return rule_apply.next_run_preview(sessions, request, account=account, **reads)
         return rule_apply.preview(sessions, request, since, **reads)
 
     engine = make_engine(settings.database_url)
@@ -108,7 +109,13 @@ def preview_once(
         except rule_apply.RuleRefused as error:
             return succeed(Preview((), {}, errors=(str(error),)).to_value())
         if not request.reads_feed:
-            return succeed(preview(sessions).to_value())
+            # A run without usable cookies defers each match. The stored cookies tell it without a request to YouTube.
+            try:
+                load_stored(sessions, settings)
+                account = None
+            except AccountUnavailable as error:
+                account = str(error)
+            return succeed(preview(sessions, account).to_value())
     finally:
         engine.dispose()
 

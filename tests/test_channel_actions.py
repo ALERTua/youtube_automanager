@@ -3,6 +3,7 @@
 No test reads or changes YouTube: fakes stand in for the yt-dlp readers, the account client and the child process.
 """
 
+import datetime
 import json
 import os
 import subprocess
@@ -672,6 +673,41 @@ def test_a_channel_that_the_rule_reads_already_changes_nothing(db_sessions, rule
 
     assert rule_links(db_sessions) == {(rule_id, A)}
     assert stored_channel(db_sessions, A).title == "Alpha"
+
+
+def catch_up_since(sessions, rule_id):
+    with sessions() as session:
+        return session.get(Rule, rule_id).catch_up_since
+
+
+def test_a_new_channel_gives_the_rule_its_catch_up_day(db_sessions, rule_id):
+    day = datetime.date(2026, 10, 5)
+
+    add_channel_to_rule(db_sessions, rule_id, A, title="Alpha", catch_up_since=day)
+
+    assert catch_up_since(db_sessions, rule_id) == day
+
+
+def test_a_rule_with_an_earlier_catch_up_day_keeps_it_and_a_later_day_moves_back(db_sessions, rule_id):
+    early, late = datetime.date(2026, 9, 1), datetime.date(2026, 10, 5)
+    with db_sessions.begin() as session:
+        session.get(Rule, rule_id).catch_up_since = early
+
+    add_channel_to_rule(db_sessions, rule_id, A, title="Alpha", catch_up_since=late)
+    assert catch_up_since(db_sessions, rule_id) == early
+
+    with db_sessions.begin() as session:
+        session.get(Rule, rule_id).catch_up_since = late + datetime.timedelta(days=3)
+    add_channel_to_rule(db_sessions, rule_id, B, title="Beta", catch_up_since=late)
+    assert catch_up_since(db_sessions, rule_id) == late
+
+
+def test_a_channel_that_the_rule_reads_already_keeps_the_catch_up_day(db_sessions, rule_id):
+    add_channel_to_rule(db_sessions, rule_id, A, title="Alpha")
+
+    add_channel_to_rule(db_sessions, rule_id, A, title="Alpha", catch_up_since=datetime.date(2026, 10, 5))
+
+    assert catch_up_since(db_sessions, rule_id) is None
 
 
 def test_a_missing_rule_adds_no_row(db_sessions, rule_id):
