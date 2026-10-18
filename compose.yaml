@@ -1,6 +1,7 @@
 # Start: copy .env.example to .env, set COOKIES_KEY and TZ in it, then run "docker compose up -d".
-# The web UI and the API answer on port 8080 of the host. Choose yourself how you reach it from outside,
-# for example a reverse proxy or a VPN: the service has no login of its own.
+# The web UI and the API answer on port 8080 of the host. The web UI has no password by default. Set UI_PASSWORD
+# in .env to add one. The password goes over plain HTTP, so reach the service from outside through a VPN or through
+# a reverse proxy with HTTPS.
 services:
   youtube-automanager:
     image: ghcr.io/alertua/youtube_automanager:latest

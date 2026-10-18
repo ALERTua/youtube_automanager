@@ -262,8 +262,8 @@ async def scheduler_page(services: Services) -> None:
         )
         interval_input.bind_visibility_from(kind_radio, "value", lambda kind: kind is ScheduleKind.INTERVAL)
         interval_hint = ui.label(
-            _("From {minimum} s (15 minutes) to {maximum} s (one year). Example: 3600 is each hour.").format(
-                minimum=MIN_INTERVAL_S, maximum=MAX_INTERVAL_S
+            _("From {minimum} s ({minutes} minutes) to {maximum} s (one year). Example: 3600 is each hour.").format(
+                minimum=MIN_INTERVAL_S, minutes=MIN_INTERVAL_S // 60, maximum=MAX_INTERVAL_S
             )
         ).classes("text-grey-7")
         interval_hint.bind_visibility_from(kind_radio, "value", lambda kind: kind is ScheduleKind.INTERVAL)

@@ -19,8 +19,6 @@ on:
       - "*"
     paths-ignore:
       - ".pre-commit-config.yaml"
-      - "userscript/**"
-      - "docs/**"
       - ".github/dependabot.yml"
 
   # a pull request builds the image without a push
@@ -29,8 +27,6 @@ on:
       - "main"
     paths-ignore:
       - ".pre-commit-config.yaml"
-      - "userscript/**"
-      - "docs/**"
 
 permissions: {}
 

@@ -1,9 +1,10 @@
 """The settings page: the YouTube cookies, the cookie rotation, the processing mode, yt-dlp and the notifications.
 
-The web UI has no login, so anybody who can open the page can read it, and the deployer must protect the access to the
-UI. The page never shows a cookie value. It shows a stored notification URL only in the edit form of its target,
-because the user needs to see the URL to change it. No log line of the page holds a cookie value or a target URL. The
-block of yt-dlp is in the module ``ytdlp_section``. The block of the notification targets is in the module
+The web UI has no password by default, so anybody who can open the page can read it. ``UI_PASSWORD`` in ``.env`` adds
+a password. The password goes over plain HTTP, so the deployer must reach the service through a VPN or a reverse proxy
+with HTTPS. The page never shows a cookie value. It shows a stored notification URL only in the edit form of its
+target, because the user needs to see the URL to change it. No log line of the page holds a cookie value or a target
+URL. The block of yt-dlp is in the module ``ytdlp_section``. The block of the notification targets is in the module
 ``notifications_section``, and the page shows it last.
 
 A control of a setting changes only the draft of the page, and one pair of floating buttons saves or discards each

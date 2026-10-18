@@ -40,8 +40,8 @@ YTDLP_JOB_ID = "ytdlp_update"
 CLEANUP_HOUR = 3
 CLEANUP_MINUTE = 30
 
-# The shortest interval of an interval schedule, 15 minutes. A stored row with a shorter interval from an older version
-# of the service gets this interval when the service reads it.
+# The shortest interval of an interval schedule, 15 minutes. When the service reads a stored row with a shorter interval
+# from an older version of the service, it writes this interval into the row.
 MIN_INTERVAL_S = 15 * 60
 # The longest interval of an interval schedule, one year. A longer one makes the date arithmetic of APScheduler fail
 # with an OverflowError or an OSError, and a schedule row that fails like this stops the start of the service.
@@ -91,23 +91,12 @@ class ScheduleSpec:
 
     @classmethod
     def from_row(cls, row: Schedule) -> ScheduleSpec:
-        """Return the schedule of ``row``. A stored interval below ``MIN_INTERVAL_S`` becomes ``MIN_INTERVAL_S``.
-
-        An older version of the service accepted a shorter interval, and such a row must not stop the start.
-        """
-        interval_s = row.interval_s
-        if row.kind is ScheduleKind.INTERVAL and interval_s is not None and interval_s < MIN_INTERVAL_S:
-            LOG.warning(
-                "The stored interval of %s s is below the shortest interval, so the schedule uses %s s",
-                interval_s,
-                MIN_INTERVAL_S,
-            )
-            interval_s = MIN_INTERVAL_S
+        """Return the schedule of ``row``."""
         return cls(
             kind=row.kind,
             timezone=row.timezone,
             cron_expression=row.cron_expression,
-            interval_s=interval_s,
+            interval_s=row.interval_s,
             enabled=row.enabled,
         )
 
@@ -178,7 +167,8 @@ def build_trigger(spec: ScheduleSpec) -> BaseTrigger:
     if spec.kind is ScheduleKind.INTERVAL:
         if spec.interval_s is None or spec.interval_s < MIN_INTERVAL_S:
             raise ValueError(
-                f"An interval schedule needs an interval of {MIN_INTERVAL_S} s (15 minutes) or more, got {spec.interval_s}"
+                f"An interval schedule needs an interval of {MIN_INTERVAL_S} s ({MIN_INTERVAL_S // 60} minutes) "
+                f"or more, got {spec.interval_s}"
             )
         if spec.interval_s > MAX_INTERVAL_S:
             raise ValueError(
@@ -242,6 +232,8 @@ def load_schedule(sessions: sessionmaker[Session], default_timezone: str) -> Sch
     """Return the schedule from the single row of the ``schedule`` table.
 
     When the table is empty, first write the default row: enabled, cron ``0 18 * * *``, and ``default_timezone``.
+    When the row is an interval schedule below ``MIN_INTERVAL_S``, first write ``MIN_INTERVAL_S`` into the row and log
+    one warning. An older version of the service accepted a shorter interval, and such a row must not stop the start.
     """
     with sessions.begin() as session:
         row = session.get(Schedule, 1)
@@ -256,6 +248,13 @@ def load_schedule(sessions: sessionmaker[Session], default_timezone: str) -> Sch
             )
             session.add(row)
             LOG.info("Wrote the default schedule: cron %r in %s", DEFAULT_CRON_EXPRESSION, default_timezone)
+        if row.kind is ScheduleKind.INTERVAL and row.interval_s is not None and row.interval_s < MIN_INTERVAL_S:
+            LOG.warning(
+                "The stored interval of %s s is below the shortest interval, so the schedule row now holds %s s",
+                row.interval_s,
+                MIN_INTERVAL_S,
+            )
+            row.interval_s = MIN_INTERVAL_S
         return ScheduleSpec.from_row(row)
 
 
