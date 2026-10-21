@@ -8,3 +8,11 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: "weekly"
