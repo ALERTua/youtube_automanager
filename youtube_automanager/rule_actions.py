@@ -96,10 +96,18 @@ def preview_once(
         return public.shorts_video_ids(channel_id, limit=limit)
 
     def preview(sessions: sessionmaker[Session], account: str | None = None, **feed: rule_apply.ReadFeed) -> Preview:
-        reads = {"read_uploads": public.iter_channel_uploads, "read_shorts": read_shorts, **feed}
         if since is None:
-            return rule_apply.next_run_preview(sessions, request, account=account, **reads)
-        return rule_apply.preview(sessions, request, since, **reads)
+            return rule_apply.next_run_preview(
+                sessions,
+                request,
+                account=account,
+                read_uploads=public.iter_channel_uploads,
+                read_shorts=read_shorts,
+                **feed,
+            )
+        return rule_apply.preview(
+            sessions, request, since, read_uploads=public.iter_channel_uploads, read_shorts=read_shorts, **feed
+        )
 
     engine = make_engine(settings.database_url)
     try:

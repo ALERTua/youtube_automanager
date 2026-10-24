@@ -128,6 +128,7 @@ def test_only_the_newest_three_copies_stay(old_url, db_path):
 
     copy = backup_before_upgrade(old_url, NOW)
 
+    assert copy is not None
     assert sorted(folder.iterdir()) == sorted([old[2], old[3], copy, *others])
 
 

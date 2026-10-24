@@ -28,7 +28,7 @@ def serve(status):
             self.send_response(status if self.path == "/health" else 404)
             self.end_headers()
 
-        def log_message(self, *args):
+        def log_message(self, format, *args):
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

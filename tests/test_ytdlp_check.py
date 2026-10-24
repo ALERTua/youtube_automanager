@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
-import yt_dlp
+import yt_dlp.version
 
 from youtube_automanager import ytdlp_check
 from youtube_automanager.runner import SyncRunner
@@ -258,6 +258,7 @@ def test_the_parent_gives_the_cause_of_a_failed_check(db_sessions, runner, fake_
     with runner.lock_held(timeout=0):
         cause = ytdlp_check.check_release_in_child(runner, db_sessions, make_settings(tmp_path), tmp_path, "2026.8.19")
 
+    assert cause is not None
     assert expected in cause
 
 

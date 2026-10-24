@@ -16,19 +16,19 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, TextIO
+from typing import IO, Protocol, TextIO
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session, sessionmaker
 
 import youtube_automanager
 from youtube_automanager import notify
-from youtube_automanager.db import make_engine, make_session_factory
+from youtube_automanager.db import affected_rows, make_engine, make_session_factory
 from youtube_automanager.db.models import Run, RunStatus, RunTrigger, SessionState, utc_now
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.session import account_row
@@ -66,7 +66,7 @@ class RunAlreadyActive(Exception):
 
 
 @contextmanager
-def sync_lock_held(timeout: float | None = None, lock: threading.Lock = SYNC_LOCK) -> Iterator[None]:
+def sync_lock_held(timeout: float | None = None, lock: threading.Lock = SYNC_LOCK) -> Generator[None]:
     """Hold the process-wide sync lock for the body of the ``with`` block, so no sync run starts in that time.
 
     ``timeout`` None waits until the active run ends, and 0 does not wait.
@@ -122,7 +122,7 @@ class ChildProcess(Protocol):
     """The part of ``subprocess.Popen`` that the runner uses."""
 
     @property
-    def stderr(self) -> Iterable[str] | None: ...
+    def stderr(self) -> IO[str] | None: ...
 
     @property
     def returncode(self) -> int | None: ...
@@ -315,7 +315,7 @@ class SyncRunner:
         return self._lock.locked()
 
     @contextmanager
-    def lock_held(self, timeout: float | None = None) -> Iterator[None]:
+    def lock_held(self, timeout: float | None = None) -> Generator[None]:
         """Hold the sync lock of this runner for the body of the ``with`` block, so no run and no child starts.
 
         Wait up to ``timeout`` seconds for the lock: 0 does not wait, and None waits until the lock is free. A stop of the
@@ -528,7 +528,7 @@ def mark_interrupted_runs(sessions: sessionmaker[Session]) -> int:
             .where(Run.status == RunStatus.RUNNING)
             .values(status=RunStatus.FAILED, error_text=INTERRUPTED_ERROR)
         )
-        count = result.rowcount
+        count = affected_rows(result)
     if count:
         LOG.warning("Marked %s interrupted run(s) as failed", count)
     return count

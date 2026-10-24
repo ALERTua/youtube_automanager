@@ -111,24 +111,30 @@ class SelectedChannel:
 
     @property
     def title(self) -> str:
-        return self.stored.title if self.stored is not None else self.found.title
+        if self.stored is not None:
+            return self.stored.title
+        # The dialog opens only for a stored channel or a found channel, so one of the two is here.
+        return "" if self.found is None else self.found.title
 
     @property
     def handle(self) -> str | None:
-        return self.stored.handle if self.stored is not None and self.stored.handle else self.found_value("handle")
+        if self.stored is not None and self.stored.handle:
+            return self.stored.handle
+        return None if self.found is None else self.found.handle
 
     @property
     def thumbnail_url(self) -> str | None:
         if self.stored is not None and self.stored.thumbnail_url:
             return self.stored.thumbnail_url
-        return self.found_value("thumbnail_url")
+        return None if self.found is None else self.found.thumbnail_url
+
+    @property
+    def subscriber_count(self) -> int | None:
+        return None if self.found is None else self.found.subscriber_count
 
     @property
     def is_subscribed(self) -> bool:
         return self.stored is not None and self.stored.is_subscribed
-
-    def found_value(self, name: str) -> object:
-        return None if self.found is None else getattr(self.found, name)
 
 
 class DialogView(enum.Enum):
@@ -427,7 +433,7 @@ async def subscriptions_page(services: Services) -> None:
         with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-start"):
             ui.label(_("Subscribed")).classes("text-grey-7")
             ui.label(_(YES_NO[channel.is_subscribed])).mark("channel-subscribed")
-            count = channel.found_value("subscriber_count")
+            count = channel.subscriber_count
             if count is not None:
                 ui.label(_("Subscribers")).classes("text-grey-7")
                 ui.label(format_count(count)).mark("channel-subscribers")

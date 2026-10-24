@@ -128,9 +128,9 @@ def _upload_cipher(settings: Settings) -> CookieCipher:
         raise AccountUnavailable(f"The service cannot store the uploaded cookies: {error}") from None
 
 
-def _warning_threshold(days_left: int | None) -> int | None:
+def _warning_threshold(days_left: int) -> int | None:
     """Return the smallest warning day that ``days_left`` reached, or None. A date in the past gets no warning."""
-    if days_left is None or days_left < 0:
+    if days_left < 0:
         return None
     return min((days for days in EXPIRY_WARNING_DAYS if days_left <= days), default=None)
 
@@ -174,7 +174,7 @@ class AccountSession:
         try:
             self._cipher, stored = load_stored(self._sessions, self._settings)
             try:
-                self._client = self._make_client(stored.text)
+                client = self._make_client(stored.text)
             except ValueError as error:
                 raise AccountUnavailable(
                     f"The service needs the YouTube account, but the stored cookies are not valid: {error}. "
@@ -184,8 +184,9 @@ class AccountSession:
             self._unavailable = error
             outcome = CheckOutcome.DEAD if isinstance(error, SessionDead) else CheckOutcome.UNAVAILABLE
             return CheckResult(outcome, str(error))
+        self._client = client
         self._version_id = stored.version_id
-        return self._verify(stored.text, roll_back=True)
+        return self._verify(client, stored, roll_back=True)
 
     def check_upload(self, text: str) -> CheckResult:
         """Check the session of an uploaded cookie text, and store the text only when YouTube accepts the session.
@@ -215,7 +216,7 @@ class AccountSession:
         now = self._clock()
         with self._sessions.begin() as session:
             self._version_id = cookie_store.save_cookies(session, cipher, text, now=now).id
-            warning = self._write_passed(session, text, now)
+            warning = self._write_passed(session, StoredCookies(self._version_id, text), now)
         LOG.info("YouTube accepted the uploaded cookies, and they are stored as cookie version %s", self._version_id)
         self._cipher, self._client, self._alive = cipher, client, True
         if warning is not None:
@@ -257,25 +258,29 @@ class AccountSession:
             LOG.info("Saved new values of %d cookie(s) as a new cookie version: %s", len(changed), ", ".join(changed))
         return changed
 
-    def _verify(self, text: str, *, roll_back: bool) -> CheckResult:
+    def _verify(self, client: ClientLike, stored: StoredCookies, *, roll_back: bool) -> CheckResult:
+        """Check the session of ``client``, which holds the cookies of ``stored``, the current version."""
         try:
-            self._client.check_session()
+            client.check_session()
         except NotLoggedInError as error:
-            LOG.warning("YouTube refused cookie version %s: %s", self._version_id, error)
+            LOG.warning("YouTube refused cookie version %s: %s", stored.version_id, error)
             good = self._retire()
             if good is None or not roll_back:
                 return self._dead()
             LOG.info("Going back to cookie version %s, the newest version that passed a check", good.version_id)
             self._version_id = good.version_id
-            self._client.use_cookies(good.text)
-            return self._verify(good.text, roll_back=False)
+            client.use_cookies(good.text)
+            return self._verify(client, good, roll_back=False)
         except AccountError as error:
             LOG.warning("The session check failed: %s", error)
             return CheckResult(CheckOutcome.FAILED, f"The session check failed: {error}")
-        self._passed(text)
+        self._passed(stored)
         return CheckResult(CheckOutcome.ALIVE)
 
     def _retire(self) -> StoredCookies | None:
+        """Write the current version as dead. Return the newest good version before it, or None."""
+        if self._cipher is None or self._version_id is None:
+            return None
         with self._sessions.begin() as session:
             good = cookie_store.retire(session, self._version_id, self._clock())
             return None if good is None else StoredCookies(good.id, self._cipher.decrypt(good.cookies))
@@ -294,21 +299,23 @@ class AccountSession:
             self._notify(notify.cookie_session_dead())
         return CheckResult(CheckOutcome.DEAD, DEAD_SESSION_TEXT)
 
-    def _passed(self, text: str) -> None:
+    def _passed(self, stored: StoredCookies) -> None:
         """Write the version as good and the session as live, and send an expiry warning when one is due."""
         with self._sessions.begin() as session:
-            warning = self._write_passed(session, text, self._clock())
+            warning = self._write_passed(session, stored, self._clock())
         self._alive = True
         if warning is not None:
             self._notify(warning)
 
-    def _write_passed(self, session: Session, text: str, now: datetime.datetime) -> notify.Notification | None:
-        """Write that the current version passed a check at ``now``. Return the expiry warning when one is due."""
-        expiry = earliest_login_expiry(text)
+    def _write_passed(
+        self, session: Session, stored: StoredCookies, now: datetime.datetime
+    ) -> notify.Notification | None:
+        """Write that the version ``stored`` passed a check at ``now``. Return the expiry warning when one is due."""
+        expiry = earliest_login_expiry(stored.text)
         days_left = None
         if expiry is not None:
             days_left = (expiry.astimezone(self._zone).date() - now.astimezone(self._zone).date()).days
-        cookie_store.mark_good(session, self._version_id, now)
+        cookie_store.mark_good(session, stored.version_id, now)
         account = cookie_store.account_row(session)
         if account is None:
             return None
@@ -316,6 +323,8 @@ class AccountSession:
         expiring = days_left is not None and days_left <= EXPIRY_WARNING_DAYS[0]
         account.session_state = SessionState.EXPIRING if expiring else SessionState.OK
         account.last_checked_at = now
+        if expiry is None or days_left is None:
+            return None
         threshold = _warning_threshold(days_left)
         if threshold is None or (account.expiry_warning_days is not None and threshold >= account.expiry_warning_days):
             return None

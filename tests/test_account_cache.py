@@ -368,8 +368,10 @@ def test_the_refresh_without_a_time_uses_the_current_time(db_sessions):
     refresh_account_cache(db_sessions, FakeClient(playlists=[playlist("WL", "Watch later")]))
 
     after = datetime.datetime.now(datetime.UTC)
-    assert before <= last_refresh(db_sessions) <= after
-    assert playlist_row(db_sessions, "WL").last_synced_at == last_refresh(db_sessions)
+    refreshed = last_refresh(db_sessions)
+    assert refreshed is not None
+    assert before <= refreshed <= after
+    assert playlist_row(db_sessions, "WL").last_synced_at == refreshed
 
 
 def test_a_time_without_a_time_zone_is_refused_before_any_read(db_sessions):

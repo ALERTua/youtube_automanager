@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from youtube_automanager.db import affected_rows
 from youtube_automanager.db.models import AddedVideo, Run, RunAction, RunStatus, SeenVideo, Setting, utc_now
 
 LOG = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ def delete_old_runs(sessions: sessionmaker[Session], days: int, now: datetime | 
     with sessions.begin() as session:
         actions = session.execute(delete(RunAction).where(RunAction.run_id.in_(select(Run.id).where(old))))
         runs = session.execute(delete(Run).where(old))
-        return CleanupResult(runs=runs.rowcount, actions=actions.rowcount)
+        return CleanupResult(runs=affected_rows(runs), actions=affected_rows(actions))
 
 
 def delete_old_added_videos(sessions: sessionmaker[Session], now: datetime | None = None) -> int:
@@ -94,7 +95,7 @@ def delete_old_added_videos(sessions: sessionmaker[Session], now: datetime | Non
     cutoff = (now or utc_now()) - timedelta(days=ADDED_VIDEO_KEEP_DAYS)
     kept = select(SeenVideo.video_id).where(SeenVideo.video_id == AddedVideo.video_id).exists()
     with sessions.begin() as session:
-        return session.execute(delete(AddedVideo).where(AddedVideo.added_at < cutoff, ~kept)).rowcount
+        return affected_rows(session.execute(delete(AddedVideo).where(AddedVideo.added_at < cutoff, ~kept)))
 
 
 def clean_history(sessions: sessionmaker[Session]) -> CleanupResult:

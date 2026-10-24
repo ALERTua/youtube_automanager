@@ -1,3 +1,7 @@
+# These hooks need the project environment of uv, which the pre-commit.ci runners do not have.
+ci:
+  skip: [uv-lock, ty]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -26,6 +30,13 @@ repos:
     rev: 0.13.5
     hooks:
       - id: uv-lock
+
+  # The type checker. The rev gives the same ty version as uv.lock, and --locked keeps the lock file as it is.
+  - repo: https://github.com/astral-sh/ty-pre-commit
+    rev: v0.0.89
+    hooks:
+      - id: ty
+        args: [--locked]
 
   - repo: https://github.com/immanuwell/dockerfile-roast
     rev: 1.7.0

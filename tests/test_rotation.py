@@ -90,23 +90,23 @@ class FakeAccounts(urllib.request.HTTPSHandler):
         self.rotate = (200, rotate_answer(), SET_COOKIES)
         self.error = None
 
-    def https_open(self, request):
+    def https_open(self, req):
         self.requests.append(
             {
-                "method": request.get_method(),
-                "url": request.full_url,
-                "headers": dict(request.header_items()),
-                "body": request.data,
+                "method": req.get_method(),
+                "url": req.full_url,
+                "headers": dict(req.header_items()),
+                "body": req.data,
             }
         )
         if self.error is not None:
             raise self.error
-        status, body, set_cookies = self.page if request.full_url == PAGE_URL else self.rotate
+        status, body, set_cookies = self.page if req.full_url == PAGE_URL else self.rotate
         headers = email.message.Message()
         headers["Content-Type"] = "text/html; charset=utf-8"
         for header in set_cookies:
             headers["Set-Cookie"] = header
-        response = urllib.response.addinfourl(io.BytesIO(body.encode("utf-8")), headers, request.full_url, status)
+        response = urllib.response.addinfourl(io.BytesIO(body.encode("utf-8")), headers, req.full_url, status)
         response.msg = "OK" if status == 200 else "Error"
         return response
 

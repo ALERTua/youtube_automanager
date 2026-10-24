@@ -147,8 +147,11 @@ def merge_known(stored: str, candidate: str) -> Merge:
     changed = []
     for line in lines[1:]:
         cookie = _cookie(line)
-        update = None if cookie is None else updates.get(cookie.key)
-        if update is None or cookie.name in NOT_WRITTEN_BACK or not update.value or update.value == cookie.value:
+        if cookie is None or cookie.name in NOT_WRITTEN_BACK:
+            merged.append(line)
+            continue
+        update = updates.get(cookie.key)
+        if update is None or not update.value or update.value == cookie.value:
             merged.append(line)
             continue
         fields = line.removeprefix(HTTPONLY_PREFIX).split("\t")

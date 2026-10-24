@@ -2,10 +2,11 @@
 
 import logging
 from pathlib import Path
+from typing import Any, cast
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Engine, create_engine, event, make_url
+from sqlalchemy import CursorResult, Engine, Result, create_engine, event, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 LOG = logging.getLogger(__name__)
@@ -44,6 +45,14 @@ def make_engine(url: str) -> Engine:
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Create sessions that keep the loaded values at a commit, so an object stays readable after its session ends."""
     return sessionmaker(engine, expire_on_commit=False)
+
+
+def affected_rows(result: Result[Any]) -> int:
+    """Return the number of rows that an UPDATE or a DELETE statement changed.
+
+    ``Session.execute`` is typed as a plain ``Result``, but such a statement gives a ``CursorResult`` with the count.
+    """
+    return cast("CursorResult[Any]", result).rowcount
 
 
 def alembic_config(url: str) -> Config:

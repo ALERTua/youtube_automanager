@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-ARG PYTHON_VERSION=3.14
+ARG PYTHON_VERSION=3.15
 # empty: the newest uv; a version such as 0.13.0: that uv
 ARG UV_VERSION=
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:${UV_VERSION:+${UV_VERSION}-}python${PYTHON_VERSION}-trixie-slim

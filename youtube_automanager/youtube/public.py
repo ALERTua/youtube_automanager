@@ -7,7 +7,7 @@ import datetime
 import itertools
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
@@ -74,11 +74,11 @@ def uploads_playlist_id(channel_id: str) -> str:
     return "UU" + _require_channel_id(channel_id)[2:]
 
 
-def iter_channel_uploads(channel_id: str) -> Iterator[VideoEntry]:
+def iter_channel_uploads(channel_id: str) -> Generator[VideoEntry]:
     """Iterate over the uploads of the channel, newest first.
 
     The call reads the first page. The iteration reads each next page only when it reaches that page,
-    so a caller that stops early does not read the whole channel.
+    so a caller that stops early does not read the whole channel. A caller can close the generator.
     """
     url = f"https://www.youtube.com/playlist?list={uploads_playlist_id(channel_id)}"
     info = _fetch(url, extractor_args=_APPROXIMATE_DATE)

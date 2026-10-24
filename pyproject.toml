@@ -3,7 +3,7 @@ name = "youtube-automanager"
 version = "0.1.2"
 description = "Adds videos to your YouTube playlists automatically based on rules"
 readme = "README.md"
-requires-python = "==3.14.*"
+requires-python = "==3.15.*"
 dependencies = [
     "alembic",
     "apprise",
@@ -25,10 +25,14 @@ dependencies = [
 dev = [
     "babel",
     "httpx",
+    "httpx2",
     "pre-commit-uv",
     "pytest",
+    "pytest-cov",
+    "pytest-timeout",
     "pytest-xdist",
     "ruff",
+    "ty",
 ]
 
 [tool.uv]
@@ -37,6 +41,11 @@ exclude-newer = "1 week"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# A test that hangs ends after this many seconds. The longest designed wait of the suite is 90 s, in the tests of the
+# runner that start real child processes.
+timeout = 120
+# Each warning fails its test, so a new deprecation shows up in the run and not after the next upgrade.
+filterwarnings = ["error"]
 
 # The message catalog template of the user interface. After a change of a translated text, run this command in the
 # repository root:
@@ -44,3 +53,13 @@ pythonpath = ["."]
 [[tool.babel.mappings]]
 method = "python"
 pattern = "**.py"
+
+[tool.ty.src]
+include = ["youtube_automanager", "tests"]
+
+# The test helper `element_of` returns `ui.element`, and typed helpers for each element kind are a later change.
+[[tool.ty.overrides]]
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"

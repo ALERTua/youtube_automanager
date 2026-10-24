@@ -211,6 +211,7 @@ def test_a_check_of_stored_text_that_is_not_a_cookie_file_names_no_value(harness
     result = AccountSession(harness.sessions, harness.settings, send=harness.sent.append).check()
 
     assert result.outcome is CheckOutcome.UNAVAILABLE
+    assert result.detail is not None
     assert "stored cookies are not valid" in result.detail
     assert "fakeSIDvalue" not in result.detail
 

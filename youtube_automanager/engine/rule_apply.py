@@ -624,6 +624,9 @@ def _mark(reader: RuleReader, request: PreviewRequest, found: Found, added: set[
     if request.draft is not None:
         (verdict,) = reader.verdicts(found, [request.draft])
         return {Verdict.MATCH: Mark.MATCHES, Verdict.UNKNOWN: Mark.UNDECIDED}.get(verdict)
+    if request.saved is None:
+        # A request holds a saved version, a draft or both, so a request without a draft has a saved version.
+        return None
     (verdict,) = reader.verdicts(found, [request.saved])
     return _apply_mark(found.video, verdict, added)
 

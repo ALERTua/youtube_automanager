@@ -61,6 +61,7 @@ def test_a_stored_mode_that_is_not_valid_reads_with_its_cause(db_sessions):
     stored = read_processing(db_sessions)
 
     assert stored.processing is None
+    assert stored.error is not None
     assert "needs a count" in stored.error
 
 

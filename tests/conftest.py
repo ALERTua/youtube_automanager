@@ -109,8 +109,8 @@ class RefusingTransport(urllib.request.HTTPHandler, urllib.request.HTTPSHandler)
         super().__init__()
         self.urls = urls
 
-    def _refuse(self, request):
-        self.urls.append(request.full_url)
+    def _refuse(self, req):
+        self.urls.append(req.full_url)
         raise urllib.error.URLError("a test sends no request to the network")
 
     http_open = https_open = _refuse
@@ -275,7 +275,7 @@ class FakeChild:
             self._ended.set()
 
     def wait(self, timeout=None):
-        if not self._ended.wait(timeout):
+        if not self._ended.wait(timeout) and timeout is not None:
             raise subprocess.TimeoutExpired("fake child", timeout)
         return self.returncode
 

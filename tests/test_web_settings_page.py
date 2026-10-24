@@ -131,6 +131,7 @@ class CheckingStarter(FakeStarter):
                     account.session_state = self.state
                     account.last_checked_at = CHECKED_AT
         if command[3:] == ["check-upload"] and not self.plan:
+            assert input_text is not None
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 code = check_upload_once(self.settings, input_text)

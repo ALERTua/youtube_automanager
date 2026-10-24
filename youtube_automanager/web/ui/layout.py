@@ -6,7 +6,7 @@ in the order of the registration.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -60,7 +60,7 @@ def pages() -> list[Page]:
 
 
 @contextmanager
-def frame(current: Page, services: Services, theme: Theme) -> Iterator[None]:
+def frame(current: Page, services: Services, theme: Theme) -> Generator[None]:
     """Draw the header and the navigation drawer, and put the elements of the ``with`` block into the content frame.
 
     ``theme`` is the stored color theme. The head of the page paints its background for the moment before the scripts

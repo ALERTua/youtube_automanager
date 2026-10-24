@@ -182,7 +182,8 @@ def unsubscribe_in_child(runner: SyncRunner, channel_id: str) -> None:
 def _change_in_child(runner: SyncRunner, command: list[str], channel_id: str, *, subscribed: bool) -> None:
     data = read_json(run_child(runner, command, "subscription change", SUBSCRIPTION_TIMEOUT_SECONDS))
     # The flag must be the JSON boolean itself, because 1 == True in Python.
-    if data != {"channel_id": channel_id, "subscribed": subscribed} or data["subscribed"] is not subscribed:
+    expected = {"channel_id": channel_id, "subscribed": subscribed}
+    if not isinstance(data, dict) or data != expected or data["subscribed"] is not subscribed:
         raise ChildFailed("The subscription change process ended without the confirmation of the change.")
 
 
@@ -191,8 +192,13 @@ def _found_channels(line: str) -> list[FoundChannel] | None:
     data = read_json(line)
     if not isinstance(data, list):
         return None
-    channels = [_found_channel(item) for item in data]
-    return None if None in channels else channels
+    channels: list[FoundChannel] = []
+    for item in data:
+        channel = _found_channel(item)
+        if channel is None:
+            return None
+        channels.append(channel)
+    return channels
 
 
 def _found_channel(item: object) -> FoundChannel | None:

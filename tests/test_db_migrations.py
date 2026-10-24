@@ -80,6 +80,7 @@ def postgres_database(worker_id):
 
     Each test empties its database before and after it, so two workers of ``pytest -n`` must not share one.
     """
+    assert POSTGRES_URL is not None, "TEST_POSTGRES_URL is not set"
     server = make_url(POSTGRES_URL)
     name = f"youtube_automanager_test_{worker_id}"
     admin = create_engine(server, isolation_level="AUTOCOMMIT")

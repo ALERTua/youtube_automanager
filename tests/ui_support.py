@@ -1,12 +1,12 @@
 """Helpers of the tests that run the whole service with its pages. The fixtures of these tests are in ``conftest.py``."""
 
 import asyncio
-import functools
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 
 import httpx
 from nicegui import ElementFilter, ui
+from nicegui.client import Client
 from nicegui.testing import User
 
 from youtube_automanager.web.app import create_app
@@ -15,6 +15,9 @@ from youtube_automanager.web.ui import mount_ui
 WAIT_SECONDS = 10
 # The pause of NiceGUI between two tries of ``User.should_see``.
 SEE_PAUSE_SECONDS = 0.1
+# NiceGUI tries 3 times, 0.1 s apart. Under load, for example in a parallel run, a page can need longer. The tries end
+# at the first success, so the longer limit costs a passing test nothing. A call can still give its own number of tries.
+SEE_RETRIES = round(WAIT_SECONDS / SEE_PAUSE_SECONDS)
 
 
 def store(sessions, *rows):
@@ -22,8 +25,24 @@ def store(sessions, *rows):
         session.add_all(rows)
 
 
+class PatientUser(User):
+    """A simulated browser whose ``should_see`` waits up to WAIT_SECONDS for an element."""
+
+    async def should_see(self, target=None, *, kind=None, marker=None, content=None, retries=SEE_RETRIES) -> None:
+        if target is None:
+            await super().should_see(kind=kind, marker=marker, content=content, retries=retries)
+        else:
+            await super().should_see(target, retries=retries)
+
+
+def client_of(user: User) -> Client:
+    """Return the NiceGUI client of the page that ``user`` has open."""
+    assert user.client is not None, "the user has no page open"
+    return user.client
+
+
 @asynccontextmanager
-async def running_service(settings, start) -> AsyncIterator[User]:
+async def running_service(settings, start) -> AsyncGenerator[User]:
     """Run the whole service, its lifespan, its routes and its pages, and give a simulated browser on it.
 
     The ``user`` fixture of NiceGUI runs only the lifespan of NiceGUI and sends each request to NiceGUI directly, so
@@ -35,12 +54,7 @@ async def running_service(settings, start) -> AsyncIterator[User]:
         app.router.lifespan_context(app),
         httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client,
     ):
-        user = User(client)
-        # NiceGUI tries 3 times, 0.1 s apart. Under load, for example in a parallel run, a page can need longer. The
-        # tries end at the first success, so the longer limit costs a passing test nothing. A call can still give its
-        # own number of tries.
-        user.should_see = functools.partial(user.should_see, retries=round(WAIT_SECONDS / SEE_PAUSE_SECONDS))
-        yield user
+        yield PatientUser(client)
 
 
 def elements_of(user: User, marker: str) -> list[ui.element]:
@@ -48,7 +62,7 @@ def elements_of(user: User, marker: str) -> list[ui.element]:
 
     The list is empty when no element has the marker.
     """
-    with user.client:
+    with client_of(user):
         found = list(ElementFilter(marker=marker, local_scope=False))
     return sorted(found, key=lambda element: element.id)
 
@@ -61,7 +75,7 @@ def element_of(user: User, marker: str) -> ui.element:
 def set_value(user: User, marker: str, value) -> None:
     """Give the element with ``marker`` the value ``value``, as if the user had entered it."""
     element = element_of(user, marker)
-    with user.client:
+    with client_of(user):
         element.value = value
 
 

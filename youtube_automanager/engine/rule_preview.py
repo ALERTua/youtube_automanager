@@ -191,9 +191,12 @@ class Preview:
             return None
         if not _texts(errors) or not _texts(cut) or not _texts(baselines):
             return None
-        parsed = [PreviewVideo.from_value(video) for video in videos]
-        if None in parsed:
-            return None
+        parsed: list[PreviewVideo] = []
+        for video in videos:
+            parsed_video = PreviewVideo.from_value(video)
+            if parsed_video is None:
+                return None
+            parsed.append(parsed_video)
         try:
             marks = {Mark(mark): count for mark, count in counts.items()}
         except ValueError:
