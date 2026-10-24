@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import cast
 
 import pytest
 from conftest import FakeYtdlpInstall
@@ -18,6 +19,7 @@ from youtube_automanager.youtube import ytdlp_updater
 from youtube_automanager.ytdlp_job import (
     LAST_UPDATE_KEY,
     SETTINGS_KEY,
+    Channel,
     LastUpdate,
     UpdateSettings,
     YtdlpUpdates,
@@ -197,8 +199,10 @@ def test_a_stored_value_that_is_not_valid_gives_the_defaults_and_a_warning(db_se
 
 
 def test_settings_refuse_an_unknown_channel():
+    # The type of the field refuses the value, and the test checks that the runtime check refuses it too.
+    channel = cast("Channel", "beta")
     with pytest.raises(ValueError, match="Unknown yt-dlp channel"):
-        UpdateSettings(channel="beta")
+        UpdateSettings(channel=channel)
 
 
 # The record of the last update.

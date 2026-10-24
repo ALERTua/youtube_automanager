@@ -2,11 +2,13 @@
 
 import logging
 from pathlib import Path
+from typing import Any, cast
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Engine, create_engine, event, make_url
+from sqlalchemy import CursorResult, Engine, Result, create_engine, event, make_url
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 LOG = logging.getLogger(__name__)
 
@@ -34,8 +36,14 @@ def connect_args(url: str) -> dict[str, int]:
 
 
 def make_engine(url: str) -> Engine:
-    """Create the engine of the service. SQLite enforces foreign keys only when each connection turns them on."""
-    engine = create_engine(url, connect_args=connect_args(url))
+    """Create the engine of the service. SQLite enforces foreign keys only when each connection turns them on.
+
+    A SQLite engine keeps no pool: each session opens the file and closes it at its end. A connection to a local file
+    costs well under a millisecond. A pooled connection that a page thread still holds when the service stops would
+    stay open after the engine is disposed, and Python warns about it at the exit.
+    """
+    options = {"poolclass": NullPool} if make_url(url).get_backend_name() == "sqlite" else {}
+    engine = create_engine(url, connect_args=connect_args(url), **options)
     if engine.dialect.name == "sqlite":
         event.listen(engine, "connect", _enable_sqlite_foreign_keys)
     return engine
@@ -44,6 +52,14 @@ def make_engine(url: str) -> Engine:
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Create sessions that keep the loaded values at a commit, so an object stays readable after its session ends."""
     return sessionmaker(engine, expire_on_commit=False)
+
+
+def affected_rows(result: Result[Any]) -> int:
+    """Return the number of rows that an UPDATE or a DELETE statement changed.
+
+    ``Session.execute`` is typed as a plain ``Result``, but such a statement gives a ``CursorResult`` with the count.
+    """
+    return cast("CursorResult[Any]", result).rowcount
 
 
 def alembic_config(url: str) -> Config:

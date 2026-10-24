@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -48,7 +49,7 @@ COOKIES = (
 @pytest.fixture
 def make_runner(db_sessions, db_url, tmp_path, fake_starter):
     def factory(**options):
-        arguments = {
+        arguments: dict[str, Any] = {
             "ytdlp_dir": tmp_path / "yt-dlp",
             "database_url": db_url,
             "child_timeout_s": WAIT_SECONDS,
@@ -478,6 +479,7 @@ def test_real_child_process_runs_the_sync(db_sessions, db_url, tmp_path, capfd):
     )
 
     run_id = runner.claim(RunTrigger.MANUAL)
+    assert run_id is not None
     status = runner.execute(run_id)
 
     captured = capfd.readouterr()

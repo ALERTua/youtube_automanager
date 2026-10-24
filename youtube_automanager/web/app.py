@@ -7,7 +7,7 @@ rotation and the daily yt-dlp update.
 import asyncio
 import functools
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -51,7 +51,7 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
     settings = settings or get_settings()
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         setup_logging(settings.verbose)
         LOG.info("Starting with the database %s", make_url(settings.database_url).render_as_string(hide_password=True))
         await asyncio.to_thread(_prepare_database, settings.database_url)

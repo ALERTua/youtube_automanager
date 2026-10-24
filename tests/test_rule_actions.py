@@ -776,6 +776,7 @@ def test_the_real_apply_child_without_a_cookie_key_fails_the_run_with_the_cause(
     applied = apply_in_child(real_runner, db_sessions, rule_id, SINCE)
 
     assert applied.status is RunStatus.FAILED
+    assert applied.error_text is not None
     assert applied.error_text.startswith("The apply needs the YouTube account.")
     assert "COOKIES_KEY is not set" in applied.error_text
     (run,) = runs(db_sessions)

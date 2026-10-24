@@ -28,7 +28,8 @@ jobs:
     permissions:
       contents: read # checkout
     services:
-      # The migration tests also run on PostgreSQL. Each worker of the parallel run creates a database of its own there.
+      # The tests of the database, the migrations and the engine also run on PostgreSQL. Each worker of the parallel
+      # run creates a template database of its own there, and each test gets a copy of it.
       postgres:
         image: postgres:18-alpine
         env:
@@ -55,5 +56,7 @@ jobs:
       - name: Install the dependencies
         run: uv sync --locked --all-groups
 
+      # The coverage report names each line of the service that no test runs. The limit lives in the recipe
+      # "just cov", because a limit in CI would stop a pull request for a line of a tool.
       - name: Run the tests
-        run: uv run pytest -q -n auto
+        run: uv run pytest -q -n auto --cov=youtube_automanager --cov-report=term-missing:skip-covered

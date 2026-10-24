@@ -90,29 +90,34 @@ class FakeAccounts(urllib.request.HTTPSHandler):
         self.rotate = (200, rotate_answer(), SET_COOKIES)
         self.error = None
 
-    def https_open(self, request):
+    def https_open(self, req):
         self.requests.append(
             {
-                "method": request.get_method(),
-                "url": request.full_url,
-                "headers": dict(request.header_items()),
-                "body": request.data,
+                "method": req.get_method(),
+                "url": req.full_url,
+                "headers": dict(req.header_items()),
+                "body": req.data,
             }
         )
         if self.error is not None:
             raise self.error
-        status, body, set_cookies = self.page if request.full_url == PAGE_URL else self.rotate
+        status, body, set_cookies = self.page if req.full_url == PAGE_URL else self.rotate
         headers = email.message.Message()
         headers["Content-Type"] = "text/html; charset=utf-8"
         for header in set_cookies:
             headers["Set-Cookie"] = header
-        response = urllib.response.addinfourl(io.BytesIO(body.encode("utf-8")), headers, request.full_url, status)
+        response = urllib.response.addinfourl(io.BytesIO(body.encode("utf-8")), headers, req.full_url, status)
         response.msg = "OK" if status == 200 else "Error"
         return response
 
     def cookies_sent(self, number):
         header = self.requests[number]["headers"].get("Cookie", "")
         return dict(part.split("=", 1) for part in header.split("; ") if part)
+
+
+# The fixture below refuses each network connection, and a PostgreSQL database needs one. The rotation does not read
+# the database in a way that depends on the backend, so its tests run on SQLite alone.
+pytestmark = pytest.mark.sqlite_only
 
 
 @pytest.fixture(autouse=True)

@@ -4,6 +4,7 @@ The database URL comes from `upgrade_to_head`, from `alembic -x url=...`, or fro
 """
 
 from logging.config import fileConfig
+from typing import Any
 
 from alembic import context
 from sqlalchemy import create_engine, pool
@@ -18,7 +19,8 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-CONFIGURE_OPTIONS = {
+# The options go to `context.configure` as keyword arguments, and each has its own type there.
+CONFIGURE_OPTIONS: dict[str, Any] = {
     "target_metadata": target_metadata,
     # SQLite cannot alter most parts of a table, so each change recreates the table.
     "render_as_batch": True,

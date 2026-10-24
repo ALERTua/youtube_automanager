@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from conftest import FakeYtdlpInstall
 
 from youtube_automanager.youtube import ytdlp_updater
 from youtube_automanager.youtube.ytdlp_updater import (
@@ -258,6 +259,7 @@ def test_failed_install_keeps_the_folder_and_its_version(uv, old_install, change
 
     assert not result.ok
     assert (result.old_version, result.new_version) == (OLD, STABLE)
+    assert result.error is not None
     assert expected_error in result.error
     assert installed_version(old_install) == OLD
     assert (old_install / "marker").exists()
@@ -278,6 +280,7 @@ def test_failed_rename_keeps_the_folder_and_its_version(uv, old_install, monkeyp
     result = update(old_install, "stable")
 
     assert not result.ok
+    assert result.error is not None
     assert f"{failing_source} is in use" in result.error
     assert installed_version(old_install) == OLD
     assert (old_install / "marker").exists()
@@ -302,6 +305,7 @@ def test_pypi_failure_returns_a_failed_result_without_an_install(uv, old_install
 
     assert not result.ok
     assert result.new_version is None
+    assert result.error is not None
     assert expected_error in result.error
     assert uv.calls == []
     assert installed_version(old_install) == OLD
@@ -466,6 +470,7 @@ def test_a_release_that_fails_the_check_keeps_the_active_release(
     assert not result.ok
     assert (result.old_version, result.new_version) == (OLD, STABLE)
     assert result.error.startswith(f"yt-dlp {STABLE} failed the check of a new release, so the service keeps")
+    assert result.error is not None
     assert expected_cause in result.error
     assert installed_version(old_install) == OLD
     assert (old_install / "marker").exists()
@@ -499,6 +504,27 @@ def test_the_update_installs_a_version_newer_than_the_skipped_one(uv, old_instal
     assert result.ok
     assert not result.skipped
     assert installed_version(old_install) == STABLE
+
+
+@pytest.mark.parametrize(
+    "skipped",
+    [None, "2026.8.18", STABLE, "2026.9.1", "not a version"],
+    ids=["none", "older", "same", "newer", "invalid"],
+)
+def test_the_fake_install_of_the_tests_skips_a_version_as_the_real_update_does(uv, make_install, tmp_path, skipped):
+    """The service tests replace the install with ``FakeYtdlpInstall``, so the fake must decide as ``update`` does."""
+    real_dir = tmp_path / "real" / "yt-dlp"
+    fake_dir = tmp_path / "fake" / "yt-dlp"
+    make_install(real_dir, OLD)
+    FakeYtdlpInstall.write_release(fake_dir, OLD)
+    fake = FakeYtdlpInstall()
+    fake.plan = [{"version": STABLE}]
+
+    real = update(real_dir, "stable", skipped=skipped)
+    faked = fake(fake_dir, "stable", skipped=skipped)
+
+    assert (faked.ok, faked.skipped, faked.new_version) == (real.ok, real.skipped, real.new_version)
+    assert installed_version(fake_dir) == installed_version(real_dir)
 
 
 def test_go_back_swaps_the_active_and_the_previous_release(make_install, old_install):
@@ -540,6 +566,7 @@ def test_a_failed_go_back_keeps_both_releases(make_install, old_install, monkeyp
 
     error = ytdlp_updater.go_back(old_install)
 
+    assert error is not None
     assert f"{failing_source} is in use" in error
     assert installed_version(old_install) == OLD
     assert installed_version(sibling(old_install, ".previous")) == STABLE
@@ -558,7 +585,9 @@ def test_use_image_moves_the_active_release_to_the_previous_one(make_install, ol
 def test_use_image_without_an_active_release_changes_nothing(make_install, target_dir):
     make_install(sibling(target_dir, ".previous"), STABLE)
 
-    assert "already uses the yt-dlp of the image" in ytdlp_updater.use_image(target_dir)
+    message = ytdlp_updater.use_image(target_dir)
+    assert message is not None
+    assert "already uses the yt-dlp of the image" in message
     assert installed_version(sibling(target_dir, ".previous")) == STABLE
 
 

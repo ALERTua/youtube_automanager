@@ -6,10 +6,13 @@ A playlist or a search keeps only the entries that the function took, at most ``
 Give names of ``CASES`` as arguments to record only those cases. Without arguments, it records all cases.
 """
 
+import io
 import itertools
 import json
 import sys
+import unittest.mock
 from pathlib import Path
+from typing import Any
 
 from yt_dlp import YoutubeDL
 from yt_dlp.networking.exceptions import HTTPError
@@ -66,8 +69,8 @@ def record(call) -> dict:
     real_extract = public._extract
     records = []
 
-    def extract(url, **options):
-        rec = {"url": url, "options": options}
+    def extract(url: str, **options) -> dict:
+        rec: dict[str, Any] = {"url": url, "options": options}
         records.append(rec)
         try:
             info = real_extract(url, **options)
@@ -83,11 +86,8 @@ def record(call) -> dict:
             info["entries"] = keep(entries, rec.setdefault("taken", []))
         return info
 
-    public._extract = extract
-    try:
+    with unittest.mock.patch.object(public, "_extract", extract):
         call()
-    finally:
-        public._extract = real_extract
     [rec] = records
     if "info" in rec:
         rec["info"] = YoutubeDL.sanitize_info({**rec["info"], "entries": rec.pop("taken")})
@@ -95,7 +95,8 @@ def record(call) -> dict:
 
 
 def main() -> None:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     for name in sys.argv[1:] or CASES:
         rec = record(CASES[name])
         path = HERE / f"{name}.json"

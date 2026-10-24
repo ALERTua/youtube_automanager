@@ -250,8 +250,11 @@ class TestGroups:
     def test_a_group_of_one_item_stays_a_group(self):
         tree = {"or": [{"and": [LEVELS]}]}
 
-        assert from_tree(tree) == Group(GroupKind.ANY, [Group(GroupKind.ALL, [Leaf("title", "regex", "Levels of")])])
-        assert to_tree(from_tree(tree)) == tree
+        group = from_tree(tree)
+
+        assert group == Group(GroupKind.ANY, [Group(GroupKind.ALL, [Leaf("title", "regex", "Levels of")])])
+        assert group is not None
+        assert to_tree(group) == tree
 
     @pytest.mark.parametrize("kind", list(GroupKind))
     def test_a_root_without_leaves_is_match_all(self, kind):
@@ -275,6 +278,7 @@ class TestGroups:
     def test_the_model_does_not_share_lists_with_the_tree(self):
         tree = {"and": [{"in": [{"var": "channel_id"}, [A]]}]}
         group = from_tree(tree)
+        assert group is not None
         group.items[0].value.append(B)
         again = to_tree(group)
         again["and"][0]["in"][1].append("UCx")
@@ -399,7 +403,10 @@ class TestDuration:
 
     @pytest.mark.parametrize("value", [0, 1, 59, 60, 61, 125, 3600, 7322])
     def test_a_stored_duration_comes_back_unchanged_from_its_fields(self, value):
-        assert duration_value(*map(float, duration_fields(value))) == value
+        minutes, seconds = duration_fields(value)
+
+        assert minutes is not None and seconds is not None
+        assert duration_value(float(minutes), float(seconds)) == value
 
     @pytest.mark.parametrize(
         ("value", "text"), [(0, "0:00"), (5, "0:05"), (59, "0:59"), (60, "1:00"), (125, "2:05"), (3600, "60:00")]

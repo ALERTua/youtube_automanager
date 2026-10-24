@@ -24,7 +24,7 @@ import re
 import threading
 import time
 import urllib.parse
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass
 
 from yt_dlp import YoutubeDL
@@ -183,7 +183,7 @@ class _Pacer:
         self._last_answer: float | None = None
 
     @contextlib.contextmanager
-    def request(self) -> Iterator[None]:
+    def request(self) -> Generator[None]:
         with self._lock:
             if self._last_answer is not None:
                 remaining = self._last_answer + self._pause_s - self._clock()
@@ -231,8 +231,10 @@ class _AccountYoutubeDL(YoutubeDL):
         if logged_in is True:
             self.ytcfgs.append(ytcfg)
 
+    # yt-dlp has no type annotations, so the checker reads its cached property as a plain writable attribute. This
+    # read-only property takes its place on purpose, so no code of yt-dlp can swap the cookies of the account.
     @property
-    def cookiejar(self) -> YoutubeDLCookieJar:
+    def cookiejar(self) -> YoutubeDLCookieJar:  # ty: ignore[invalid-property-type-override]
         return self._account_cookiejar
 
     def urlopen(self, req):

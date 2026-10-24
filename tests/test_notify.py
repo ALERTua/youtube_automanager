@@ -3,10 +3,12 @@ import socket
 import threading
 import time
 from datetime import UTC, datetime
+from typing import cast
 
 import apprise
 import pytest
 from apprise.decorators import notify as apprise_notify
+from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager import notify
 from youtube_automanager.db.models import NotificationTarget
@@ -358,7 +360,10 @@ def test_send_to_stored_targets_never_raises(all_logs):
     def broken_sessions():
         raise RuntimeError(f"cannot connect to postgresql://user:{SECRET}@db")
 
-    assert notify.send_to_stored_targets(broken_sessions, notify.run_failed("boom")) is None
+    # The function stands in for a session factory whose database is gone.
+    sessions = cast("sessionmaker[Session]", broken_sessions)
+
+    assert notify.send_to_stored_targets(sessions, notify.run_failed("boom")) is None
     assert any("Cannot send run_failed: RuntimeError" in line for line in all_logs)
     assert [line for line in all_logs if SECRET in line] == []
 

@@ -14,6 +14,8 @@ data_dir := project_dir + "/data"
 database_url := env("LOCAL_DATABASE_URL", "sqlite:///" + data_dir + "/youtube_automanager.sqlite")
 ytdlp_dir := data_dir + "/yt-dlp"
 image := "youtube_automanager"
+# The lowest coverage of the service that "just cov" accepts, in percent, from the measured value rounded down.
+coverage_limit := "98"
 container := "youtube_automanager"
 
 # Install the dependencies of the service and of the development tools
@@ -58,9 +60,14 @@ test *ARGS:
 test-serial *ARGS:
     uv run pytest -q {{ARGS}}
 
-# Format the code and fix the lint findings
+# Run the tests with the coverage report, and fail when the coverage of the service drops below the limit
+cov *ARGS:
+    uv run pytest -q -n auto --cov=youtube_automanager --cov-report=term-missing:skip-covered \
+    --cov-fail-under={{coverage_limit}} {{ARGS}}
+
+# Format the code, fix the lint findings and check the types
 lint:
-    uv run ruff format; uv run ruff check --fix
+    uv run ruff format; uv run ruff check --fix; uv run ty check
 
 # Extract the texts of the web UI into youtube_automanager/i18n/messages.pot again
 pot:
@@ -84,6 +91,23 @@ run PORT=env("PORT", "8080"):
     New-Item -ItemType Directory -Force "{{data_dir}}" | Out-Null; \
     wslc run -d --name {{container}} -p "{{PORT}}:8080" --env-file "{{project_dir}}/.env" \
     -v "{{data_dir}}:/data" {{image}}
+
+# Build the image, start it on PORT with the settings of .env, wait until wslc reports it healthy, and call /health
+smoke PORT="18080":
+    wslc build -t {{image}}_smoke "{{justfile_directory()}}"; if ($LASTEXITCODE) { exit $LASTEXITCODE }; \
+    try { \
+    wslc run -d --name {{container}}_smoke -p "{{PORT}}:8080" --env-file "{{project_dir}}/.env" {{image}}_smoke | Out-Null; \
+    if ($LASTEXITCODE) { throw "The container did not start" }; \
+    $status = ""; \
+    foreach ($try in 1..30) { \
+    $status = (wslc inspect --format json {{container}}_smoke | ConvertFrom-Json).State.Health.Status; \
+    Write-Host "The health status is $status"; \
+    if ($status -eq "healthy") { break }; \
+    Start-Sleep -Seconds 3 \
+    }; \
+    if ($status -ne "healthy") { wslc logs {{container}}_smoke; throw "The container is not healthy after 90 s" }; \
+    Write-Host "/health answers:" (Invoke-WebRequest -UseBasicParsing "http://localhost:{{PORT}}/health").Content \
+    } finally { wslc rm -f {{container}}_smoke | Out-Null }
 
 # Stop and remove the container
 stop:

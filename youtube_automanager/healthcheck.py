@@ -4,6 +4,7 @@ The image has no curl, so the HEALTHCHECK of the Dockerfile runs this module wit
 """
 
 import sys
+import urllib.error
 import urllib.request
 
 from youtube_automanager.settings import get_settings
@@ -26,7 +27,12 @@ def main() -> int:
     try:
         with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
             return 0 if response.status == 200 else 1
-    # An answer other than 2xx raises HTTPError, which is an OSError like each network error.
+    # An answer other than 2xx raises HTTPError. The error holds the open answer of the server, so it needs a close
+    # like a response.
+    except urllib.error.HTTPError as error:
+        with error:
+            print(f"The service does not answer {url}: {error}", file=sys.stderr)
+        return 1
     except OSError as error:
         print(f"The service does not answer {url}: {error}", file=sys.stderr)
         return 1

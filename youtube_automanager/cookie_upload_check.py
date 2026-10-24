@@ -87,5 +87,5 @@ def check_upload_in_child(runner: SyncRunner, text: str) -> None:
     """
     data = read_json(run_child(runner, check_upload_command(), "cookie check", UPLOAD_CHECK_TIMEOUT_S, text))
     # The flag must be the JSON boolean itself, because 1 == True in Python.
-    if data != STORED or data["stored"] is not True:
+    if not isinstance(data, dict) or data != STORED or data["stored"] is not True:
         raise ChildFailed("The cookie check process ended without the confirmation of the store.")
