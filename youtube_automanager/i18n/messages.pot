@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-26 10:00+0200\n"
+"POT-Creation-Date: 2026-10-26 11:15+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -246,7 +246,7 @@ msgstr ""
 msgid "Choose a live status."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/rules_store.py
 msgid "Choose a target playlist."
 msgstr ""
 
@@ -438,8 +438,8 @@ msgstr ""
 msgid "Enter a name, an @handle, a channel ID or a channel URL."
 msgstr ""
 
+#: youtube_automanager/rules_store.py
 #: youtube_automanager/web/ui/notifications_section.py
-#: youtube_automanager/web/ui/rules_page.py
 msgid "Enter a name."
 msgstr ""
 
