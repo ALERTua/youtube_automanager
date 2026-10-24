@@ -729,7 +729,13 @@ def question_texts(user) -> list[str]:
 
 
 async def test_a_smaller_retention_asks_with_the_number_of_runs_that_go(user, sessions):
-    store(sessions, *old_runs(1, 2, 3), run(4, started_at=datetime.now(UTC)))
+    # Run 5 is old but in progress, so the cleanup keeps it and the count leaves it out.
+    store(
+        sessions,
+        *old_runs(1, 2, 3),
+        run(4, started_at=datetime.now(UTC)),
+        run(5, started_at=datetime(2020, 1, 1, tzinfo=UTC), status=RunStatus.RUNNING),
+    )
     await user.open("/history")
 
     set_value(user, "retention-days", 30)
@@ -739,7 +745,7 @@ async def test_a_smaller_retention_asks_with_the_number_of_runs_that_go(user, se
     assert question_texts(user) == [
         "Keep the history for 30 days?",
         (
-            "Runs that started more than 30 days ago: 3. The next cleanup deletes them. "
+            "Finished runs that started more than 30 days ago: 3. The next cleanup deletes them. "
             "It runs at the start of the service and each day at 03:30 (Europe/Kyiv)."
         ),
     ]
@@ -757,7 +763,9 @@ async def test_cancel_of_the_question_writes_nothing(user, sessions):
     user.find(marker="retention-save").click()
     await user.should_see(marker="retention-cancel")
     # One run reads as well as three.
-    assert question_texts(user)[1].startswith("Runs that started more than 30 days ago: 1. The next cleanup")
+    assert question_texts(user)[1].startswith("Finished runs that started more than 30 days ago: 1. The next cleanup")
+    # The button stays off while the question is open, so a second click opens no second question.
+    assert not element_of(user, "retention-save").enabled
 
     user.find(marker="retention-cancel").click()
 
