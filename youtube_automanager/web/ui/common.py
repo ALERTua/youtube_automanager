@@ -9,11 +9,12 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from nicegui import ui
-from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
 
-from youtube_automanager.db.models import RunStatus, RunTrigger, Schedule, SessionState
+from youtube_automanager.db.models import RunStatus, RunTrigger, SessionState
 from youtube_automanager.i18n import N_, _
+
+# The pages import the time zone readers from here, and the scheduler owns them.
+from youtube_automanager.scheduler import read_timezone, stored_timezone  # noqa: F401
 
 TIME_FORMAT = "%Y-%m-%d %H:%M %Z"
 
@@ -97,17 +98,6 @@ class ResultLabel(ui.label):
     def problem(self, text: str) -> None:
         self.classes(add="text-negative")
         self.set_text(text)
-
-
-def stored_timezone(session: Session, default_timezone: str) -> str:
-    """Read the time zone of the schedule in the open ``session``. This call blocks."""
-    return session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
-
-
-def read_timezone(sessions: sessionmaker[Session], default_timezone: str) -> str:
-    """Read the time zone of the schedule. This call blocks."""
-    with sessions() as session:
-        return stored_timezone(session, default_timezone)
 
 
 def format_time(value: datetime, zone: ZoneInfo) -> str:

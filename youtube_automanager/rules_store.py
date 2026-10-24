@@ -14,10 +14,11 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 
-from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, Schedule, utc_now
+from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, utc_now
 from youtube_automanager.engine.rules import validate
 from youtube_automanager.i18n import _
 from youtube_automanager.runner import SyncRunner
+from youtube_automanager.scheduler import stored_timezone
 
 
 @dataclass(frozen=True)
@@ -136,8 +137,7 @@ def read_stored(sessions: sessionmaker[Session], default_timezone: str) -> Store
             for rule in session.scalars(select(Rule).order_by(Rule.position, Rule.id))
         ]
         playlists = sorted(session.scalars(select(Playlist)), key=lambda row: (row.title.casefold(), row.playlist_id))
-        # The same read as ``stored_timezone`` of ``web.ui.common``, which this module cannot import.
-        timezone = session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
+        timezone = stored_timezone(session, default_timezone)
         return Stored(
             rules=rules,
             channels={
