@@ -1,6 +1,8 @@
 import datetime
 import io
+import itertools
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -10,7 +12,7 @@ import urllib.request
 import pytest
 from nicegui import Client
 from nicegui.testing.general import nicegui_reset_globals
-from sqlalchemy import select
+from sqlalchemy import create_engine, make_url, select, text
 from ui_support import running_service
 
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
@@ -328,9 +330,105 @@ def fake_starter():
     return FakeStarter()
 
 
+POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
+ON_POSTGRES = pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not set")
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "sqlite_only: the test assumes SQLite, so its PostgreSQL case is not collected")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Takes the PostgreSQL case of each test with the marker ``sqlite_only`` out of the run."""
+    deselected = [
+        item
+        for item in items
+        if item.get_closest_marker("sqlite_only") and getattr(item, "callspec", None) is not None
+        if item.callspec.params.get("db_url") == "postgres"
+    ]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = [item for item in items if item not in set(deselected)]
+
+
+class PostgresServer:
+    """The server of TEST_POSTGRES_URL, with a template database of this worker and a copy of it for each test.
+
+    A copy of a template refuses to start while another connection holds the template, so each worker of ``pytest -n``
+    has a template of its own, and no test connects to a template. A test writes only into its copy.
+    """
+
+    def __init__(self, worker_id):
+        assert POSTGRES_URL is not None, "TEST_POSTGRES_URL is not set"
+        self.server = make_url(POSTGRES_URL)
+        self.template = f"youtube_automanager_test_{worker_id}"
+        self.admin = create_engine(self.server, isolation_level="AUTOCOMMIT")
+        self._copies = itertools.count(1)
+
+    def url(self, name):
+        return self.server.set(database=name).render_as_string(hide_password=False)
+
+    def create_template(self):
+        """Makes the template with the newest schema. It first drops the databases of this worker from an earlier run
+        that ended early."""
+        self.drop_all()
+        with self.admin.connect() as connection:
+            connection.execute(text(f'CREATE DATABASE "{self.template}"'))
+        upgrade_to_head(self.url(self.template))
+
+    def create_copy(self):
+        """Makes a database from the template and returns its URL. A create from the template takes about 30 ms."""
+        name = f"{self.template}_{next(self._copies)}"
+        with self.admin.connect() as connection:
+            connection.execute(text(f'CREATE DATABASE "{name}" TEMPLATE "{self.template}"'))
+        return self.url(name)
+
+    def drop(self, url):
+        name = make_url(url).database
+        with self.admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+
+    def drop_all(self):
+        """Drops the template of this worker and each copy of it. The prefix of a copy ends with an underscore, so
+        the worker gw1 leaves the databases of the worker gw10 alone."""
+        with self.admin.connect() as connection:
+            copies = connection.execute(
+                text("SELECT datname FROM pg_database WHERE starts_with(datname, :prefix)"),
+                {"prefix": f"{self.template}_"},
+            ).scalars()
+            for name in [*copies, self.template]:
+                connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+
+    def close(self):
+        self.drop_all()
+        self.admin.dispose()
+
+
+@pytest.fixture(scope="session")
+def postgres_server(worker_id):
+    """The server of TEST_POSTGRES_URL with a template database of this worker, migrated once for the test session."""
+    server = PostgresServer(worker_id)
+    try:
+        server.create_template()
+        yield server
+    finally:
+        server.close()
+
+
 @pytest.fixture
-def db_url(tmp_path, new_database):
-    """A SQLite database with the newest schema."""
+def postgres_database(postgres_server):
+    """A PostgreSQL database with the newest schema and no rows, and its URL. The fixture drops it after the test."""
+    url = postgres_server.create_copy()
+    yield url
+    postgres_server.drop(url)
+
+
+@pytest.fixture(params=["sqlite", pytest.param("postgres", marks=ON_POSTGRES)])
+def db_url(request, tmp_path, new_database):
+    """A database with the newest schema and no rows: a copy of the migrated SQLite file, or a copy of the PostgreSQL
+    template when TEST_POSTGRES_URL names a server. Each test runs once for each database."""
+    if request.param == "postgres":
+        return request.getfixturevalue("postgres_database")
     return new_database(tmp_path / "service.sqlite")
 
 
