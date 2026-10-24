@@ -5,6 +5,8 @@
 **/__pycache__
 /cookies*.txt
 /data/
+# The data file of the coverage report of "just cov" and of the CI run
+/.coverage
 .claude/*
 !.claude/memory/
 plans
