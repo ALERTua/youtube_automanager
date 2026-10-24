@@ -33,7 +33,7 @@ repos:
 
   # The type checker. The rev gives the same ty version as uv.lock, and --locked keeps the lock file as it is.
   - repo: https://github.com/astral-sh/ty-pre-commit
-    rev: v0.0.89
+    rev: v0.0.91
     hooks:
       - id: ty
         args: [--locked]

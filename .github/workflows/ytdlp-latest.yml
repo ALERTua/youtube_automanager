@@ -37,7 +37,7 @@ jobs:
       - name: Install the dependencies
         run: uv sync --locked --all-groups
 
-      # The exclude-newer of pyproject.toml refuses a release younger than one week, and --no-config skips that file.
+      # --no-config keeps the uv configuration of the project out of this install, as the updater of the service does.
       # The nightly builds are pre-releases on PyPI. --no-deps keeps each other library at its locked version.
       - name: Install the newest yt-dlp
         env:
