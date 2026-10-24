@@ -115,6 +115,11 @@ class FakeAccounts(urllib.request.HTTPSHandler):
         return dict(part.split("=", 1) for part in header.split("; ") if part)
 
 
+# The fixture below refuses each network connection, and a PostgreSQL database needs one. The rotation does not read
+# the database in a way that depends on the backend, so its tests run on SQLite alone.
+pytestmark = pytest.mark.sqlite_only
+
+
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     def refuse(*args, **kwargs):
