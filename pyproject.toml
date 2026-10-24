@@ -31,9 +31,6 @@ dev = [
     "ruff",
 ]
 
-[tool.uv]
-exclude-newer = "1 week"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

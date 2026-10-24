@@ -147,7 +147,8 @@ def _highest_release(releases: Mapping[str, list[Mapping[str, Any]]]) -> str:
 def _install_command(target_dir: Path, version: str, channel: Channel) -> list[str]:
     # --no-deps: the folder comes first on the import path of the child process, so a dependency of yt-dlp there would
     # replace the copy of the image for every other library.
-    # --no-config: the exclude-newer of the project configuration would refuse a release younger than its cutoff.
+    # --no-config: a uv configuration of the folder, for example a limit on the age of a release, must not change
+    # which yt-dlp the service installs.
     # uv accepts a pinned pre-release by default, but UV_PRERELEASE=disallow in the environment would refuse a nightly.
     command = [
         "uv",
