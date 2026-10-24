@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
                 # The runner stops first, so the scheduler starts no new run and has no job in a thread at its shutdown.
                 await asyncio.to_thread(runner.stop, STOP_TIMEOUT_SECONDS)
                 await scheduler.shutdown()
-                # The poll of a run ends before NiceGUI stops, so NiceGUI has no task of it to cancel.
+                # No poll task and no read of the progress in a thread outlive the service.
                 await run_events.close()
         finally:
             engine.dispose()

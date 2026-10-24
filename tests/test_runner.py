@@ -527,6 +527,27 @@ def test_listener_learns_the_end_of_a_run_whose_row_is_gone(make_runner, db_sess
     assert f"Run {run_id} is not in the database, so its result is lost" in caplog.text
 
 
+def test_listener_learns_the_end_of_a_run_whose_write_fails(make_runner, db_sessions, monkeypatch):
+    listener = FakeListener()
+    runner = make_runner(listener=listener)
+    run_id = runner.claim(RunTrigger.MANUAL)
+    assert run_id is not None
+
+    def locked():
+        raise RuntimeError("database is locked")
+
+    # The end time comes inside the write of the end, so the write fails as on a locked database.
+    monkeypatch.setattr(runner_module, "utc_now", locked)
+    with pytest.raises(RuntimeError, match="database is locked"):
+        runner.execute(run_id)
+
+    # The listener gets the status that the runner meant to write, and the row keeps its old state.
+    assert listener.calls[-1][:3] == ("finished", run_id, RunStatus.SUCCEEDED)
+    (run,) = read_runs(db_sessions)
+    assert run.status is RunStatus.RUNNING
+    assert not runner.is_active()
+
+
 def test_mark_interrupted_runs(db_sessions):
     first = store_run(db_sessions, status=RunStatus.RUNNING, trigger=RunTrigger.SCHEDULE)
     done = store_run(db_sessions, status=RunStatus.SUCCEEDED, trigger=RunTrigger.MANUAL)

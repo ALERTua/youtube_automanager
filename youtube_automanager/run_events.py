@@ -7,8 +7,9 @@ commits each add and each seen video together with the counters of the ``run`` r
 something changed.
 
 The events are NiceGUI events. A page subscribes in its builder and wraps its handler in ``with client:`` of its own
-client. NiceGUI gives the arguments of an emit only to a handler with a required positional parameter, so a handler of
-``*args`` alone needs ``expect_args=True``.
+client. NiceGUI gives the arguments of an emit to a handler only when the handler has a required parameter that is not
+``*args`` or ``**kwargs``, a keyword-only one included, or when it subscribed with ``expect_args=True``. A handler of
+``*args`` alone thus needs ``expect_args=True``.
 """
 
 import asyncio
@@ -92,7 +93,8 @@ class RunEvents:
     """The events of the runs of one service, and the listener of its runner.
 
     ``started`` gets the run id and the trigger, ``progress`` the run id, the added count, the seen count and the new
-    actions as a tuple of ``ActionItem``, and ``finished`` the run id and the status. ``started`` of a run always comes
+    actions as a tuple of ``ActionItem``, and ``finished`` the run id and the status that the runner meant to write. The
+    write can fail, so a page reads the ``run`` row again at ``finished``. ``started`` of a run always comes
     before its ``finished``, and no ``progress`` of a run comes after its ``finished``. ``finished`` comes at once, so
     the last actions of a run can come in no ``progress``: a page reads the run again at its end.
     """
@@ -136,6 +138,11 @@ class RunEvents:
     def _started(self, run_id: int, trigger: RunTrigger) -> None:
         if self._closed:
             return
+        # A poll of the same id is left from a run whose end never came, for example when SQLite gave the id of a
+        # deleted newest row again. It stops after its read that runs.
+        old = self._polls.pop(run_id, None)
+        if old is not None:
+            old.stop.set()
         stop = asyncio.Event()
         task = self._loop.create_task(self._poll(run_id, stop), name=f"run-{run_id}-progress")
         self._polls[run_id] = _Poll(stop, task)
@@ -155,13 +162,19 @@ class RunEvents:
         The poll ends also when the ``run`` row is gone or no longer running.
         """
         added = seen = last_id = 0
+        failing = False
         while not await _stopped_within(stop, self._poll_seconds):
             try:
                 progress = await asyncio.to_thread(read_progress, self._sessions, run_id, last_id)
             except Exception as error:  # noqa: BLE001
-                # The next read can succeed, for example after a lock of the database.
-                LOG.warning("Run %s: cannot read the progress: %s", run_id, error)
+                # The next read can succeed, for example after a lock of the database. A database that stays down would
+                # give one warning each second, so only the first failure in a row is a warning.
+                LOG.log(
+                    logging.DEBUG if failing else logging.WARNING, "Run %s: cannot read the progress: %s", run_id, error
+                )
+                failing = True
                 continue
+            failing = False
             # The run can end during the read, and no progress comes after `finished`.
             if stop.is_set() or progress is None:
                 return

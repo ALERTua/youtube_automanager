@@ -216,7 +216,8 @@ class RunListener(Protocol):
     """Learns when a run starts and when it ends.
 
     The runner calls it from the thread of the run, after the write of the ``run`` row. A failed call does not change
-    the run. ``run_started`` of a run always comes before its ``run_finished``.
+    the run. ``run_started`` of a run always comes before its ``run_finished``. ``run_finished`` comes also when the
+    write of the end fails, with the status that the runner meant to write, so a reader of the result reads the row.
     """
 
     def run_started(self, run_id: int, trigger: RunTrigger) -> None: ...

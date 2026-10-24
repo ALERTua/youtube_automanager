@@ -26,8 +26,9 @@ POLL_SECONDS = 0.02
 class Recorder:
     """Subscribes to the three events and records each emit in its order, with the thread that ran the subscriber.
 
-    NiceGUI gives the arguments of an emit only to a handler with a required positional parameter, so a handler of
-    ``*args`` needs ``expect_args=True``.
+    NiceGUI gives the arguments of an emit to a handler only when the handler has a required parameter that is not
+    ``*args`` or ``**kwargs``, or when it subscribed with ``expect_args=True``. A handler of ``*args`` alone thus needs
+    ``expect_args=True``.
     """
 
     def __init__(self, events):
@@ -222,6 +223,47 @@ async def test_a_failed_read_writes_a_warning_and_the_poll_goes_on(events, sessi
     (record,) = [record for record in caplog.records if record.name == run_events_module.__name__]
     assert record.levelno == logging.WARNING
     assert record.getMessage() == f"Run {run_id}: cannot read the progress: the database is locked"
+
+
+async def test_only_the_first_of_the_failed_reads_in_a_row_is_a_warning(events, sessions, monkeypatch, caplog):
+    caplog.set_level(logging.DEBUG, logger=run_events_module.__name__)
+    recorder = Recorder(events)
+    run_id = new_run(sessions)
+    # Three failed reads, a good read, one failed read, and then good reads.
+    plan = ["fail", "fail", "fail", "read", "fail"]
+
+    def read(*args):
+        if plan and plan.pop(0) == "fail":
+            raise RuntimeError("the database is down")
+        return read_progress(*args)
+
+    monkeypatch.setattr(run_events_module, "read_progress", read)
+    await in_thread(events.run_started, run_id, RunTrigger.MANUAL)
+    await eventually(lambda: not plan, "the planned reads")
+    set_counts(sessions, run_id, 1, 1)
+    await eventually(lambda: recorder.of("progress"), "the progress after the failed reads")
+
+    levels = [
+        record.levelno
+        for record in caplog.records
+        if record.name == run_events_module.__name__ and "cannot read the progress" in record.getMessage()
+    ]
+    assert levels == [logging.WARNING, logging.DEBUG, logging.DEBUG, logging.WARNING]
+
+
+async def test_a_second_start_of_the_same_run_id_stops_the_old_poll(events, sessions):
+    """SQLite can give the id of a deleted newest run row to the next run, while the poll of the old run still runs."""
+    run_id = new_run(sessions)
+    await in_thread(events.run_started, run_id, RunTrigger.MANUAL)
+    await eventually(lambda: events._polls, "the first poll")
+    (old,) = events._polls.values()
+
+    await in_thread(events.run_started, run_id, RunTrigger.SCHEDULE)
+    await eventually(lambda: events._polls[run_id] is not old, "the second poll")
+
+    await asyncio.wait_for(old.task, WAIT_SECONDS)
+    (new,) = events._polls.values()
+    assert not new.task.done()
 
 
 async def test_close_waits_for_the_read_that_runs_and_emits_nothing_more(sessions, monkeypatch):
