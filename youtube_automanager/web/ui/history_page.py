@@ -16,12 +16,12 @@ from nicegui import ui
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from youtube_automanager.db.models import Run, RunAction, RunActionKind, RunStatus, RunTrigger, Schedule
+from youtube_automanager.db.models import Run, RunAction, RunActionKind, RunStatus, RunTrigger
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.retention import MIN_RETENTION_DAYS, get_retention_days, set_retention_days
 from youtube_automanager.scheduler import CLEANUP_HOUR, CLEANUP_MINUTE
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.dashboard import RUN_STATUSES, RUN_TRIGGERS, format_time
+from youtube_automanager.web.ui.common import RUN_STATUSES, RUN_TRIGGERS, column, format_time, stored_timezone
 from youtube_automanager.web.ui.dates import today_button
 from youtube_automanager.web.ui.layout import register_page
 
@@ -163,10 +163,6 @@ def read_day(field: ui.input) -> date | None:
     return day
 
 
-def _timezone(session: Session, default_timezone: str) -> str:
-    return session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
-
-
 def _run_record(run: Run) -> RunRecord:
     return RunRecord(
         run.id,
@@ -183,7 +179,7 @@ def _run_record(run: Run) -> RunRecord:
 def read_runs(sessions: sessionmaker[Session], run_filter: RunFilter, page: int, default_timezone: str) -> RunList:
     """Read one page of the runs that match ``run_filter``, newest first. This call blocks."""
     with sessions() as session:
-        timezone = _timezone(session, default_timezone)
+        timezone = stored_timezone(session, default_timezone)
         conditions = run_filter.conditions(ZoneInfo(timezone))
         total = session.scalar(select(func.count()).select_from(Run).where(*conditions)) or 0
         pages = max(1, math.ceil(total / PAGE_SIZE))
@@ -225,7 +221,7 @@ def read_run_detail(
             )
             for action in session.scalars(query)
         ]
-        return RunDetail(_run_record(run), actions, kind, _timezone(session, default_timezone))
+        return RunDetail(_run_record(run), actions, kind, stored_timezone(session, default_timezone))
 
 
 def run_row(run: RunRecord, zone: ZoneInfo) -> dict:
@@ -257,32 +253,28 @@ def action_row(action: ActionRecord, zone: ZoneInfo) -> dict:
     }
 
 
-def _column(name: str, label: str) -> dict:
-    return {"name": name, "label": label, "field": name, "align": "left"}
-
-
 def run_columns() -> list[dict]:
     return [
-        _column("id", _("Run")),
-        _column("started", _("Started")),
-        _column("finished", _("Finished")),
-        _column("status", _("Status")),
-        _column("trigger", _("Trigger")),
-        _column("added", _("Videos added")),
-        _column("seen", _("Videos seen")),
-        _column("error", _("Error")),
+        column("id", _("Run")),
+        column("started", _("Started")),
+        column("finished", _("Finished")),
+        column("status", _("Status")),
+        column("trigger", _("Trigger")),
+        column("added", _("Videos added")),
+        column("seen", _("Videos seen")),
+        column("error", _("Error")),
     ]
 
 
 def action_columns() -> list[dict]:
     return [
-        _column("at", _("Time")),
-        _column("action", _("Action")),
-        _column("video", _("Video")),
-        _column("channel", _("Channel")),
-        _column("rule", _("Rule")),
-        _column("playlist", _("Playlist")),
-        _column("detail", _("Detail")),
+        column("at", _("Time")),
+        column("action", _("Action")),
+        column("video", _("Video")),
+        column("channel", _("Channel")),
+        column("rule", _("Rule")),
+        column("playlist", _("Playlist")),
+        column("detail", _("Detail")),
     ]
 
 

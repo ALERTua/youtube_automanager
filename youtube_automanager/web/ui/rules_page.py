@@ -26,7 +26,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 
-from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, RunStatus, Schedule, utc_now
+from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, RunStatus, utc_now
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.rule_actions import AppliedRun, apply_in_child, preview_in_child
@@ -34,7 +34,7 @@ from youtube_automanager.runner import RunAlreadyActive, SyncRunner
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
-from youtube_automanager.web.ui.dashboard import format_time
+from youtube_automanager.web.ui.common import busy, column, confirm, format_time, stored_timezone
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day, today_button, today_in
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
@@ -219,7 +219,7 @@ def read_stored(sessions: sessionmaker[Session], default_timezone: str) -> Store
             for rule in session.scalars(select(Rule).order_by(Rule.position, Rule.id))
         ]
         playlists = sorted(session.scalars(select(Playlist)), key=lambda row: (row.title.casefold(), row.playlist_id))
-        timezone = session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
+        timezone = stored_timezone(session, default_timezone)
         return Stored(
             rules=rules,
             channels={
@@ -297,19 +297,15 @@ def rule_row(rule: RuleRecord, stored: Stored, zone: ZoneInfo) -> dict:
     }
 
 
-def _column(name: str, label: str) -> dict:
-    return {"name": name, "label": label, "field": name, "align": "left"}
-
-
 def rule_columns() -> list[dict]:
     return [
-        _column("name", _("Name")),
-        _column("enabled", _("Enabled")),
-        _column("channels", _("Channels")),
-        _column("playlist", _("Playlist")),
-        _column("no_shorts", _("No Shorts")),
-        _column("condition", _("Condition")),
-        _column("updated", _("Changed")),
+        column("name", _("Name")),
+        column("enabled", _("Enabled")),
+        column("channels", _("Channels")),
+        column("playlist", _("Playlist")),
+        column("no_shorts", _("No Shorts")),
+        column("condition", _("Condition")),
+        column("updated", _("Changed")),
     ]
 
 
@@ -371,10 +367,10 @@ def day_input(today: date) -> ui.input:
 
 def preview_columns() -> list[dict]:
     return [
-        _column("date", _("Date")),
-        _column("channel", _("Channel")),
-        _column("title", _("Title")),
-        _column("mark", _("Result")),
+        column("date", _("Date")),
+        column("channel", _("Channel")),
+        column("title", _("Title")),
+        column("mark", _("Result")),
     ]
 
 
@@ -986,21 +982,20 @@ class RuleEditor:
             return
         changes = self.changes
         self.previewing = True
-        self.preview_button.props("loading")
-        self.preview_button.disable()
-        self.preview_view.working()
-        try:
-            result: Preview | str = await asyncio.to_thread(preview_in_child, self.services.runner, None, draft=draft)
-        except ChildError as error:
-            LOG.warning("The preview of a rule failed: %s", error)
-            result = _("The preview failed. {reason}").format(reason=child_error_text(error))
-        finally:
-            self.previewing = False
+        with busy(self.preview_button):
+            self.preview_view.working()
+            try:
+                result: Preview | str = await asyncio.to_thread(
+                    preview_in_child, self.services.runner, None, draft=draft
+                )
+            except ChildError as error:
+                LOG.warning("The preview of a rule failed: %s", error)
+                result = _("The preview failed. {reason}").format(reason=child_error_text(error))
+            finally:
+                self.previewing = False
         # The user can close the editor while the child runs.
         if self.preview_button.is_deleted:
             return
-        self.preview_button.props(remove="loading")
-        self.preview_button.enable()
         if changes != self.changes:
             self.preview_view.note(_("The form changed while the preview ran. Press Preview again."))
             return
@@ -1046,15 +1041,13 @@ class RuleEditor:
         rule = self.rule
         if rule is None:
             return
-        with ui.dialog() as confirm, ui.card().mark("delete-dialog"):
-            ui.label(_('Delete the rule "{name}"?').format(name=rule.name)).mark("delete-question")
-            ui.label(_("The history keeps the actions of the rule.")).classes("text-grey-7")
-            with ui.row().classes("gap-2"):
-                ui.button(_("Delete"), color="negative", on_click=lambda: confirm.submit(True)).mark("delete-confirm")
-                ui.button(_("Cancel"), on_click=lambda: confirm.submit(False)).props("flat").mark("delete-cancel")
-        confirmed = await confirm
-        if not confirm.is_deleted:
-            confirm.delete()
+        confirmed = await confirm(
+            _('Delete the rule "{name}"?').format(name=rule.name),
+            _("Delete"),
+            marker="delete",
+            detail=_("The history keeps the actions of the rule."),
+            color="negative",
+        )
         if not confirmed:
             return
         try:

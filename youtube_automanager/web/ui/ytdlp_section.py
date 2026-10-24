@@ -24,8 +24,8 @@ from youtube_automanager.i18n import N_, _
 from youtube_automanager.short_child import ChildBusy
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text
-from youtube_automanager.web.ui.dashboard import YTDLP_SOURCES, format_time
-from youtube_automanager.web.ui.scheduler_page import read_timezone
+from youtube_automanager.web.ui.common import ResultLabel, confirm, format_time, read_timezone
+from youtube_automanager.web.ui.dashboard import YTDLP_SOURCES
 from youtube_automanager.web.ui.settings_draft import DraftPart, FormError, SettingsDraft, Write
 from youtube_automanager.youtube.ytdlp_updater import (
     Source,
@@ -141,10 +141,10 @@ async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
     state = UpdateState(await take_status(services), await asyncio.to_thread(read_settings, services.sessions))
 
     def show_result(text: str, *, problem: bool = False) -> None:
-        result_label.classes(remove="text-negative")
         if problem:
-            result_label.classes(add="text-negative")
-        result_label.set_text(text)
+            result_label.problem(text)
+        else:
+            result_label.ok(text)
 
     def show_error(text: str | None) -> None:
         error_label.set_text(text or "")
@@ -214,17 +214,6 @@ async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
         await reload()
         show_result(result_text(record), problem=not record.ok)
 
-    async def confirm(marker: str, question: str, action: str) -> bool:
-        with ui.dialog() as dialog, ui.card().classes("max-w-lg").mark(f"{marker}-dialog"):
-            ui.label(question).mark(f"{marker}-question")
-            with ui.row().classes("gap-2"):
-                ui.button(action, on_click=lambda: dialog.submit(True)).mark(f"{marker}-confirm")
-                ui.button(_("Cancel"), on_click=lambda: dialog.submit(False)).props("flat").mark(f"{marker}-cancel")
-        confirmed = await dialog
-        if not dialog.is_deleted:
-            dialog.delete()
-        return confirmed is True
-
     async def change_active(switch: Callable[[], SwitchResult | None]) -> None:
         # The question waits for the user, and an update can start meanwhile.
         if state.busy:
@@ -250,7 +239,7 @@ async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
             "Go back from yt-dlp {active} to {previous}? The daily update then skips {active}, and it installs only a "
             "newer version."
         ).format(active=status.version or _("Unknown"), previous=status.previous)
-        if await confirm("ytdlp-go-back", question, _("Go back")):
+        if await confirm(question, _("Go back"), marker="ytdlp-go-back", classes="max-w-lg"):
             await change_active(services.ytdlp.go_back)
 
     async def use_image() -> None:
@@ -261,7 +250,7 @@ async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
             "Use yt-dlp {image} of the image instead of {active} of the data folder? The service keeps {active} as "
             "the previous version. The daily update then skips {active}, and it installs only a newer version."
         ).format(image=status.image, active=status.version)
-        if await confirm("ytdlp-use-image", question, _("Use the image version")):
+        if await confirm(question, _("Use the image version"), marker="ytdlp-use-image", classes="max-w-lg"):
             await change_active(services.ytdlp.use_image)
 
     @ui.refreshable
@@ -343,6 +332,6 @@ async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
                 .props("outline")
                 .mark("ytdlp-use-image")
             )
-        result_label = ui.label().classes("whitespace-pre-wrap break-words").mark("ytdlp-result")
+        result_label = ResultLabel().classes("whitespace-pre-wrap break-words").mark("ytdlp-result")
     show_work()
     draft.add(DraftPart(changed=changed, prepare=prepare, discard=show_stored, show_error=show_error))

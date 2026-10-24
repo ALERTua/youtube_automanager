@@ -26,6 +26,7 @@ from nicegui import ui
 from youtube_automanager.i18n import _
 from youtube_automanager.notify import EVENT_LEVELS, Event, Level, Notifier
 from youtube_automanager.web.services import Services
+from youtube_automanager.web.ui.common import confirm
 from youtube_automanager.web.ui.notification_targets import (
     APPRISE_URLS,
     EVENT_LABELS,
@@ -265,18 +266,12 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
             )
 
     async def ask_delete(target: TargetRecord) -> None:
-        with ui.dialog() as confirm, ui.card().mark("target-delete-dialog"):
-            ui.label(_('Delete the target "{name}"?').format(name=target.name)).mark("target-delete-question")
-            with ui.row().classes("gap-2"):
-                ui.button(_("Delete"), color="negative", on_click=lambda: confirm.submit(True)).mark(
-                    "target-delete-confirm"
-                )
-                ui.button(_("Cancel"), on_click=lambda: confirm.submit(False)).props("flat").mark(
-                    "target-delete-cancel"
-                )
-        confirmed = await confirm
-        if not confirm.is_deleted:
-            confirm.delete()
+        confirmed = await confirm(
+            _('Delete the target "{name}"?').format(name=target.name),
+            _("Delete"),
+            marker="target-delete",
+            color="negative",
+        )
         if not confirmed:
             return
         async with writes:

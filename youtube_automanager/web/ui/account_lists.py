@@ -16,16 +16,14 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from nicegui import ui
-from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.account_cache import RefreshResult, last_refresh
 from youtube_automanager.account_refresh import refresh_in_child
-from youtube_automanager.db.models import Schedule
 from youtube_automanager.i18n import _
 from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildUnavailable, ChildYouTubeError
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.dashboard import format_time
+from youtube_automanager.web.ui.common import ResultLabel, busy, format_time, read_timezone
 
 LOG = logging.getLogger(__name__)
 
@@ -41,8 +39,7 @@ class RefreshTime:
 
 def read_refresh_time(sessions: sessionmaker[Session], default_timezone: str) -> RefreshTime:
     """Read the time of the last refresh and the time zone of the schedule. This call blocks."""
-    with sessions() as session:
-        timezone = session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
+    timezone = read_timezone(sessions, default_timezone)
     return RefreshTime(last_refresh(sessions), timezone)
 
 
@@ -89,20 +86,14 @@ async def account_lists(services: Services, on_refreshed: OnRefreshed | None = N
         ui.label(_("Lists refreshed: {time}").format(time=text)).mark("lists-refreshed")
 
     async def refresh() -> None:
-        button.props("loading")
-        button.disable()
-        result_label.classes(remove="text-negative")
-        result_label.set_text(_("Refreshing the lists..."))
-        try:
-            result = await asyncio.to_thread(refresh_in_child, services.runner)
-        except ChildError as error:
-            LOG.warning("The account lists did not refresh: %s", error)
-            result_label.classes(add="text-negative")
-            result_label.set_text(_("The lists did not refresh. {reason}").format(reason=child_error_text(error)))
-            return
-        finally:
-            button.props(remove="loading")
-            button.enable()
+        with busy(button):
+            result_label.ok(_("Refreshing the lists..."))
+            try:
+                result = await asyncio.to_thread(refresh_in_child, services.runner)
+            except ChildError as error:
+                LOG.warning("The account lists did not refresh: %s", error)
+                result_label.problem(_("The lists did not refresh. {reason}").format(reason=child_error_text(error)))
+                return
         result_label.set_text(counts_text(result))
         refreshed_view.refresh(await asyncio.to_thread(read_refresh_time, services.sessions, services.settings.tz))
         if on_refreshed is not None:
@@ -112,4 +103,4 @@ async def account_lists(services: Services, on_refreshed: OnRefreshed | None = N
     with ui.row().classes("w-full items-center gap-4").mark("account-lists"):
         refreshed_view(initial)
         button = ui.button(_("Refresh lists"), icon="sync", on_click=refresh).mark("refresh-lists")
-    result_label = ui.label().mark("refresh-lists-result")
+    result_label = ResultLabel().mark("refresh-lists-result")

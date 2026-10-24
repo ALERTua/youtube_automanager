@@ -24,7 +24,7 @@ from youtube_automanager import i18n
 from youtube_automanager.db.models import NotificationTarget, Run, RunStatus, RunTrigger, Schedule, ScheduleKind
 from youtube_automanager.scheduler import MAX_INTERVAL_S, MIN_INTERVAL_S, ScheduleSpec
 from youtube_automanager.web.ui import scheduler_page
-from youtube_automanager.web.ui.dashboard import TIME_FORMAT
+from youtube_automanager.web.ui.common import TIME_FORMAT
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
