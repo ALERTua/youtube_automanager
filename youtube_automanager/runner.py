@@ -484,6 +484,10 @@ class SyncRunner:
         if reader is not None:
             # A grandchild can keep the pipe open after the child ends, so the wait has a limit.
             reader.join(timeout=KILL_WAIT_SECONDS)
+        # The pipe closes here, not when the garbage collector finds it. It stays open while the reader still reads
+        # it, because a grandchild can hold it.
+        if child.stderr is not None and (reader is None or not reader.is_alive()):
+            child.stderr.close()
         # The reader can still run when the wait ended, so the lines come from one copy of the tail.
         kept = list(tail)
         lines = [line.strip() for line in kept if line.strip()]

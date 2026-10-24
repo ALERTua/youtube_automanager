@@ -208,7 +208,7 @@ def _old_dir(target_dir: Path) -> Path:
     return target_dir.with_name(f"{target_dir.name}.old")
 
 
-def _is_newer(version: str, than: str) -> bool:
+def is_newer(version: str, than: str) -> bool:
     """Return True when ``version`` is a higher PEP 440 version than ``than``, or when one of them is not one."""
     try:
         return Version(version) > Version(than)
@@ -303,7 +303,7 @@ def update(
         if new_version == old_version:
             LOG.info("yt-dlp %s (%s) is up to date", old_version, channel)
             return UpdateResult(ok=True, channel=channel, old_version=old_version, new_version=new_version, error=None)
-        if skipped is not None and not _is_newer(new_version, skipped):
+        if skipped is not None and not is_newer(new_version, skipped):
             LOG.info(
                 "yt-dlp %s (%s) is not newer than the skipped version %s, so the update installs nothing",
                 new_version,

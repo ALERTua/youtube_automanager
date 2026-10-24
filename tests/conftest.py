@@ -31,7 +31,7 @@ from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, SyncRun
 from youtube_automanager.rotation import CookieRotation
 from youtube_automanager.runner import SYNC_LOCK
 from youtube_automanager.settings import Settings
-from youtube_automanager.youtube.ytdlp_updater import UpdateResult, installed_version, previous_dir
+from youtube_automanager.youtube.ytdlp_updater import UpdateResult, installed_version, is_newer, previous_dir
 
 
 class FakeYtdlpInstall:
@@ -39,8 +39,8 @@ class FakeYtdlpInstall:
 
     Each call takes its outcome from ``plan``: ``{"version": ...}`` puts a fake release of that version into the folder,
     and ``{"error": ..., "version": ...}`` fails the update and leaves the folder as it is. With an empty plan, the
-    folder stays as it is and counts as up to date. A version that equals ``skipped`` installs nothing. As the real
-    update does, a new version keeps the replaced release in ``<folder>.previous``. A set ``release`` event holds each
+    folder stays as it is and counts as up to date. As the real update does, the fake installs nothing when the new
+    version is not newer than ``skipped``, and a new version keeps the replaced release in ``<folder>.previous``. A set ``release`` event holds each
     call until it is set. ``options`` records the check and the skipped version of each call.
     """
 
@@ -66,7 +66,12 @@ class FakeYtdlpInstall:
         new_version = outcome.get("version")
         if "error" in outcome:
             return UpdateResult(False, channel, old_version, new_version, outcome["error"])
-        if new_version != old_version and new_version == skipped:
+        if (
+            new_version is not None
+            and new_version != old_version
+            and skipped is not None
+            and not is_newer(new_version, skipped)
+        ):
             return UpdateResult(True, channel, old_version, new_version, None, skipped=True)
         if new_version != old_version:
             previous = previous_dir(target_dir)

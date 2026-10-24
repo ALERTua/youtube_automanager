@@ -567,7 +567,10 @@ def test_the_cleanup_runs_each_day_at_0330_in_the_time_zone_of_the_schedule(runn
     assert (CLEANUP_HOUR, CLEANUP_MINUTE) == (3, 30)
     assert [(time.astimezone(KYIV).hour, time.astimezone(KYIV).minute) for time in times] == [(3, 30)] * 3
     assert times[0] > datetime.now(UTC)
-    assert [later - earlier for earlier, later in itertools.pairwise(times)] == [timedelta(days=1)] * 2
+    # On the day when the summer time ends, 03:30 comes twice, one hour apart, and on the day when it starts, the
+    # next 03:30 comes 23 hours after the one before. So the gaps are not always one day.
+    gaps = [later.astimezone(UTC) - earlier.astimezone(UTC) for earlier, later in itertools.pairwise(times)]
+    assert all(timedelta(0) < gap <= timedelta(hours=25) for gap in gaps), gaps
 
 
 def test_the_cleanup_follows_a_change_of_the_time_zone(runner):

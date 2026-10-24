@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from conftest import FakeYtdlpInstall
 
 from youtube_automanager.youtube import ytdlp_updater
 from youtube_automanager.youtube.ytdlp_updater import (
@@ -503,6 +504,27 @@ def test_the_update_installs_a_version_newer_than_the_skipped_one(uv, old_instal
     assert result.ok
     assert not result.skipped
     assert installed_version(old_install) == STABLE
+
+
+@pytest.mark.parametrize(
+    "skipped",
+    [None, "2026.8.18", STABLE, "2026.9.1", "not a version"],
+    ids=["none", "older", "same", "newer", "invalid"],
+)
+def test_the_fake_install_of_the_tests_skips_a_version_as_the_real_update_does(uv, make_install, tmp_path, skipped):
+    """The service tests replace the install with ``FakeYtdlpInstall``, so the fake must decide as ``update`` does."""
+    real_dir = tmp_path / "real" / "yt-dlp"
+    fake_dir = tmp_path / "fake" / "yt-dlp"
+    make_install(real_dir, OLD)
+    FakeYtdlpInstall.write_release(fake_dir, OLD)
+    fake = FakeYtdlpInstall()
+    fake.plan = [{"version": STABLE}]
+
+    real = update(real_dir, "stable", skipped=skipped)
+    faked = fake(fake_dir, "stable", skipped=skipped)
+
+    assert (faked.ok, faked.skipped, faked.new_version) == (real.ok, real.skipped, real.new_version)
+    assert installed_version(fake_dir) == installed_version(real_dir)
 
 
 def test_go_back_swaps_the_active_and_the_previous_release(make_install, old_install):
