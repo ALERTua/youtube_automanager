@@ -862,6 +862,44 @@ async def test_a_change_of_the_rule_keeps_an_earlier_day(user, sessions, account
     assert element_of(user, "rule-catch-up").value == days_back(30).isoformat()
 
 
+@pytest.mark.parametrize("change", ["channels", "condition", "no_shorts"])
+async def test_a_field_that_the_user_cleared_stays_empty_after_a_change_of_the_rule(
+    user, sessions, account_copy, change
+):
+    store(sessions, rule(1, "Saved", {"and": [LEVELS]}))
+    await user.open("/rules")
+    await open_editor(user, 1)
+    set_value(user, "rule-catch-up", days_back(30).isoformat())
+    set_value(user, "rule-catch-up", None)
+
+    if change == "channels":
+        set_value(user, "rule-channels", [A])
+    elif change == "condition":
+        set_value(user, "value-0", "Levels")
+    else:
+        set_value(user, "rule-no-shorts", True)
+
+    assert element_of(user, "rule-catch-up").value is None
+    set_value(user, "rule-playlist", "WL")
+    await save(user)
+    assert stored_rule(sessions, 1).catch_up_since is None
+
+
+async def test_a_new_editor_fills_the_field_again_after_a_clear_in_another_editor(user, sessions, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-catch-up", None)
+    set_value(user, "rule-channels", [A])
+    assert element_of(user, "rule-catch-up").value is None
+    user.find(marker="editor-cancel").click()
+    await eventually(lambda: not elements_of(user, "editor"), "The close of the editor")
+
+    await open_editor(user)
+    assert element_of(user, "rule-catch-up").value == days_back(7).isoformat()
+    set_value(user, "rule-channels", [A])
+    assert element_of(user, "rule-catch-up").value == days_back(7).isoformat()
+
+
 async def test_a_saved_rule_with_a_day_that_waits_for_the_next_run_opens_with_that_day(user, sessions, account_copy):
     saved = rule(1, "Saved")
     saved.catch_up_since = days_back(3)

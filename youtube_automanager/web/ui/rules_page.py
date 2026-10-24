@@ -588,6 +588,8 @@ class RuleEditor:
         self.previewing = False
         # The number of the changes of the form. A preview that ends after a change shows no old result.
         self.changes = 0
+        # True after the user cleared the field Also add videos from. A change of the rule then does not fill it again.
+        self.catch_up_cleared = False
 
     def build(self) -> None:
         rule = self.rule
@@ -633,7 +635,7 @@ class RuleEditor:
                 ui.input(
                     _("Also add videos from"),
                     value=None if value is None else value.isoformat(),
-                    on_change=self._preview_old,
+                    on_change=self._catch_up_changed,
                 )
                 .props(f"type=date outlined dense clearable min={earliest.isoformat()} max={today.isoformat()}")
                 .classes("w-56")
@@ -651,15 +653,23 @@ class RuleEditor:
         """Take a change of the condition, the channels or No Shorts.
 
         Such a change can match older videos, so the field Also add videos from gets DEFAULT_DAYS_BACK days back,
-        unless it already holds an earlier day.
+        unless it already holds an earlier day, or the user cleared it in this editor.
         """
         first = default_first_day(self.stored.timezone)
         try:
             current = date.fromisoformat((self.catch_up_input.value or "").strip())
         except ValueError:
             current = None
-        if current is None or first < current:
+        if (current is None and not self.catch_up_cleared) or (current is not None and first < current):
             self.catch_up_input.set_value(first.isoformat())
+        self._preview_old()
+
+    def _catch_up_changed(self) -> None:
+        """Take a change of the field Also add videos from. An empty field after a change is a clear by the user.
+
+        The fill of ``_rule_changed`` always gives a day, so it never counts as a clear. A day in the field ends the clear.
+        """
+        self.catch_up_cleared = not (self.catch_up_input.value or "").strip()
         self._preview_old()
 
     def _preview_old(self) -> None:

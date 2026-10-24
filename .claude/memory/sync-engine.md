@@ -27,7 +27,7 @@ metadata:
 - Without the account, a feed rule keeps its day without an error of its own, because the sync of the feed writes that error. The videos of the catch-up that wait for the account count in the one error of the run about the account, with each video once.
 - The catch-up and the sync share the Shorts of a channel through `SyncRun._shorts_once`, so a run reads them at most once. A failed read of the Shorts in the catch-up gives the sync no second error.
 - `sync.py` imports `engine.rule_apply` inside `_catch_up`, because `rule_apply` imports `sync`.
-- The editor gives a new rule the day `DEFAULT_DAYS_BACK` (7) days back. A change of the condition, the channels or No Shorts sets that day too, unless the field holds an earlier day. "Add to rule" of the Subscriptions page does the same through `add_channel_to_rule(catch_up_since=...)`. The day then covers each channel of the rule, not only the new one.
+- The editor gives a new rule the day `DEFAULT_DAYS_BACK` (7) days back. A change of the condition, the channels or No Shorts sets that day too, unless the field holds an earlier day. A clear of the field by the user stops this fill for the rest of that editor, and `RuleEditor.catch_up_cleared` keeps this. A saved rule that opens with an empty day was not cleared by the user, so a change still fills the field. "Add to rule" of the Subscriptions page does the same through `add_channel_to_rule(catch_up_since=...)`. The day then covers each channel of the rule, not only the new one.
 
 ## The order of the work
 
