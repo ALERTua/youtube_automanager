@@ -86,7 +86,7 @@ async def test_history_page_is_in_the_drawer(user):
 async def test_a_new_service_has_no_runs_and_the_default_retention(user):
     await user.open("/history")
 
-    assert text_of(user, "no-runs") == "No run matches the filters."
+    assert text_of(user, "no-runs") == "No run yet."
     await user.should_not_see(marker="runs-table")
     await user.should_not_see(marker="details")
     assert element_of(user, "retention-days").value == 90
@@ -345,6 +345,20 @@ async def test_the_filters_work_together(user, sessions):
     set_value(user, "filter-status", "failed")
     set_value(user, "filter-trigger", "manual")
 
+    await runs_are(user, [1])
+
+
+async def test_a_filter_without_matches_says_that_no_run_matches(user, sessions):
+    store(sessions, run(1))
+    await user.open("/history")
+
+    set_value(user, "filter-status", "failed")
+
+    await eventually(
+        lambda: text_of(user, "no-runs") == "No run matches the filters.", "The message that no run matches"
+    )
+    await user.should_not_see(marker="runs-table")
+    set_value(user, "filter-status", "any")
     await runs_are(user, [1])
 
 

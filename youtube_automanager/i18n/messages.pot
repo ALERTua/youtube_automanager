@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-24 20:46+0300\n"
+"POT-Creation-Date: 2026-10-26 09:59+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -696,6 +696,10 @@ msgid "No Shorts"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No channel is stored yet. Press Refresh lists."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "No channel matches the filters."
 msgstr ""
 
@@ -757,6 +761,7 @@ msgid "No run matches the filters."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
 msgid "No run yet."
 msgstr ""
 

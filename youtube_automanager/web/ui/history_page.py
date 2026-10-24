@@ -121,6 +121,8 @@ class RunList:
     page: int
     pages: int
     timezone: str
+    # True when the read had a filter. A list without runs then says that no run matches, and not that no run exists.
+    filtered: bool
 
 
 @dataclass(frozen=True)
@@ -191,7 +193,7 @@ def read_runs(sessions: sessionmaker[Session], run_filter: RunFilter, page: int,
             .limit(PAGE_SIZE)
             .offset((page - 1) * PAGE_SIZE)
         ).all()
-        return RunList([_run_record(run) for run in runs], total, page, pages, timezone)
+        return RunList([_run_record(run) for run in runs], total, page, pages, timezone, bool(conditions))
 
 
 def read_run_detail(
@@ -356,7 +358,7 @@ async def history_page(services: Services) -> None:
     def runs_view(result: RunList) -> None:
         zone = ZoneInfo(result.timezone)
         if not result.runs:
-            ui.label(_("No run matches the filters.")).mark("no-runs")
+            ui.label(_("No run matches the filters.") if result.filtered else _("No run yet.")).mark("no-runs")
             return
         first = (result.page - 1) * PAGE_SIZE + 1
         last = first + len(result.runs) - 1

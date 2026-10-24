@@ -146,7 +146,7 @@ async def test_a_new_service_has_no_channels_and_no_refresh(user, fake_starter):
 
     assert text_of(user, "lists-refreshed") == "The lists were never refreshed."
     assert text_of(user, "channels-summary") == "0 of 0 channels"
-    assert text_of(user, "no-channels") == "No channel matches the filters."
+    assert text_of(user, "no-channels") == "No channel is stored yet. Press Refresh lists."
     assert channel_ids(user) == []
     # A page load starts no child.
     assert fake_starter.calls == []
@@ -250,6 +250,7 @@ async def test_a_filter_without_matches_says_so(user, stored_channels):
     set_value(user, "filter-text", "nothing like this")
 
     await eventually(lambda: element_of(user, "no-channels").visible, "The message that no channel matches")
+    assert text_of(user, "no-channels") == "No channel matches the filters."
     assert text_of(user, "channels-summary") == "0 of 4 channels"
 
 
