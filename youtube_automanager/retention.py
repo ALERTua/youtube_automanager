@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import ColumnElement, delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.db import affected_rows
@@ -39,6 +39,12 @@ class CleanupResult:
 def _is_valid_days(value: object) -> bool:
     # A bool is an int in Python, but True is not a number of days.
     return isinstance(value, int) and not isinstance(value, bool) and value >= MIN_RETENTION_DAYS
+
+
+def _old_run(days: int, now: datetime | None) -> ColumnElement[bool]:
+    """The condition of a run that the cleanup deletes: it started more than ``days`` days before ``now``."""
+    cutoff = (now or utc_now()) - timedelta(days=days)
+    return (Run.started_at < cutoff) & (Run.status != RunStatus.RUNNING)
 
 
 def get_retention_days(sessions: sessionmaker[Session]) -> int:
@@ -78,12 +84,22 @@ def delete_old_runs(sessions: sessionmaker[Session], days: int, now: datetime | 
     A run with the status ``running`` stays, however old it is. The actions go first and in the same transaction as
     their runs, so the result does not depend on the cascade of the foreign key.
     """
-    cutoff = (now or utc_now()) - timedelta(days=days)
-    old = (Run.started_at < cutoff) & (Run.status != RunStatus.RUNNING)
+    old = _old_run(days, now)
     with sessions.begin() as session:
         actions = session.execute(delete(RunAction).where(RunAction.run_id.in_(select(Run.id).where(old))))
         runs = session.execute(delete(Run).where(old))
         return CleanupResult(runs=affected_rows(runs), actions=affected_rows(actions))
+
+
+def runs_lost_by_retention(sessions: sessionmaker[Session], days: int, now: datetime | None = None) -> int:
+    """Return how many runs the next cleanup deletes after the retention changes to ``days``. This call blocks.
+
+    A value that is not smaller than the stored one deletes nothing that the stored one keeps, so it gives 0.
+    """
+    if days >= get_retention_days(sessions):
+        return 0
+    with sessions() as session:
+        return session.scalar(select(func.count()).select_from(Run).where(_old_run(days, now))) or 0
 
 
 def delete_old_added_videos(sessions: sessionmaker[Session], now: datetime | None = None) -> int:

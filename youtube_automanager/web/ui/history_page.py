@@ -18,10 +18,23 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.db.models import Run, RunAction, RunActionKind, RunStatus, RunTrigger
 from youtube_automanager.i18n import N_, _
-from youtube_automanager.retention import MIN_RETENTION_DAYS, get_retention_days, set_retention_days
+from youtube_automanager.retention import (
+    MIN_RETENTION_DAYS,
+    get_retention_days,
+    runs_lost_by_retention,
+    set_retention_days,
+)
 from youtube_automanager.scheduler import CLEANUP_HOUR, CLEANUP_MINUTE
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import RUN_STATUSES, RUN_TRIGGERS, column, format_time, stored_timezone
+from youtube_automanager.web.ui.common import (
+    RUN_STATUSES,
+    RUN_TRIGGERS,
+    busy,
+    column,
+    confirm,
+    format_time,
+    stored_timezone,
+)
 from youtube_automanager.web.ui.dates import today_button
 from youtube_automanager.web.ui.layout import register_page
 
@@ -351,7 +364,25 @@ async def history_page(services: Services) -> None:
             retention_error.set_visibility(True)
             return
         retention_error.set_visibility(False)
-        await asyncio.to_thread(set_retention_days, services.sessions, days)
+        # The button stays off while the question is open, so a second click opens no second question.
+        with busy(save_button):
+            lost = await asyncio.to_thread(runs_lost_by_retention, services.sessions, days)
+            # A smaller value makes the next cleanup delete runs, so the person sees how many before the save.
+            if lost:
+                confirmed = await confirm(
+                    _("Keep the history for {days} days?").format(days=days),
+                    _("Save"),
+                    marker="retention",
+                    detail=_(
+                        "The next cleanup deletes {count} runs that are older. "
+                        "It runs at the start of the service and each day at {time} ({zone})."
+                    ).format(count=lost, time=f"{CLEANUP_HOUR:02d}:{CLEANUP_MINUTE:02d}", zone=first_page.timezone),
+                    color="negative",
+                    classes="max-w-lg",
+                )
+                if not confirmed:
+                    return
+            await asyncio.to_thread(set_retention_days, services.sessions, days)
         ui.notify(_("The retention is saved."), type="positive")
 
     @ui.refreshable
@@ -478,7 +509,7 @@ async def history_page(services: Services) -> None:
                 .classes("w-56")
                 .mark("retention-days")
             )
-            ui.button(_("Save"), icon="save", on_click=save_retention).mark("retention-save")
+            save_button = ui.button(_("Save"), icon="save", on_click=save_retention).mark("retention-save")
         retention_error = ui.label().classes("text-negative").mark("retention-error")
         retention_error.set_visibility(False)
         ui.label(

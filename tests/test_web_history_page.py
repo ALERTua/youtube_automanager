@@ -712,17 +712,105 @@ async def test_a_wrong_retention_shows_the_error_and_stores_nothing(user, sessio
     assert stored_retention(sessions) == 1
 
 
-async def test_saving_the_retention_deletes_no_run_by_itself(user, sessions):
-    store(sessions, run(1, started_at=datetime(2020, 1, 1, tzinfo=UTC)))
+def old_runs(*numbers: int) -> list[Run]:
+    """Succeeded runs from 2020, older than each retention that a test sets."""
+    return [run(number, started_at=datetime(2020, 1, 1, tzinfo=UTC)) for number in numbers]
+
+
+def stored_run_ids(sessions) -> list[int]:
+    with sessions() as session:
+        return sorted(session.scalars(select(Run.id)).all())
+
+
+def question_texts(user) -> list[str]:
+    return [
+        element.text for element in element_of(user, "retention-dialog").descendants() if isinstance(element, ui.label)
+    ]
+
+
+async def test_a_smaller_retention_asks_with_the_number_of_runs_that_go(user, sessions):
+    store(sessions, *old_runs(1, 2, 3), run(4, started_at=datetime.now(UTC)))
     await user.open("/history")
 
-    set_value(user, "retention-days", 1)
+    set_value(user, "retention-days", 30)
     user.find(marker="retention-save").click()
-    await user.should_see("The retention is saved.")
 
-    # The service deletes the old runs at its start and each day, so a typing error does not lose the history.
-    with sessions() as session:
-        assert session.scalars(select(Run.id)).all() == [1]
+    await user.should_see(marker="retention-confirm")
+    assert question_texts(user) == [
+        "Keep the history for 30 days?",
+        (
+            "The next cleanup deletes 3 runs that are older. "
+            "It runs at the start of the service and each day at 03:30 (Europe/Kyiv)."
+        ),
+    ]
+    assert element_of(user, "retention-confirm").text == "Save"
+    assert element_of(user, "retention-confirm").props["color"] == "negative"
+    # The question waits: nothing is stored yet.
+    assert stored_retention(sessions) is None
+    assert not user.notify.contains("The retention is saved.")
+
+
+async def test_cancel_of_the_question_writes_nothing(user, sessions):
+    store(sessions, *old_runs(1))
+    await user.open("/history")
+    set_value(user, "retention-days", 30)
+    user.find(marker="retention-save").click()
+    await user.should_see(marker="retention-cancel")
+
+    user.find(marker="retention-cancel").click()
+
+    await eventually(lambda: not elements_of(user, "retention-dialog"), "The close of the question")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert stored_retention(sessions) is None
+    assert stored_run_ids(sessions) == [1]
+    assert not user.notify.contains("The retention is saved.")
+    # The button works again, and the number in the field stays for another try.
+    assert element_of(user, "retention-save").enabled
+    assert element_of(user, "retention-days").value == 30
+
+
+async def test_save_of_the_question_stores_the_retention_and_deletes_no_run_by_itself(user, sessions):
+    store(sessions, *old_runs(1))
+    await user.open("/history")
+    set_value(user, "retention-days", 30)
+    user.find(marker="retention-save").click()
+    await user.should_see(marker="retention-confirm")
+
+    user.find(marker="retention-confirm").click()
+
+    await user.should_see("The retention is saved.")
+    assert stored_retention(sessions) == 30
+    await eventually(lambda: not elements_of(user, "retention-dialog"), "The close of the question")
+    # The service deletes the old runs at its start and each day, so the question tells the truth.
+    assert stored_run_ids(sessions) == [1]
+
+
+async def test_a_smaller_retention_without_old_runs_saves_at_once(user, sessions):
+    store(sessions, run(1, started_at=datetime.now(UTC)))
+    await user.open("/history")
+
+    set_value(user, "retention-days", 30)
+    user.find(marker="retention-save").click()
+
+    await user.should_see("The retention is saved.")
+    assert stored_retention(sessions) == 30
+    assert not elements_of(user, "retention-dialog")
+
+
+async def test_a_larger_or_equal_retention_saves_at_once_also_with_old_runs(user, sessions):
+    store(sessions, *old_runs(1), Setting(key="history_retention_days", value=30))
+    await user.open("/history")
+
+    set_value(user, "retention-days", 365)
+    user.find(marker="retention-save").click()
+    await eventually(lambda: stored_retention(sessions) == 365, "The save of the larger value")
+    assert not elements_of(user, "retention-dialog")
+
+    set_value(user, "retention-days", 365.0)
+    user.find(marker="retention-save").click()
+    await eventually(lambda: stored_retention(sessions) == 365 and len(user.notify.messages) == 2, "The equal save")
+    assert not elements_of(user, "retention-dialog")
+    assert stored_run_ids(sessions) == [1]
 
 
 async def test_each_text_of_the_history_page_goes_through_the_translation(

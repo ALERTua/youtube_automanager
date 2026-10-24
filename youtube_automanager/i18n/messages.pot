@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-26 09:59+0200\n"
+"POT-Creation-Date: 2026-10-26 10:00+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -589,6 +589,11 @@ msgstr ""
 
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "Interval in seconds"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid "Keep the history for {days} days?"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -1226,6 +1231,13 @@ msgstr ""
 msgid ""
 "The login cookies of this export expired on {time}. Export new cookies "
 "and upload them."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid ""
+"The next cleanup deletes {count} runs that are older. It runs at the "
+"start of the service and each day at {time} ({zone})."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
