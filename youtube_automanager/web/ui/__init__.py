@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI
+from nicegui import app as nicegui_app
 from nicegui import ui
 
 from youtube_automanager.i18n import _
@@ -23,6 +24,7 @@ from youtube_automanager.web.ui import history_page  # noqa: F401
 from youtube_automanager.web.ui import settings_page  # noqa: F401
 
 # isort: on
+from youtube_automanager.web.ui.errors import notify_failure
 from youtube_automanager.web.ui.layout import Page, frame, pages
 from youtube_automanager.web.ui.theme import read_theme
 
@@ -47,5 +49,8 @@ def mount_ui(app: FastAPI) -> None:
     """
     for page in pages():
         ui.page(page.path)(_page_function(page, app))
+    # NiceGUI logs the exception of a page handler with its trace, and this handler tells the user of the page. The reset
+    # of NiceGUI between two tests removes each added handler, so the handlers do not pile up.
+    nicegui_app.on_exception(notify_failure)
     # None is the auto mode of Quasar, which follows the system of the device until a page sets the stored theme.
     ui.run_with(app, title=_("YouTube AutoManager"), show_welcome_message=False, dark=None)

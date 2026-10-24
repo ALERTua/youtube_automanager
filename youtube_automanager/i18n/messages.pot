@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-24 18:39+0300\n"
+"POT-Creation-Date: 2026-10-24 20:46+0300\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -988,6 +988,12 @@ msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Skipped version"
+msgstr ""
+
+#: youtube_automanager/web/ui/errors.py
+msgid ""
+"Something went wrong on this page. The log of the service holds the "
+"details."
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
