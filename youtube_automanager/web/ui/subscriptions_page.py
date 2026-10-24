@@ -28,11 +28,12 @@ from youtube_automanager.channel_actions import (
     subscribe_in_child,
     unsubscribe_in_child,
 )
-from youtube_automanager.db.models import Channel, Rule, RuleChannel, Schedule
+from youtube_automanager.db.models import Channel, Rule, RuleChannel
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
+from youtube_automanager.web.ui.common import busy, column, read_timezone
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day
 from youtube_automanager.web.ui.layout import register_page
 
@@ -189,8 +190,7 @@ def add_to_rule(
 
     The day is a day in the time zone of the schedule. This call blocks.
     """
-    with sessions() as session:
-        timezone = session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
+    timezone = read_timezone(sessions, default_timezone)
     return add_channel_to_rule(
         sessions,
         rule_id,
@@ -259,25 +259,21 @@ def found_row(found: FoundChannel, stored: ChannelRecord | None) -> dict:
     }
 
 
-def _column(name: str, label: str) -> dict:
-    return {"name": name, "label": label, "field": name, "align": "left"}
-
-
 def channel_columns() -> list[dict]:
     return [
-        _column("title", _("Channel")),
-        _column("handle", _("Handle")),
-        _column("subscribed", _("Subscribed")),
-        _column("rules", _("Rules")),
+        column("title", _("Channel")),
+        column("handle", _("Handle")),
+        column("subscribed", _("Subscribed")),
+        column("rules", _("Rules")),
     ]
 
 
 def found_columns() -> list[dict]:
     return [
-        _column("title", _("Channel")),
-        _column("handle", _("Handle")),
-        _column("subscribers", _("Subscribers")),
-        _column("subscribed", _("Subscribed")),
+        column("title", _("Channel")),
+        column("handle", _("Handle")),
+        column("subscribers", _("Subscribers")),
+        column("subscribed", _("Subscribed")),
     ]
 
 
@@ -333,20 +329,16 @@ async def subscriptions_page(services: Services) -> None:
             state.found, state.search_error = None, _("Enter a name, an @handle, a channel ID or a channel URL.")
             results_view.refresh()
             return
-        search_button.props("loading")
-        search_button.disable()
-        try:
-            found = await asyncio.to_thread(find_channels_in_child, services.runner, query)
-        except ChildError as error:
-            LOG.warning("The channel search failed: %s", error)
-            state.found = None
-            state.search_error = _("The search failed. {reason}").format(reason=child_error_text(error))
-        else:
-            state.found, state.search_error = found, None
-            state.found_by_id = {channel.channel_id: channel for channel in found}
-        finally:
-            search_button.props(remove="loading")
-            search_button.enable()
+        with busy(search_button):
+            try:
+                found = await asyncio.to_thread(find_channels_in_child, services.runner, query)
+            except ChildError as error:
+                LOG.warning("The channel search failed: %s", error)
+                state.found = None
+                state.search_error = _("The search failed. {reason}").format(reason=child_error_text(error))
+            else:
+                state.found, state.search_error = found, None
+                state.found_by_id = {channel.channel_id: channel for channel in found}
         results_view.refresh()
 
     def open_channel(event) -> None:

@@ -34,6 +34,7 @@ from youtube_automanager.runner import SessionCheckOutcome, SessionCheckResult
 from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildUnavailable
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text
+from youtube_automanager.web.ui.common import SESSION_STATES, ResultLabel, format_time
 from youtube_automanager.web.ui.cookie_upload import (
     COMPOSE_KEY_COMMAND,
     KEY_COMMAND,
@@ -43,7 +44,7 @@ from youtube_automanager.web.ui.cookie_upload import (
     missing_login_cookies,
     normalized,
 )
-from youtube_automanager.web.ui.dashboard import SESSION_STATES, StoredState, format_time, read_stored_state
+from youtube_automanager.web.ui.dashboard import StoredState, read_stored_state
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.notifications_section import notifications_section
 from youtube_automanager.web.ui.service_settings import (
@@ -206,10 +207,10 @@ async def _cookies_section(services: Services) -> None:
     state = CookieState(await asyncio.to_thread(read_stored_state, services.sessions, services.settings.tz))
 
     def show_result(text: str, *, problem: bool = False) -> None:
-        result_label.classes(remove="text-negative")
         if problem:
-            result_label.classes(add="text-negative")
-        result_label.set_text(text)
+            result_label.problem(text)
+        else:
+            result_label.ok(text)
 
     def show_work() -> None:
         """Turn the controls on and off for the work of this moment."""
@@ -347,7 +348,7 @@ async def _cookies_section(services: Services) -> None:
         check_button = ui.button(_("Check the session"), icon="verified_user", on_click=check_session).mark(
             "check-session"
         )
-        result_label = ui.label().classes("whitespace-pre-wrap").mark("cookie-result")
+        result_label = ResultLabel().classes("whitespace-pre-wrap").mark("cookie-result")
         if cipher is None:
             _key_help(key_error)
         with ui.expansion(_("How to export the cookies"), icon="help_outline").classes("w-full").mark("export-help"):

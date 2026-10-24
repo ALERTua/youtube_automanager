@@ -13,36 +13,20 @@ from nicegui import ui
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from youtube_automanager.db.models import Account, Run, RunStatus, RunTrigger, Schedule, SessionState
+from youtube_automanager.db.models import Account, Run, RunStatus, RunTrigger, SessionState
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.scheduler import SchedulerState
 from youtube_automanager.web.services import Services
+from youtube_automanager.web.ui.common import RUN_STATUSES, RUN_TRIGGERS, SESSION_STATES, format_time, stored_timezone
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.youtube.ytdlp_updater import Source, active_version
 
 REFRESH_SECONDS = 10.0
-TIME_FORMAT = "%Y-%m-%d %H:%M %Z"
 
-SESSION_STATES = {
-    SessionState.UNKNOWN: (N_("Unknown"), "grey"),
-    SessionState.OK: (N_("OK"), "positive"),
-    SessionState.EXPIRING: (N_("Expiring"), "warning"),
-    SessionState.DEAD: (N_("Dead"), "negative"),
-}
 SCHEDULER_STATES = {
     SchedulerState.RUNNING: (N_("Running"), "positive"),
     SchedulerState.PAUSED: (N_("Paused"), "warning"),
     SchedulerState.STOPPED: (N_("Stopped"), "negative"),
-}
-RUN_STATUSES = {
-    RunStatus.RUNNING: (N_("In progress"), "info"),
-    RunStatus.SUCCEEDED: (N_("Succeeded"), "positive"),
-    RunStatus.FAILED: (N_("Failed"), "negative"),
-}
-RUN_TRIGGERS = {
-    RunTrigger.SCHEDULE: N_("Schedule"),
-    RunTrigger.MANUAL: N_("Manual"),
-    RunTrigger.RULE_APPLY: N_("Rule apply"),
 }
 YTDLP_SOURCES: dict[Source, str] = {
     "data_folder": N_("Data folder"),
@@ -101,7 +85,7 @@ def read_stored_state(sessions: sessionmaker[Session], default_timezone: str) ->
             .limit(1)
         ).first()
         run = session.scalars(select(Run).order_by(Run.started_at.desc(), Run.id.desc()).limit(1)).first()
-        timezone = session.scalar(select(Schedule.timezone).where(Schedule.id == 1))
+        timezone = stored_timezone(session, default_timezone)
         return StoredState(
             session=(
                 CookieSession(account.session_state, account.last_checked_at, account.earliest_cookie_expiry)
@@ -113,7 +97,7 @@ def read_stored_state(sessions: sessionmaker[Session], default_timezone: str) ->
                 if run is not None
                 else None
             ),
-            timezone=timezone or default_timezone,
+            timezone=timezone,
         )
 
 
@@ -131,10 +115,6 @@ async def take_snapshot(services: Services) -> Snapshot:
         ytdlp_version=ytdlp_version,
         ytdlp_source=ytdlp_source,
     )
-
-
-def format_time(value: datetime, zone: ZoneInfo) -> str:
-    return value.astimezone(zone).strftime(TIME_FORMAT)
 
 
 def _field(label: str) -> ui.element:

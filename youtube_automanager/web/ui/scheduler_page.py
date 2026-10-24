@@ -13,11 +13,9 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, available_timezones
 
 from nicegui import ui
-from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager import notify
-from youtube_automanager.db.models import Schedule, ScheduleKind
+from youtube_automanager.db.models import ScheduleKind
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.scheduler import (
     MAX_INTERVAL_S,
@@ -31,7 +29,8 @@ from youtube_automanager.scheduler import (
     upcoming_run_times,
 )
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.dashboard import SCHEDULER_STATES, format_time
+from youtube_automanager.web.ui.common import format_time, read_timezone
+from youtube_automanager.web.ui.dashboard import SCHEDULER_STATES
 from youtube_automanager.web.ui.layout import register_page
 
 REFRESH_SECONDS = 10.0
@@ -51,12 +50,6 @@ class Status:
     state: SchedulerState
     next_runs: list[datetime]
     timezone: str
-
-
-def read_timezone(sessions: sessionmaker[Session], default_timezone: str) -> str:
-    """Read the time zone of the schedule. This call blocks."""
-    with sessions() as session:
-        return session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
 
 
 async def take_status(services: Services) -> Status:
@@ -110,7 +103,8 @@ def _status_card(status: Status) -> None:
 @register_page("/scheduler", label=N_("Scheduler"), icon="schedule")
 async def scheduler_page(services: Services) -> None:
     spec = await asyncio.to_thread(load_schedule, services.sessions, services.settings.tz)
-    timezones = sorted({*available_timezones(), spec.timezone})
+    # The scan of the time zone files blocks, so it runs in a thread.
+    timezones = sorted({*await asyncio.to_thread(available_timezones), spec.timezone})
 
     def read_form() -> ScheduleSpec:
         """Return the schedule of the form. Raise ValueError when ``ScheduleSpec`` refuses it.
