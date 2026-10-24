@@ -374,9 +374,14 @@ async def history_page(services: Services) -> None:
                     _("Save"),
                     marker="retention",
                     detail=_(
-                        "The next cleanup deletes {count} runs that are older. "
+                        "Runs that started more than {days} days ago: {count}. The next cleanup deletes them. "
                         "It runs at the start of the service and each day at {time} ({zone})."
-                    ).format(count=lost, time=f"{CLEANUP_HOUR:02d}:{CLEANUP_MINUTE:02d}", zone=first_page.timezone),
+                    ).format(
+                        days=days,
+                        count=lost,
+                        time=f"{CLEANUP_HOUR:02d}:{CLEANUP_MINUTE:02d}",
+                        zone=first_page.timezone,
+                    ),
                     color="negative",
                     classes="max-w-lg",
                 )

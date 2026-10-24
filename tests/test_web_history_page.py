@@ -739,7 +739,7 @@ async def test_a_smaller_retention_asks_with_the_number_of_runs_that_go(user, se
     assert question_texts(user) == [
         "Keep the history for 30 days?",
         (
-            "The next cleanup deletes 3 runs that are older. "
+            "Runs that started more than 30 days ago: 3. The next cleanup deletes them. "
             "It runs at the start of the service and each day at 03:30 (Europe/Kyiv)."
         ),
     ]
@@ -756,6 +756,8 @@ async def test_cancel_of_the_question_writes_nothing(user, sessions):
     set_value(user, "retention-days", 30)
     user.find(marker="retention-save").click()
     await user.should_see(marker="retention-cancel")
+    # One run reads as well as three.
+    assert question_texts(user)[1].startswith("Runs that started more than 30 days ago: 1. The next cleanup")
 
     user.find(marker="retention-cancel").click()
 
