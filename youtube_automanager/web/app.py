@@ -19,6 +19,7 @@ from youtube_automanager.db.backup import backup_before_upgrade
 from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.retention import clean_history
 from youtube_automanager.rotation import CookieRotation
+from youtube_automanager.run_events import RunEvents
 from youtube_automanager.runner import ChildStarter, SyncRunner, mark_interrupted_runs, start_child
 from youtube_automanager.scheduler import Scheduler, load_schedule
 from youtube_automanager.settings import Settings, get_settings
@@ -59,13 +60,16 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
         try:
             sessions = make_session_factory(engine)
             spec = await asyncio.to_thread(load_schedule, sessions, settings.tz)
+            # No run is active after this, so the events of the runs start with no poll.
             await asyncio.to_thread(mark_interrupted_runs, sessions)
+            run_events = RunEvents(sessions, asyncio.get_running_loop())
             runner = SyncRunner(
                 sessions,
                 ytdlp_dir=settings.ytdlp_dir,
                 database_url=settings.database_url,
                 child_timeout_s=settings.child_timeout_s,
                 start=start,
+                listener=run_events,
             )
             # The scheduler runs the cleanup of the old history once now, and then each day.
             scheduler = Scheduler(runner, cleanup=functools.partial(clean_history, sessions))
@@ -77,13 +81,15 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
             ytdlp = YtdlpUpdates(sessions, runner, settings.ytdlp_dir, install=update_ytdlp, smoke=smoke)
             ytdlp_settings = await asyncio.to_thread(read_ytdlp_settings, sessions)
             await scheduler.start_ytdlp_updates(ytdlp.run_scheduled, ytdlp_settings.at, ytdlp_settings.enabled)
-            app.state.services = Services(settings, engine, sessions, runner, scheduler, ytdlp)
+            app.state.services = Services(settings, engine, sessions, runner, scheduler, ytdlp, run_events)
             try:
                 yield
             finally:
                 # The runner stops first, so the scheduler starts no new run and has no job in a thread at its shutdown.
                 await asyncio.to_thread(runner.stop, STOP_TIMEOUT_SECONDS)
                 await scheduler.shutdown()
+                # No poll task and no read of the progress in a thread outlive the service.
+                await run_events.close()
         finally:
             engine.dispose()
             LOG.info("The service stopped")

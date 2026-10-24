@@ -6,6 +6,7 @@ from fastapi import Request
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from youtube_automanager.run_events import RunEvents
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.scheduler import Scheduler
 from youtube_automanager.settings import Settings
@@ -20,6 +21,8 @@ class Services:
     runner: SyncRunner
     scheduler: Scheduler
     ytdlp: YtdlpUpdates
+    # The start, the progress and the end of each run, as NiceGUI events.
+    run_events: RunEvents
 
 
 def get_services(request: Request) -> Services:

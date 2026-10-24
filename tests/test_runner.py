@@ -440,6 +440,114 @@ def test_abandon_fails_the_run_and_releases_the_lock(runner, fake_starter, db_se
     assert not runner.is_active()
 
 
+class FakeListener:
+    """Records each call of the listener of the runs with the thread that made it, and raises ``error`` when set."""
+
+    def __init__(self, error=None):
+        self.calls = []
+        self.error = error
+
+    def run_started(self, run_id, trigger):
+        self._record("started", run_id, trigger)
+
+    def run_finished(self, run_id, status):
+        self._record("finished", run_id, status)
+
+    def _record(self, name, run_id, value):
+        self.calls.append((name, run_id, value, threading.get_ident()))
+        if self.error is not None:
+            raise self.error
+
+
+def test_listener_learns_the_start_and_the_end_from_the_threads_of_the_run(make_runner, fake_starter):
+    listener = FakeListener()
+    runner = make_runner(listener=listener)
+    fake_starter.plan.append({"exit_code": 1, "stderr": "the cause\n"})
+    threads = {}
+
+    def claim():
+        threads["claim"] = threading.get_ident()
+        threads["run_id"] = runner.claim(RunTrigger.SCHEDULE)
+
+    def execute():
+        threads["execute"] = threading.get_ident()
+        runner.execute(threads["run_id"])
+
+    for target in (claim, execute):
+        thread = threading.Thread(target=target)
+        thread.start()
+        thread.join(WAIT_SECONDS)
+
+    run_id = threads["run_id"]
+    assert listener.calls == [
+        ("started", run_id, RunTrigger.SCHEDULE, threads["claim"]),
+        ("finished", run_id, RunStatus.FAILED, threads["execute"]),
+    ]
+
+
+def test_listener_learns_the_end_of_an_abandoned_run(make_runner):
+    listener = FakeListener()
+    runner = make_runner(listener=listener)
+
+    run_id = runner.claim(RunTrigger.MANUAL)
+    runner.abandon(run_id, "cannot start")
+
+    assert [call[:3] for call in listener.calls] == [
+        ("started", run_id, RunTrigger.MANUAL),
+        ("finished", run_id, RunStatus.FAILED),
+    ]
+
+
+def test_a_failed_listener_does_not_change_the_run(make_runner, db_sessions, caplog):
+    runner = make_runner(listener=FakeListener(error=RuntimeError("the page is gone")))
+
+    run_id = runner.claim(RunTrigger.MANUAL)
+    assert run_id is not None
+    assert runner.execute(run_id) is RunStatus.SUCCEEDED
+
+    (run,) = read_runs(db_sessions)
+    assert (run.status, run.error_text) == (RunStatus.SUCCEEDED, None)
+    assert not runner.is_active()
+    failures = [record for record in caplog.records if record.message.endswith("the listener of the runs failed")]
+    assert [record.message for record in failures] == [f"Run {run_id}: the listener of the runs failed"] * 2
+    # Each failure keeps its trace in the log.
+    assert all(record.exc_info is not None and record.exc_info[0] is RuntimeError for record in failures)
+
+
+def test_listener_learns_the_end_of_a_run_whose_row_is_gone(make_runner, db_sessions, caplog):
+    listener = FakeListener()
+    runner = make_runner(listener=listener)
+    run_id = runner.claim(RunTrigger.MANUAL)
+    with db_sessions.begin() as session:
+        session.delete(session.get(Run, run_id))
+
+    runner.execute(run_id)
+
+    assert listener.calls[-1][:3] == ("finished", run_id, RunStatus.SUCCEEDED)
+    assert f"Run {run_id} is not in the database, so its result is lost" in caplog.text
+
+
+def test_listener_learns_the_end_of_a_run_whose_write_fails(make_runner, db_sessions, monkeypatch):
+    listener = FakeListener()
+    runner = make_runner(listener=listener)
+    run_id = runner.claim(RunTrigger.MANUAL)
+    assert run_id is not None
+
+    def locked():
+        raise RuntimeError("database is locked")
+
+    # The end time comes inside the write of the end, so the write fails as on a locked database.
+    monkeypatch.setattr(runner_module, "utc_now", locked)
+    with pytest.raises(RuntimeError, match="database is locked"):
+        runner.execute(run_id)
+
+    # The listener gets the status that the runner meant to write, and the row keeps its old state.
+    assert listener.calls[-1][:3] == ("finished", run_id, RunStatus.SUCCEEDED)
+    (run,) = read_runs(db_sessions)
+    assert run.status is RunStatus.RUNNING
+    assert not runner.is_active()
+
+
 def test_mark_interrupted_runs(db_sessions):
     first = store_run(db_sessions, status=RunStatus.RUNNING, trigger=RunTrigger.SCHEDULE)
     done = store_run(db_sessions, status=RunStatus.SUCCEEDED, trigger=RunTrigger.MANUAL)

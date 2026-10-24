@@ -212,6 +212,19 @@ def _forward_stderr(stream: Iterable[str], tail: collections.deque[str]) -> None
         LOG.warning("Cannot read the stderr of the sync process: %s", error)
 
 
+class RunListener(Protocol):
+    """Learns when a run starts and when it ends.
+
+    The runner calls it from the thread of the run, after the write of the ``run`` row. A failed call does not change
+    the run. ``run_started`` of a run always comes before its ``run_finished``. ``run_finished`` comes also when the
+    write of the end fails, with the status that the runner meant to write, so a reader of the result reads the row.
+    """
+
+    def run_started(self, run_id: int, trigger: RunTrigger) -> None: ...
+
+    def run_finished(self, run_id: int, status: RunStatus) -> None: ...
+
+
 class SyncRunner:
     """Starts the sync runs, one at a time, and writes their ``run`` rows."""
 
@@ -225,10 +238,13 @@ class SyncRunner:
         start: ChildStarter = start_child,
         lock: threading.Lock = SYNC_LOCK,
         send: Callable[[notify.Notification], object] | None = None,
+        listener: RunListener | None = None,
     ):
-        """``send`` sends a notification. By default it sends to the targets of the database."""
+        """``send`` sends a notification. By default it sends to the targets of the database. ``listener`` learns the
+        start and the end of each run."""
         self._sessions = sessions
         self._send = send or functools.partial(notify.send_to_stored_targets, sessions)
+        self._listener = listener
         self._ytdlp_dir = ytdlp_dir
         self._database_url = database_url
         self._child_timeout_s = child_timeout_s
@@ -263,6 +279,7 @@ class SyncRunner:
             self._lock.release()
             raise
         LOG.info("Run %s started by %s", run_id, trigger.value)
+        self._tell_listener(run_id, lambda listener: listener.run_started(run_id, trigger))
         return run_id
 
     def execute(self, run_id: int, command: Sequence[str] | None = None) -> RunStatus:
@@ -499,15 +516,29 @@ class SyncRunner:
             last_line=lines[-1] if lines else "",
         )
 
+    def _tell_listener(self, run_id: int, call: Callable[[RunListener], None]) -> None:
+        """Call the listener of the runs, if any. A failed listener must never change the run."""
+        if self._listener is None:
+            return
+        try:
+            call(self._listener)
+        except Exception:
+            LOG.exception("Run %s: the listener of the runs failed", run_id)
+
     def _finish(self, run_id: int, status: RunStatus, error_text: str | None) -> None:
-        with self._sessions.begin() as session:
-            run = session.get(Run, run_id)
-            if run is None:
-                LOG.error("Run %s is not in the database, so its result is lost", run_id)
-                return
-            run.status = status
-            run.finished_at = utc_now()
-            run.error_text = error_text
+        try:
+            with self._sessions.begin() as session:
+                run = session.get(Run, run_id)
+                if run is None:
+                    LOG.error("Run %s is not in the database, so its result is lost", run_id)
+                    return
+                run.status = status
+                run.finished_at = utc_now()
+                run.error_text = error_text
+        finally:
+            # The run ended also when its row is gone or the write failed, so the listener learns the end in each case,
+            # and before the notification, which can take seconds.
+            self._tell_listener(run_id, lambda listener: listener.run_finished(run_id, status))
         if status is RunStatus.SUCCEEDED:
             LOG.info("Run %s succeeded", run_id)
             return
