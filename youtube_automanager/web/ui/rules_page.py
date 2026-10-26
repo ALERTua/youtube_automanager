@@ -11,30 +11,37 @@ run of the history.
 """
 
 import asyncio
-import functools
 import json
 import logging
 import math
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from nicegui import ui
-from sqlalchemy import delete, func, select
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.orm.attributes import flag_modified
 
-from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, RunStatus, utc_now
+from youtube_automanager.db.models import RunStatus
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.rule_actions import AppliedRun, apply_in_child, preview_in_child
-from youtube_automanager.runner import RunAlreadyActive, SyncRunner
+from youtube_automanager.rules_store import (
+    ChannelChoice,
+    RuleDraft,
+    RuleRecord,
+    Stored,
+    delete_rule,
+    read_stored,
+    save_rule,
+    validate_name,
+    validate_playlist,
+)
+from youtube_automanager.runner import RunAlreadyActive
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
-from youtube_automanager.web.ui.common import busy, column, confirm, format_time, stored_timezone
+from youtube_automanager.web.ui.common import busy, column, confirm, format_time
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day, today_button, today_in
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
@@ -108,72 +115,6 @@ MARK_CELL = """
 
 
 @dataclass(frozen=True)
-class ChannelChoice:
-    channel_id: str
-    title: str
-    handle: str | None
-    is_subscribed: bool
-
-
-@dataclass(frozen=True)
-class PlaylistChoice:
-    playlist_id: str
-    title: str
-    is_own: bool
-
-
-@dataclass(frozen=True)
-class RuleRecord:
-    id: int
-    name: str
-    enabled: bool
-    condition: Any
-    playlist_id: str
-    no_shorts: bool
-    # In the order of the channel titles.
-    channel_ids: tuple[str, ...]
-    updated_at: datetime
-    # The first day of the older videos that the next run also adds. None when the rule has no catch-up.
-    catch_up_since: date | None = None
-
-
-@dataclass(frozen=True)
-class Stored:
-    """The rules, and the stored copy of the channels and the playlists of the account."""
-
-    # In the order of the evaluation.
-    rules: list[RuleRecord]
-    # By id, in the order of the titles.
-    channels: dict[str, ChannelChoice]
-    playlists: dict[str, PlaylistChoice]
-    timezone: str
-
-    def rule(self, rule_id: int) -> RuleRecord | None:
-        return next((rule for rule in self.rules if rule.id == rule_id), None)
-
-    @functools.cached_property
-    def channel_titles(self) -> dict[str, str]:
-        return {channel.channel_id: channel.title for channel in self.channels.values()}
-
-    def playlist_title(self, playlist_id: str) -> str:
-        playlist = self.playlists.get(playlist_id)
-        return playlist.title if playlist else playlist_id
-
-
-@dataclass(frozen=True)
-class RuleDraft:
-    """A rule as the editor saves it."""
-
-    name: str
-    enabled: bool
-    channel_ids: tuple[str, ...]
-    playlist_id: str
-    no_shorts: bool
-    condition: Any
-    catch_up_since: date | None = None
-
-
-@dataclass(frozen=True)
 class RuleFilter:
     # A part of the rule name, or of the title or the handle of a rule channel. The case does not count.
     text: str = ""
@@ -194,88 +135,6 @@ class RuleFilter:
             if channel is not None:
                 texts.extend(text for text in (channel.title, channel.handle) if text)
         return any(needle in text.casefold() for text in texts)
-
-
-def read_stored(sessions: sessionmaker[Session], default_timezone: str) -> Stored:
-    """Read the rules with their channels, the stored channels and playlists, and the time zone. This call blocks."""
-    with sessions() as session:
-        channels = sorted(session.scalars(select(Channel)), key=lambda row: (row.title.casefold(), row.channel_id))
-        order = {row.channel_id: index for index, row in enumerate(channels)}
-        links: dict[int, list[str]] = {}
-        for rule_id, channel_id in session.execute(select(RuleChannel.rule_id, RuleChannel.channel_id)):
-            links.setdefault(rule_id, []).append(channel_id)
-        rules = [
-            RuleRecord(
-                id=rule.id,
-                name=rule.name,
-                enabled=rule.enabled,
-                condition=rule.condition,
-                playlist_id=rule.target_playlist_id,
-                no_shorts=rule.no_shorts,
-                channel_ids=tuple(sorted(links.get(rule.id, ()), key=lambda channel_id: order.get(channel_id, 0))),
-                updated_at=rule.updated_at,
-                catch_up_since=rule.catch_up_since,
-            )
-            for rule in session.scalars(select(Rule).order_by(Rule.position, Rule.id))
-        ]
-        playlists = sorted(session.scalars(select(Playlist)), key=lambda row: (row.title.casefold(), row.playlist_id))
-        timezone = stored_timezone(session, default_timezone)
-        return Stored(
-            rules=rules,
-            channels={
-                row.channel_id: ChannelChoice(row.channel_id, row.title, row.handle, row.is_subscribed)
-                for row in channels
-            },
-            playlists={row.playlist_id: PlaylistChoice(row.playlist_id, row.title, row.is_own) for row in playlists},
-            timezone=timezone,
-        )
-
-
-def save_rule(sessions: sessionmaker[Session], rule_id: int | None, draft: RuleDraft) -> int | None:
-    """Create a rule when ``rule_id`` is None, else change it. Return the id of the rule. This call blocks.
-
-    A new rule goes to the end of the evaluation order. Return None when the rule to change does not exist any more.
-    """
-    with sessions.begin() as session:
-        if rule_id is None:
-            position = (session.scalar(select(func.max(Rule.position))) or 0) + 1
-            rule = Rule(position=position)
-            session.add(rule)
-        else:
-            rule = session.get(Rule, rule_id)
-            if rule is None:
-                return None
-        rule.name = draft.name
-        rule.enabled = draft.enabled
-        rule.target_playlist_id = draft.playlist_id
-        rule.no_shorts = draft.no_shorts
-        rule.condition = draft.condition
-        rule.catch_up_since = draft.catch_up_since
-        # The change tracking compares a JSON value with Python ==, which takes 1 for true. The save always writes the
-        # condition of the editor.
-        flag_modified(rule, "condition")
-        # Each save counts as a change of the rule, also a save that changes only its channels.
-        rule.updated_at = utc_now()
-        session.flush()
-        stored = set(session.scalars(select(RuleChannel.channel_id).where(RuleChannel.rule_id == rule.id)))
-        wanted = set(draft.channel_ids)
-        if stored - wanted:
-            session.execute(
-                delete(RuleChannel).where(RuleChannel.rule_id == rule.id, RuleChannel.channel_id.in_(stored - wanted))
-            )
-        session.add_all(RuleChannel(rule_id=rule.id, channel_id=channel_id) for channel_id in sorted(wanted - stored))
-        return rule.id
-
-
-def delete_rule(sessions: sessionmaker[Session], runner: SyncRunner, rule_id: int) -> None:
-    """Delete the rule. Its channel links go with it, and the history keeps its actions. This call blocks.
-
-    The delete holds the sync lock. A run writes the id of the rule with each video that it adds, so a rule that went
-    during the run would fail that write after YouTube already added the video. Raise ``RunAlreadyActive`` while a run,
-    a session check or a short child holds the lock.
-    """
-    with runner.lock_held(timeout=0), sessions.begin() as session:
-        session.execute(delete(Rule).where(Rule.id == rule_id))
 
 
 def yes_or_no(value: bool) -> str:
@@ -933,12 +792,10 @@ class RuleEditor:
 
     def read_draft(self) -> RuleDraft:
         """Return the rule of the form. Raise ValueError with a message for the user when the form cannot be saved."""
-        name = (self.name_input.value or "").strip()
-        if not name:
-            raise ValueError(_("Enter a name."))
-        playlist_id = self.playlist_select.value
-        if not playlist_id:
-            raise ValueError(_("Choose a target playlist."))
+        # The checks of the name and the playlist come first, as in validate_draft. The condition and the day come from
+        # the widgets, so their conversion errors come after.
+        name = validate_name(self.name_input.value)
+        playlist_id = validate_playlist(self.playlist_select.value)
         return RuleDraft(
             name=name,
             enabled=bool(self.enabled_switch.value),

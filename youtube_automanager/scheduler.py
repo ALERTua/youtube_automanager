@@ -22,6 +22,7 @@ from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.db.models import DEFAULT_CRON_EXPRESSION, RunTrigger, Schedule, ScheduleKind
@@ -256,6 +257,17 @@ def load_schedule(sessions: sessionmaker[Session], default_timezone: str) -> Sch
             )
             row.interval_s = MIN_INTERVAL_S
         return ScheduleSpec.from_row(row)
+
+
+def stored_timezone(session: Session, default_timezone: str) -> str:
+    """Read the time zone of the schedule in the open ``session``. This call blocks."""
+    return session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
+
+
+def read_timezone(sessions: sessionmaker[Session], default_timezone: str) -> str:
+    """Read the time zone of the schedule. This call blocks."""
+    with sessions() as session:
+        return stored_timezone(session, default_timezone)
 
 
 def save_schedule(sessions: sessionmaker[Session], spec: ScheduleSpec) -> None:
