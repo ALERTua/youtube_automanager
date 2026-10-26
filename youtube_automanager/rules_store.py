@@ -103,11 +103,13 @@ def validate_playlist(playlist_id: str | None) -> str:
 
 
 def validate_draft(draft: RuleDraft) -> None:
-    """Check a draft before a save, in the order of the editor: the name, the target playlist, the condition.
+    """Check a draft before a save, in this order: the name, the target playlist, the condition.
 
     Raise ValueError with a message for the user at the first check that fails, and ``RuleError``, a ValueError, when the
-    condition is no valid rule tree. The editor does the checks of its own widgets first, for example a leaf that is not
-    complete, and a caller that has no editor calls this function alone.
+    condition is no valid rule tree. The editor does not call this function. ``RuleEditor.read_draft`` calls
+    ``validate_name`` and ``validate_playlist`` first, in the same order, and then converts its widgets, which can
+    raise their own errors, for example a leaf that is not complete. A caller that has no editor calls this function
+    alone.
     """
     validate_name(draft.name)
     validate_playlist(draft.playlist_id)

@@ -593,6 +593,8 @@ async def test_a_rebuild_of_the_editor_keeps_a_wrong_duration(user, account_copy
     [
         ("", "WL", "Enter a name."),
         ("   ", "WL", "Enter a name."),
+        # Two errors at once: the name comes first.
+        ("", None, "Enter a name."),
         ("A rule", None, "Choose a target playlist."),
     ],
 )
