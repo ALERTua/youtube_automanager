@@ -3,11 +3,15 @@
 The table of the runs reads one page of ``PAGE_SIZE`` runs from the database at a time, newest first. A click on a
 run opens its actions below the table. The page reads and writes the database in a thread, never on the event loop.
 Each date shows in the time zone of the schedule, and a date filter counts whole days of that time zone.
+
+The page follows each run with no click. At the start and at the end of a run, it reads its page of runs again with its
+filters, so a new run shows at the top only when the filters and the page let it through. While a run runs, its row
+shows the new counts, and its open actions get the new actions.
 """
 
 import asyncio
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -24,6 +28,7 @@ from youtube_automanager.retention import (
     runs_lost_by_retention,
     set_retention_days,
 )
+from youtube_automanager.run_events import ActionItem, action_item
 from youtube_automanager.scheduler import CLEANUP_HOUR, CLEANUP_MINUTE
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.common import (
@@ -43,6 +48,7 @@ from youtube_automanager.web.ui.common import (
 )
 from youtube_automanager.web.ui.dates import today_button
 from youtube_automanager.web.ui.layout import register_page
+from youtube_automanager.web.ui.live_runs import RunFollower
 
 PAGE_SIZE = 50
 # The card of the actions of a run takes the focus when a run opens. This attribute marks it for the browser.
@@ -124,18 +130,6 @@ class RunRecord:
 
 
 @dataclass(frozen=True)
-class ActionRecord:
-    id: int
-    at: datetime
-    action: RunActionKind
-    video_id: str | None
-    channel_id: str | None
-    rule_id: int | None
-    playlist_id: str | None
-    detail: str | None
-
-
-@dataclass(frozen=True)
 class RunList:
     """One page of the runs that match a filter."""
 
@@ -153,7 +147,7 @@ class RunList:
 @dataclass(frozen=True)
 class RunDetail:
     run: RunRecord
-    actions: list[ActionRecord]
+    actions: list[ActionItem]
     kind: RunActionKind | None
     timezone: str
 
@@ -166,6 +160,11 @@ class PageState:
     # The number of the newest read. A read that finishes after a newer one started drops its result.
     runs_read: int = 0
     detail_read: int = 0
+    # What the page shows: the open run, the table of the runs and the table of the open actions. A progress of a run
+    # changes them in place.
+    detail: RunDetail | None = None
+    runs_table: ui.table | None = None
+    actions_table: ui.table | None = None
 
 
 def parse_day(text: str | None) -> date | None:
@@ -235,19 +234,7 @@ def read_run_detail(
         query = select(RunAction).where(RunAction.run_id == run_id).order_by(RunAction.at, RunAction.id)
         if kind is not None:
             query = query.where(RunAction.action == kind)
-        actions = [
-            ActionRecord(
-                action.id,
-                action.at,
-                action.action,
-                action.video_id,
-                action.channel_id,
-                action.rule_id,
-                action.playlist_id,
-                action.detail,
-            )
-            for action in session.scalars(query)
-        ]
+        actions = [action_item(action) for action in session.scalars(query)]
         return RunDetail(_run_record(run), actions, kind, stored_timezone(session, default_timezone))
 
 
@@ -266,7 +253,7 @@ def run_row(run: RunRecord, zone: ZoneInfo) -> dict:
     }
 
 
-def action_row(action: ActionRecord, zone: ZoneInfo) -> dict:
+def action_row(action: ActionItem, zone: ZoneInfo) -> dict:
     return {
         "id": action.id,
         "at": format_time(action.at, zone),
@@ -355,12 +342,56 @@ async def history_page(services: Services) -> None:
         if detail is None:
             # The run is gone, for example after a cleanup of the history.
             state.run_id = None
+        state.detail = detail
         details.refresh(detail)
 
     async def refresh() -> None:
         await load_runs()
         if state.run_id is not None:
             await show_run(state.run_id, state.action_kind)
+
+    async def reload_for_run(run_id: int, *_trigger_or_status: object) -> None:
+        # The read again with the filters and the page decides whether the run shows, and the row of the database holds
+        # the status that the run really has.
+        await load_runs()
+        if state.run_id == run_id:
+            await show_run(run_id, state.action_kind)
+
+    async def show_progress(run_id: int, added: int, seen: int, actions: tuple[ActionItem, ...]) -> None:
+        # Each change comes before the first await, so no read of the end of the run can come between. See RunFollower.
+        table = state.runs_table
+        if table is not None and not table.is_deleted:
+            for row in table.rows:
+                if row["id"] == run_id:
+                    row["added"], row["seen"] = added, seen
+                    table.update()
+                    break
+        detail = state.detail
+        if detail is None or detail.run.id != run_id:
+            return
+        # A read of the actions that ended after the poll can hold some of these actions already.
+        known = {action.id for action in detail.actions}
+        new = [
+            action
+            for action in actions
+            if action.id not in known and (detail.kind is None or action.action is detail.kind)
+        ]
+        if not new:
+            return
+        state.detail = replace(detail, actions=[*detail.actions, *new])
+        actions_table = state.actions_table
+        if actions_table is not None and not actions_table.is_deleted:
+            actions_table.add_rows([action_row(action, ZoneInfo(detail.timezone)) for action in new])
+        else:
+            # The panel said that the run has no actions, so it needs its table now.
+            await details.refresh(state.detail)
+
+    def live(run: RunRecord) -> RunRecord:
+        """Return ``run`` with the counts of its last progress, when it runs and its read is older."""
+        if run.status is not RunStatus.RUNNING:
+            return run
+        added, seen = follower.counts(run.id, run.added_count, run.seen_count)
+        return replace(run, added_count=added, seen_count=seen)
 
     async def filters_changed() -> None:
         await load_runs(page=1)
@@ -422,6 +453,7 @@ async def history_page(services: Services) -> None:
     @ui.refreshable
     def runs_view(result: RunList) -> None:
         zone = ZoneInfo(result.timezone)
+        state.runs_table = None
         if not result.runs:
             ui.label(_("No run matches the filters.") if result.filtered else _("No run yet.")).mark("no-runs")
             return
@@ -431,11 +463,12 @@ async def history_page(services: Services) -> None:
             "runs-summary"
         )
         table = (
-            ui.table(columns=run_columns(), rows=[run_row(run, zone) for run in result.runs], row_key="id")
+            ui.table(columns=run_columns(), rows=[run_row(live(run), zone) for run in result.runs], row_key="id")
             .props("flat bordered dense")
             .classes("w-full cursor-pointer")
             .mark("runs-table")
         )
+        state.runs_table = table
         table.add_slot("body-cell-status", STATUS_CELL)
         table.add_slot("body-cell-error", ERROR_CELL)
         # The run id is the only part of the click that the page needs.
@@ -452,6 +485,7 @@ async def history_page(services: Services) -> None:
 
     @ui.refreshable
     def details(detail: RunDetail | None) -> None:
+        state.actions_table = None
         if detail is None:
             return
         zone = ZoneInfo(detail.timezone)
@@ -491,7 +525,10 @@ async def history_page(services: Services) -> None:
             )
             table.add_slot("body-cell-video", VIDEO_CELL)
             table.add_slot("body-cell-detail", DETAIL_CELL)
+            state.actions_table = table
 
+    # The follower comes before the first read, so a run that starts during the read is not missed.
+    follower = RunFollower(services.run_events, started=reload_for_run, progress=show_progress, finished=reload_for_run)
     retention_days = await asyncio.to_thread(get_retention_days, services.sessions)
     first_page = await asyncio.to_thread(read_runs, services.sessions, RunFilter(), 1, services.settings.tz)
 
@@ -552,3 +589,5 @@ async def history_page(services: Services) -> None:
                 time=f"{CLEANUP_HOUR:02d}:{CLEANUP_MINUTE:02d}", zone=first_page.timezone
             )
         ).classes("text-grey-7").mark("retention-hint")
+    if follower.start():
+        await refresh()

@@ -1,11 +1,12 @@
 """The dashboard: the state of the cookie session, of the scheduler and of the last run, and the version of yt-dlp.
 
-The page reads the database and the yt-dlp folder in a thread, never on the event loop, and reads them again each
-``REFRESH_SECONDS``. Each date shows in the time zone of the schedule.
+The page reads the database and the yt-dlp folder in a thread, never on the event loop. It reads them again at the start
+and at the end of each run, and shows the counts of a run while it runs. The version of yt-dlp and the next run time
+change without a run, so the page also reads each ``REFRESH_SECONDS``. Each date shows in the time zone of the schedule.
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -19,9 +20,11 @@ from youtube_automanager.scheduler import SchedulerState
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.common import RUN_STATUSES, RUN_TRIGGERS, SESSION_STATES, format_time, stored_timezone
 from youtube_automanager.web.ui.layout import register_page
+from youtube_automanager.web.ui.live_runs import RunFollower
 from youtube_automanager.youtube.ytdlp_updater import Source, active_version
 
-REFRESH_SECONDS = 10.0
+# The events of the runs show each run at once, so this read only catches the changes that come without a run.
+REFRESH_SECONDS = 60.0
 
 SCHEDULER_STATES = {
     SchedulerState.RUNNING: (N_("Running"), "positive"),
@@ -43,6 +46,7 @@ class CookieSession:
 
 @dataclass(frozen=True)
 class LastRun:
+    id: int
     started_at: datetime
     status: RunStatus
     trigger: RunTrigger
@@ -93,7 +97,9 @@ def read_stored_state(sessions: sessionmaker[Session], default_timezone: str) ->
                 else None
             ),
             last_run=(
-                LastRun(run.started_at, run.status, run.trigger, run.added_count, run.seen_count, run.error_text)
+                LastRun(
+                    run.id, run.started_at, run.status, run.trigger, run.added_count, run.seen_count, run.error_text
+                )
                 if run is not None
                 else None
             ),
@@ -195,21 +201,55 @@ def _ytdlp_card(version: str | None, source: Source) -> None:
                 _value(_(YTDLP_SOURCES[source]), "ytdlp-source")
 
 
+@dataclass
+class _Shown:
+    snapshot: Snapshot
+    # The number of the newest read. A read that finishes after a newer one started drops its result.
+    reads: int = 0
+
+
 @register_page("/", label=N_("Dashboard"), icon="dashboard")
 async def dashboard_page(services: Services) -> None:
     @ui.refreshable
-    def cards(snapshot: Snapshot) -> None:
+    def cards() -> None:
+        snapshot = shown.snapshot
         zone = ZoneInfo(snapshot.stored.timezone)
         with ui.row().classes("w-full gap-4 items-stretch"):
             _session_card(snapshot.stored.session, zone)
             _scheduler_card(snapshot.scheduler_state, snapshot.next_run_at, zone)
-            _last_run_card(snapshot.stored.last_run, zone)
+            last_run_view()
             _ytdlp_card(snapshot.ytdlp_version, snapshot.ytdlp_source)
 
-    async def refresh() -> None:
-        cards.refresh(await take_snapshot(services))
+    @ui.refreshable
+    def last_run_view() -> None:
+        last_run = shown.snapshot.stored.last_run
+        if last_run is not None and last_run.status is RunStatus.RUNNING:
+            added, seen = follower.counts(last_run.id, last_run.added_count, last_run.seen_count)
+            last_run = replace(last_run, added_count=added, seen_count=seen)
+        _last_run_card(last_run, ZoneInfo(shown.snapshot.stored.timezone))
 
+    async def refresh(*_event: object) -> None:
+        shown.reads += 1
+        read = shown.reads
+        snapshot = await take_snapshot(services)
+        if read != shown.reads:
+            return
+        shown.snapshot = snapshot
+        await cards.refresh()
+
+    async def show_progress(run_id: int, *_counts_and_actions: object) -> None:
+        # The follower keeps the counts of the progress, and the card takes them from it.
+        last_run = shown.snapshot.stored.last_run
+        if last_run is None or last_run.id != run_id:
+            return
+        await last_run_view.refresh()
+
+    # The follower comes before the first read, so a run that starts during the read is not missed.
+    follower = RunFollower(services.run_events, started=refresh, progress=show_progress, finished=refresh)
     ui.label(_("Dashboard")).classes("text-h5")
-    cards(await take_snapshot(services))
+    shown = _Shown(await take_snapshot(services))
+    cards()
+    if follower.start():
+        await refresh()
     # The first read is above, so the timer starts with a pause.
     ui.timer(REFRESH_SECONDS, refresh, immediate=False)

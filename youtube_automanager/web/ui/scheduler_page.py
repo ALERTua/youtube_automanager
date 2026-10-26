@@ -3,7 +3,8 @@
 A save writes the ``schedule`` row and then tells the running scheduler, so the new schedule acts at once. The form
 shows the next run times of the edited schedule before a save, and the page saves only a schedule that
 ``ScheduleSpec`` accepts and that has a run time. The page reads and writes the database in a thread, never on the
-event loop. Each date shows in the time zone of the schedule.
+event loop. Each date shows in the time zone of the schedule. The state reads again at the start and at the end of each
+run, and each ``REFRESH_SECONDS``, because a change of the schedule elsewhere comes with no run.
 """
 
 import asyncio
@@ -32,8 +33,10 @@ from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.common import format_time, read_timezone
 from youtube_automanager.web.ui.dashboard import SCHEDULER_STATES
 from youtube_automanager.web.ui.layout import register_page
+from youtube_automanager.web.ui.live_runs import RunFollower
 
-REFRESH_SECONDS = 10.0
+# The events of the runs read the state at each start and end of a run, so this read only catches the other changes.
+REFRESH_SECONDS = 60.0
 # The number of run times that the page shows, for the running schedule and for the edited one.
 UPCOMING_COUNT = 5
 
@@ -159,7 +162,7 @@ async def scheduler_page(services: Services) -> None:
         if not edited.enabled:
             ui.label(_("The schedule is off. No run starts until you turn it on.")).mark("preview-off")
 
-    async def refresh_status() -> None:
+    async def refresh_status(*_event: object) -> None:
         status = await take_status(services)
         status_view.refresh(status)
         pause_button.set_enabled(status.state is SchedulerState.RUNNING)
@@ -203,6 +206,8 @@ async def scheduler_page(services: Services) -> None:
         else:
             ui.notify(_("A run is already active, so no new run started."), type="warning")
 
+    # The follower comes before the first read, so a run that starts during the read is not missed.
+    follower = RunFollower(services.run_events, started=refresh_status, finished=refresh_status)
     initial = await take_status(services)
     ui.label(_("Scheduler")).classes("text-h5")
     with ui.row().classes("w-full gap-4 items-stretch"):
@@ -279,5 +284,7 @@ async def scheduler_page(services: Services) -> None:
         preview()
         ui.button(_("Save"), icon="save", on_click=save).mark("schedule-save")
 
+    if follower.start():
+        await refresh_status()
     # The first read is above, so the timer starts with a pause.
     ui.timer(REFRESH_SECONDS, refresh_status, immediate=False)

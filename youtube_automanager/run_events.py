@@ -46,6 +46,20 @@ class ActionItem:
     detail: str | None
 
 
+def action_item(row: RunAction) -> ActionItem:
+    """Copy the values of a ``run_action`` row, so they stay readable after its session closed."""
+    return ActionItem(
+        row.id,
+        row.at,
+        row.action,
+        row.video_id,
+        row.channel_id,
+        row.rule_id,
+        row.playlist_id,
+        row.detail,
+    )
+
+
 @dataclass(frozen=True)
 class RunProgress:
     """The counters of a run, and its actions with an id above the id of the last read, oldest first."""
@@ -65,19 +79,7 @@ def read_progress(sessions: sessionmaker[Session], run_id: int, after_id: int) -
         rows = session.scalars(
             select(RunAction).where(RunAction.run_id == run_id, RunAction.id > after_id).order_by(RunAction.id)
         )
-        actions = tuple(
-            ActionItem(
-                row.id,
-                row.at,
-                row.action,
-                row.video_id,
-                row.channel_id,
-                row.rule_id,
-                row.playlist_id,
-                row.detail,
-            )
-            for row in rows
-        )
+        actions = tuple(action_item(row) for row in rows)
         return RunProgress(run.status, run.added_count, run.seen_count, actions)
 
 
