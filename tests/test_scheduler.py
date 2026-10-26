@@ -124,6 +124,10 @@ def test_disabled_schedule_has_no_run_times():
         (lambda: cron("0 18 * * *-3"), "day of the week"),
         (lambda: cron(""), "cron expression"),
         (lambda: cron("0 18 * * *", timezone="Nowhere/City"), "Unknown time zone"),
+        # ZoneInfo raises OSError for a name that is no valid file name on Windows, or too long on each system.
+        (lambda: cron("0 18 * * *", timezone="*"), "Unknown time zone"),
+        (lambda: cron("0 18 * * *", timezone="Europe/Kyiv?"), "Unknown time zone"),
+        (lambda: cron("0 18 * * *", timezone="x" * 300), "Unknown time zone"),
         (lambda: interval(0), r"900 s \(15 minutes\) or more"),
         (lambda: interval(MIN_INTERVAL_S - 1), r"900 s \(15 minutes\) or more"),
         (lambda: interval(MAX_INTERVAL_S + 1), "or less"),

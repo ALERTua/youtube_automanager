@@ -30,9 +30,9 @@ from youtube_automanager.retention import (
     runs_lost_by_retention,
     set_retention_days,
 )
+from youtube_automanager.rules_store import MAX_DAYS_BACK
 from youtube_automanager.web import app as web_app
 from youtube_automanager.web.app import create_app
-from youtube_automanager.web.ui.rules_page import MAX_DAYS_BACK
 
 pytestmark = pytest.mark.usefixtures("logging_setups")
 

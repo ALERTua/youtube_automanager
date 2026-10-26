@@ -1,10 +1,12 @@
 import json
+import math
 
 import pytest
 
 from youtube_automanager.engine import rules
 from youtube_automanager.engine.rules import (
     MATCH_ALL,
+    MAX_DEPTH,
     MAX_UNKNOWN_LEAVES,
     VIDEO_FIELDS,
     RuleError,
@@ -133,6 +135,22 @@ class TestRegex:
         assert rules._compile.cache_info().misses == 1
 
 
+def nested(levels: int) -> dict:
+    """Return a tree of ``levels`` levels: NOT objects around ``{"==": [1, 1]}``, which has 2 levels."""
+    tree: dict = {"==": [1, 1]}
+    for _ in range(levels - 2):
+        tree = {"!": tree}
+    return tree
+
+
+def nested_in_lists(groups: int) -> dict:
+    """Return ``groups`` NOT objects, each with its argument in a list, around ``{"==": [1, 1]}``."""
+    tree: dict = {"==": [1, 1]}
+    for _ in range(groups):
+        tree = {"!": [tree]}
+    return tree
+
+
 class TestValidate:
     @pytest.mark.parametrize(
         "tree",
@@ -190,6 +208,31 @@ class TestValidate:
 
     def test_rule_error_is_a_value_error(self):
         assert issubclass(RuleError, ValueError)
+
+    def test_a_tree_of_32_levels_passes_and_a_deeper_one_is_refused(self):
+        validate(nested(32))
+        with pytest.raises(RuleError, match="at most 32 levels"):
+            validate(nested(33))
+        assert MAX_DEPTH == 32
+
+    def test_each_list_counts_as_a_level(self):
+        # 15 groups of an object and a list around {"==": [1, 1]} make 32 levels, and 16 groups make 34 levels with
+        # only 17 objects.
+        validate(nested_in_lists(15))
+        with pytest.raises(RuleError, match="at most 32 levels"):
+            validate(nested_in_lists(16))
+
+    def test_a_very_deep_tree_is_refused_without_the_recursion_limit(self):
+        with pytest.raises(RuleError, match="at most 32 levels"):
+            validate(nested(5000))
+        with pytest.raises(RuleError, match="at most 32 levels"):
+            validate(nested_in_lists(5000))
+
+    @pytest.mark.parametrize("number", [math.nan, math.inf, -math.inf])
+    @pytest.mark.parametrize("where", [lambda n: {"==": [n, 1]}, lambda n: {"!": n}, lambda n: {"in": [1, [2, n]]}])
+    def test_a_number_that_is_not_finite_is_refused(self, number, where):
+        with pytest.raises(RuleError, match="must be finite"):
+            validate(where(number))
 
     def test_evaluate_refuses_an_invalid_tree(self):
         with pytest.raises(RuleError, match="not allowed"):

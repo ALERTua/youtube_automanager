@@ -105,7 +105,8 @@ class ScheduleSpec:
 def _zone(name: str) -> ZoneInfo:
     try:
         return ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError) as error:
+    # A name that is no valid file name, for example "*" on Windows or a very long name, raises OSError.
+    except (ZoneInfoNotFoundError, ValueError, OSError) as error:
         raise ValueError(f"Unknown time zone {name!r}") from error
 
 

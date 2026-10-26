@@ -531,6 +531,10 @@ class TestConditionForSave:
             ('{"regex": [{"var": "title"}, "("]}', "does not compile"),
             ("[1]", "The root of a rule must be an object"),
             ('{"merge": []}', "The operator 'merge' is not allowed"),
+            # The JSON module of Python reads NaN and Infinity, but a run cannot evaluate them.
+            ('{"==": [NaN, 1]}', "A number of a rule must be finite, not nan"),
+            ('{">": [{"var": "duration_s"}, -Infinity]}', "A number of a rule must be finite, not -inf"),
+            ('{"!": ' * 40 + '{"==": [1, 1]}' + "}" * 40, "A rule can have at most 32 levels"),
         ],
     )
     def test_json_that_is_no_valid_rule_stops_the_save(self, text, error):
