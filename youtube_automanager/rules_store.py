@@ -20,6 +20,10 @@ from youtube_automanager.i18n import _
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.scheduler import stored_timezone
 
+# The first day of an apply and of the older videos of a rule is at most this many days back. The rules page and the
+# HTTP API check this limit, and ``validate_draft`` does not, because the day of today depends on the caller.
+MAX_DAYS_BACK = 365
+
 
 @dataclass(frozen=True)
 class ChannelChoice:

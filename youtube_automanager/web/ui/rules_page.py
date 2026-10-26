@@ -27,6 +27,7 @@ from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, Dra
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.rule_actions import AppliedRun, apply_in_child, preview_in_child
 from youtube_automanager.rules_store import (
+    MAX_DAYS_BACK,
     ChannelChoice,
     RuleDraft,
     RuleRecord,
@@ -82,8 +83,6 @@ LONG_CELL = """
 </q-td>
 """
 
-# The first day of an apply and of the older videos of a rule is at most this many days back.
-MAX_DAYS_BACK = 365
 # The table of a preview shows this many videos on one page.
 PREVIEW_PAGE_SIZE = 20
 # Each add sends two requests with the cookies of the account, 5 s or more apart.
