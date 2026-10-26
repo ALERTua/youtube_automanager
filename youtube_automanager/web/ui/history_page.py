@@ -12,7 +12,7 @@ from datetime import date, datetime, time, timedelta
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-from nicegui import ui
+from nicegui import context, ui
 from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -48,6 +48,9 @@ PAGE_SIZE = 50
 # The card of the actions of a run takes the focus when a run opens. This attribute marks it for the browser.
 DETAILS_ATTRIBUTE = "data-run-details"
 DETAILS_SELECTOR = f"[{DETAILS_ATTRIBUTE}]"
+# The select of the kind of action in that card. Quasar puts the attribute on the field, and the focus goes to its input.
+ACTION_FILTER_ATTRIBUTE = "data-action-filter"
+ACTION_FILTER_SELECTOR = f"[{ACTION_FILTER_ATTRIBUTE}] input"
 # The value of a filter that lets each run through.
 ANY = "any"
 WATCH_URL = "https://www.youtube.com/watch?v="
@@ -317,6 +320,8 @@ def _filter_options(labels: dict) -> dict:
 @register_page("/history", label=N_("History"), icon="history")
 async def history_page(services: Services) -> None:
     state = PageState()
+    # The client of the page. A handler can run after the element that started it is gone, so it needs the client itself.
+    client = context.client
 
     def read_filter() -> RunFilter:
         return RunFilter(
@@ -363,17 +368,22 @@ async def history_page(services: Services) -> None:
     async def open_run(event) -> None:
         await show_run(int(event.args))
         # The table of the runs was drawn again, so the button that had the focus is gone. The focus goes to the card.
-        focus_when_drawn(DETAILS_SELECTOR)
+        focus_when_drawn(client, DETAILS_SELECTOR)
 
     async def close_run() -> None:
         run_id = state.run_id
         await show_run(None)
         # The close button is gone with the card, so the focus goes back to the button of the same run.
+        # The run can be on another page of the table, or a cleanup can have deleted it. Then Refresh gets the focus.
         if run_id is not None:
-            focus_when_drawn(row_button_selector(run_id), delay_ms=FOCUS_DELAY_MS)
+            focus_when_drawn(
+                client, row_button_selector(run_id), fallback=f"#{refresh_button.html_id}", delay_ms=FOCUS_DELAY_MS
+            )
 
     async def change_action_kind(run_id: int, value: str) -> None:
         await show_run(run_id, None if value == ANY else RunActionKind(value))
+        # The card was built again, so the select that had the focus is gone. The card is the second choice.
+        focus_when_drawn(client, ACTION_FILTER_SELECTOR, fallback=DETAILS_SELECTOR)
 
     async def save_retention() -> None:
         try:
@@ -464,7 +474,7 @@ async def history_page(services: Services) -> None:
                 label=_("Action"),
                 value=ANY if detail.kind is None else detail.kind.value,
                 on_change=lambda event: change_action_kind(run.id, event.value),
-            ).props("outlined dense").classes("w-48").mark("filter-action")
+            ).props(f"outlined dense {ACTION_FILTER_ATTRIBUTE}").classes("w-48").mark("filter-action")
             if not detail.actions:
                 ui.label(_("This run has no actions.")).mark("no-actions")
                 return
@@ -515,7 +525,7 @@ async def history_page(services: Services) -> None:
             .mark("filter-to")
         )
         today_button(last_input, first_page.timezone).mark("filter-to-today")
-        ui.button(_("Refresh"), icon="refresh", on_click=refresh).mark("refresh")
+        refresh_button = ui.button(_("Refresh"), icon="refresh", on_click=refresh).mark("refresh")
     runs_view(first_page)
     details(None)
 

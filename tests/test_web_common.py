@@ -348,18 +348,18 @@ def test_the_selector_of_a_row_button_is_scoped_to_a_table_on_request():
 
 def test_the_move_of_the_focus_tries_the_selector_then_the_fallback_after_the_delay(monkeypatch):
     sent = []
-    monkeypatch.setattr(ui, "run_javascript", lambda code, **kwargs: sent.append(code))
+    client = Mock(run_javascript=sent.append)
 
-    focus_when_drawn('[data-row-button="7"]', fallback="#c5", delay_ms=200)
-    focus_when_drawn("#c9")
+    focus_when_drawn(client, '[data-row-button="7"]', fallback="#c5", delay_ms=200)
+    focus_when_drawn(client, "#c9")
 
     first, second = sent
     assert 'document.querySelector("[data-row-button=\\"7\\"]")' in first
     assert 'else if ("#c5") document.querySelector("#c5")?.focus();' in first
-    assert first.rstrip().endswith("}, 200);")
+    assert "}, 200);" in first
     # Without a fallback and a delay, the browser tries once at once and gives up after about a second.
     assert "else if (null)" in second
-    assert second.rstrip().endswith("}, 0);")
+    assert "}, 0);" in second
     assert "let tries = 20;" in second
     assert "setTimeout(go, 50)" in second
 

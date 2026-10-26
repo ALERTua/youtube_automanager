@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from nicegui import ui
+from nicegui import context, ui
 
 from youtube_automanager.db.models import RunStatus
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, DraftRule, Mark, Preview, PreviewVideo
@@ -54,6 +54,7 @@ from youtube_automanager.web.ui.common import (
     format_time,
     icon_button,
     named,
+    remember_focus,
     row_button_selector,
     set_loading,
 )
@@ -438,6 +439,7 @@ class RuleEditor:
     """The form that creates or changes one rule. ``done`` runs after a save or a delete.
 
     ``open_apply`` opens the apply dialog of a saved rule, and it gets whether the form has changes that are not saved.
+    ``cancel`` runs at the Cancel button, and it closes the dialog when it is not given.
     """
 
     def __init__(
@@ -448,6 +450,7 @@ class RuleEditor:
         close: Callable[[], None],
         done: Callable[[], Awaitable[None]],
         open_apply: Callable[[RuleRecord, bool], None] | None = None,
+        cancel: Callable[[], None] | None = None,
     ) -> None:
         self.services = services
         self.stored = stored
@@ -455,6 +458,8 @@ class RuleEditor:
         self.close = close
         self.done = done
         self.open_apply = open_apply
+        # The Cancel button closes the dialog, and the page can also move the focus back.
+        self.cancel = cancel or close
         # None when the visual editor cannot show the condition. The form then shows the condition as JSON text.
         self.root: Group | None = from_tree(rule.condition) if rule else Group()
         self.saving = False
@@ -617,7 +622,7 @@ class RuleEditor:
         self.error_label.set_visibility(False)
         with ui.row().classes("w-full items-center gap-2"):
             self.save_button = ui.button(_("Save"), icon="save", on_click=self.save).mark("editor-save")
-            ui.button(_("Cancel"), on_click=self.close).props("flat").mark("editor-cancel")
+            ui.button(_("Cancel"), on_click=self.cancel).props("flat").mark("editor-cancel")
             if rule:
                 ui.space()
                 ui.button(_("Apply to videos from a date"), icon="playlist_add_check", on_click=self.apply).props(
@@ -1260,6 +1265,7 @@ def _playlist_filter_options(stored: Stored) -> dict[str, str]:
 @register_page("/rules", label=N_("Rules"), icon="rule")
 async def rules_page(services: Services) -> None:
     state = PageState(await asyncio.to_thread(read_stored, services.sessions, services.settings.tz))
+    client = context.client
 
     def current_filter() -> RuleFilter:
         playlist_id = playlist_select.value
@@ -1308,15 +1314,32 @@ async def rules_page(services: Services) -> None:
         add_row_button(table, edit_rule, icon="edit", label=_("Edit"))
 
     def close_editor() -> None:
+        # A save or a delete reads the rules again before the focus moves. A key that the user presses meanwhile wins.
+        remember_focus(client)
         editor_dialog.close()
         editor_view.refresh(None)
-        # The table was drawn again while the editor was open, so the button that had the focus is gone. The focus goes
-        # back to the button of the same rule, or to New rule when the rule is new or deleted.
+
+    def focus_after_editor() -> None:
+        """Move the focus to where the editor was opened. The table must have its new rows already.
+
+        The table was drawn again while the editor was open, so the button that had the focus is gone. The focus goes
+        back to the button of the same rule. It goes to New rule when the rule is new, or when the stored rules no
+        longer have it, for example after a delete.
+        """
         new_rule = f"#{new_rule_button.html_id}"
-        if state.edited is None:
-            focus_when_drawn(new_rule, delay_ms=FOCUS_DELAY_MS)
+        if state.edited is None or state.stored.rule(state.edited) is None:
+            focus_when_drawn(client, new_rule, delay_ms=FOCUS_DELAY_MS)
         else:
-            focus_when_drawn(row_button_selector(state.edited), fallback=new_rule, delay_ms=FOCUS_DELAY_MS)
+            focus_when_drawn(client, row_button_selector(state.edited), fallback=new_rule, delay_ms=FOCUS_DELAY_MS)
+
+    def cancel_editor() -> None:
+        close_editor()
+        focus_after_editor()
+
+    async def editor_done() -> None:
+        """Read the rules again after a save or a delete, and move the focus after the table has its new rows."""
+        await reload()
+        focus_after_editor()
 
     @ui.refreshable
     def editor_view(editor: RuleEditor | None) -> None:
@@ -1336,7 +1359,9 @@ async def rules_page(services: Services) -> None:
                 ui.notify(_("The rule does not exist any more."), type="warning")
                 return
         state.edited = rule_id
-        editor_view.refresh(RuleEditor(services, state.stored, rule, close_editor, reload, open_apply))
+        editor_view.refresh(
+            RuleEditor(services, state.stored, rule, close_editor, editor_done, open_apply, cancel_editor)
+        )
         editor_dialog.open()
 
     def open_apply(rule: RuleRecord, unsaved: bool) -> None:

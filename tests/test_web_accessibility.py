@@ -4,10 +4,13 @@ simulation, so a test of such a cell reads the template of the slot.
 """
 
 import json
+import time
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 import pytest
-from nicegui import ui
+from conftest import recording_run_javascript
+from nicegui import Client, ui
 from nicegui.elements.skip_link import SkipLink
 from ui_support import client_of, element_of, elements_of, eventually, set_value, store
 
@@ -24,13 +27,15 @@ from youtube_automanager.db.models import (
     RunStatus,
     RunTrigger,
 )
-from youtube_automanager.web.ui import layout
-from youtube_automanager.web.ui.common import quasar_names_script
+from youtube_automanager.web.ui import layout, rules_page
+from youtube_automanager.web.ui.common import focus_when_drawn, quasar_names_script, remember_focus
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
 PAGES = ["/", "/rules", "/history", "/scheduler", "/settings", "/subscriptions"]
 CHANNEL = "UCaaaaaaaaaaaaaaaaaaaaaa"
+# How the script writes each "<" of a label: a backslash and u003c, so no text can end the script element.
+ESCAPED_LT = chr(92) + "u003c"
 MOMENT = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 LONG = {">=": [{"var": "duration_s"}, 120]}
 
@@ -237,14 +242,6 @@ async def test_the_walk_covers_each_registered_page(user):
 # The focus after a rebuild.
 
 
-@pytest.fixture
-def scripts(monkeypatch) -> list[str]:
-    """The JavaScript that the pages send to the browser, which the user simulation does not run."""
-    codes: list[str] = []
-    monkeypatch.setattr(ui, "run_javascript", lambda code, **kwargs: codes.append(code))
-    return codes
-
-
 def selector_in(code: str, selector: str) -> bool:
     """True when the script looks for ``selector`` as its first choice."""
     return f"document.querySelector({json.dumps(selector)})" in code
@@ -264,7 +261,7 @@ async def test_the_focus_goes_back_to_the_edit_button_of_the_rule_when_the_edito
     # The rule can be gone, for example after a delete, so the New rule button is the second choice.
     assert json.dumps(f"#{element_of(user, 'new-rule').html_id}") in code
     # The dialog is still closing, so the browser waits a moment before the first try.
-    assert code.rstrip().endswith("}, 200);")
+    assert "}, 200);" in code
 
 
 async def test_the_focus_goes_to_new_rule_when_the_editor_of_a_new_rule_closes(user, stored_data, scripts):
@@ -477,6 +474,192 @@ def test_the_labels_of_the_upload_buttons_go_through_the_translation(monkeypatch
     script = quasar_names_script()
 
     for label in ["Add a file", "Remove all files", "Upload the files", "Stop the upload", "Remove the file"]:
-        assert f"<<{label}>>" in script
+        # The script escapes each "<", so that no text can end the element.
+        assert f"{ESCAPED_LT}{ESCAPED_LT}{label}>>" in script
     # The select of the table gets the text before it, which is a text of Quasar in the language of the page.
     assert "previousElementSibling" in script
+
+
+# The order of the focus and the reload.
+
+
+class EventLog(list):
+    """The names of the events, in the order in which they happened. ``codes`` keeps the script of each focus."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.codes: list[str] = []
+
+    def record_script(self, code: str) -> None:
+        if "__focusStart = document" in code:
+            self.append("remember")
+        else:
+            self.append("focus")
+            self.codes.append(code)
+
+
+@pytest.fixture
+def events(monkeypatch) -> EventLog:
+    """The moves of the focus and the reads of the rules, in the order in which they happened."""
+    log = EventLog()
+    monkeypatch.setattr(
+        Client,
+        "run_javascript",
+        recording_run_javascript(log.record_script, markers=("const free = () =>", "__focusStart = document")),
+    )
+    real = rules_page.read_stored
+
+    def slow_read(*args, **kwargs):
+        # The read takes longer than the wait of the focus, so a focus that comes first would find the old table.
+        time.sleep(0.5)
+        log.append("read")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(rules_page, "read_stored", slow_read)
+    return log
+
+
+async def test_the_focus_moves_after_the_table_has_its_new_rows_when_a_rule_is_saved(user, stored_data, events):
+    await user.open("/rules")
+    user.find(marker="rules-table").trigger("rowButton", args=1)
+    await eventually(lambda: elements_of(user, "editor"), "The editor")
+    events.clear()
+
+    user.find(marker="editor-save").click()
+
+    await eventually(lambda: "focus" in events, "The move of the focus")
+    assert events == ["remember", "read", "focus"]
+    assert selector_in(events.codes[-1], '[data-row-button="1"]')
+
+
+async def test_the_focus_goes_to_new_rule_after_a_delete_and_waits_for_the_new_table(user, stored_data, events):
+    await user.open("/rules")
+    user.find(marker="rules-table").trigger("rowButton", args=1)
+    await eventually(lambda: elements_of(user, "editor"), "The editor")
+    events.clear()
+
+    user.find(marker="editor-delete").click()
+    await eventually(lambda: elements_of(user, "delete-confirm"), "The question")
+    user.find(marker="delete-confirm").click()
+
+    await eventually(lambda: "focus" in events, "The move of the focus")
+    assert events == ["remember", "read", "focus"]
+    # The server knows that the rule is gone, so the focus does not wait for a button of the rule.
+    assert selector_in(events.codes[-1], f"#{element_of(user, 'new-rule').html_id}")
+    assert "data-row-button" not in events.codes[-1]
+
+
+# The focus that the user moved.
+
+
+def test_the_move_of_the_focus_gives_up_when_the_user_has_moved_it(monkeypatch):
+    sent = []
+    client = Mock(run_javascript=sent.append)
+
+    focus_when_drawn(client, "#c9", fallback="#c5")
+
+    (code,) = sent
+    # The browser reads the focus at the call, and it tries only while the focus is free.
+    assert "const start = window.__focusStart || document.activeElement;" in code
+    assert "window.__focusStart = null;" in code
+    assert "const free = () => {" in code
+    assert (
+        "active === document.body || active === start || !active.isConnected || !!active.closest('.q-dialog')" in code
+    )
+    assert "if (!free()) return;" in code
+    assert code.index("if (!free()) return;") < code.index("element.focus()")
+    assert code.index("if (!free()) return;") < code.index('document.querySelector("#c5")?.focus()')
+    # The browser tries about 20 times, 50 ms apart, and then it takes the fallback.
+    assert "let tries = 20;" in code
+    assert "else if (--tries > 0) setTimeout(go, 50);" in code
+    assert "if (element) element.focus();" in code
+
+
+def test_the_browser_keeps_the_element_with_the_focus_for_the_next_move_of_the_focus():
+    sent = []
+    client = Mock(run_javascript=sent.append)
+
+    remember_focus(client)
+
+    assert sent == ["window.__focusStart = document.activeElement;"]
+
+
+# The fallbacks of the focus.
+
+
+async def test_the_focus_of_a_closed_run_has_a_fallback_when_its_button_is_not_drawn(user, stored_data, scripts):
+    await user.open("/history")
+    user.find(marker="runs-table").trigger("rowButton", args=1)
+    await eventually(lambda: elements_of(user, "details-close"), "The details")
+    scripts.clear()
+
+    user.find(marker="details-close").click()
+
+    await eventually(lambda: scripts, "The move of the focus")
+    (code,) = scripts
+    # The run can be on another page, or a cleanup can have deleted it, so Refresh is the second choice.
+    assert json.dumps(f"#{element_of(user, 'refresh').html_id}") in code
+
+
+async def test_the_focus_returns_to_the_filter_of_the_action_kind_after_a_change_with_the_card_as_fallback(
+    user, stored_data, scripts
+):
+    await user.open("/history")
+    user.find(marker="runs-table").trigger("rowButton", args=1)
+    await eventually(lambda: elements_of(user, "filter-action"), "The details")
+    assert "data-action-filter" in element_of(user, "filter-action").props
+    scripts.clear()
+
+    set_value(user, "filter-action", "added")
+
+    await eventually(lambda: scripts, "The move of the focus")
+    (code,) = scripts
+    assert selector_in(code, "[data-action-filter] input")
+    assert json.dumps("[data-run-details]") in code
+
+
+async def test_the_focus_of_a_closed_channel_dialog_has_the_filter_field_as_fallback(user, stored_data, scripts):
+    await user.open("/subscriptions")
+    user.find(marker="channels-table").trigger("rowButton", args=CHANNEL)
+    await eventually(lambda: element_of(user, "channel-dialog").value, "The open dialog")
+    scripts.clear()
+
+    with client_of(user):
+        element_of(user, "channel-dialog").close()
+
+    await eventually(lambda: scripts, "The move of the focus")
+    # The row can be gone, for example after Unsubscribe with the filter Subscribed.
+    assert json.dumps(f"#{element_of(user, 'filter-text').html_id}") in scripts[0]
+
+
+# The script that names the parts of Quasar.
+
+
+def test_the_script_that_names_the_parts_of_quasar_has_the_selectors_and_the_options_that_it_needs():
+    script = quasar_names_script()
+
+    # The select of the table: an input in the bottom of a table, named by the text before it.
+    assert "document.querySelectorAll('.q-table__bottom .q-table__select input')" in script
+    assert "input.setAttribute('aria-label', text)" in script
+    assert "if (input.getAttribute('aria-label')) return;" in script
+    # The buttons of the upload: named by their icon, and never over a name that exists.
+    assert "document.querySelectorAll('.q-uploader button, .q-uploader a[role=button]')" in script
+    assert "names[button.querySelector('.q-icon')?.textContent.trim()]" in script
+    assert "if (label && !button.getAttribute('aria-label')) button.setAttribute('aria-label', label);" in script
+    # The observer sees the controls that Vue draws later, at any depth.
+    assert "new MutationObserver(name).observe(document.documentElement, {childList: true, subtree: true});" in script
+
+
+def test_a_translation_with_a_closing_script_tag_cannot_end_the_script(monkeypatch):
+    class Hostile:
+        def gettext(self, message):
+            return "</script><script>alert(1)//" if message == "Add a file" else message
+
+    monkeypatch.setattr(i18n, "_translations", Hostile())
+
+    script = quasar_names_script()
+
+    assert script.count("</script>") == 1
+    assert script.endswith("</script>")
+    assert "alert(1)//" in script
+    assert "\\u003c/script>" in script

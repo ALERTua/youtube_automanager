@@ -12,6 +12,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from nicegui import ui
+from nicegui.client import Client
 from nicegui.events import GenericEventArguments
 
 from youtube_automanager.db.models import RunStatus, RunTrigger, SessionState
@@ -106,28 +107,57 @@ def row_button_selector(row_id: int | str, scope: str | None = None) -> str:
     return selector if scope is None else f"[{ROW_SCOPE_ATTRIBUTE}={json.dumps(scope)}] {selector}"
 
 
-def focus_when_drawn(selector: str, *, fallback: str | None = None, delay_ms: int = 0) -> None:
+def remember_focus(client: Client) -> None:
+    """Let the browser keep the element that has the focus now, as the start of the next ``focus_when_drawn``.
+
+    A page calls this before a read that takes time. A user who moves the focus during the read then keeps it.
+    """
+    client.run_javascript("window.__focusStart = document.activeElement;")
+
+
+def focus_when_drawn(client: Client, selector: str, *, fallback: str | None = None, delay_ms: int = 0) -> None:
     """Move the keyboard focus to the element that matches ``selector``, as soon as the browser has drawn it.
 
     A rebuild of a table or a card removes the element that had the focus, and the focus goes to the top of the page.
     The page calls this after such a rebuild. The browser tries for about a second. When no element matches
     ``selector``, the focus goes to the element that matches ``fallback``. ``delay_ms`` is a wait before the first try,
     for a dialog that is still closing.
+
+    ``client`` is the client of the page. A handler can run after the element that started it is gone, and then the
+    context of the handler has no client any more.
+
+    The browser gives up at once when the user has moved the focus. The focus is free when it is on the page body,
+    on the element that had it at the start, on an element that left the page, or inside a dialog. The start is the
+    element of the last ``remember_focus``, or the element that has the focus at the call.
     """
-    ui.run_javascript(
+    client.run_javascript(
         f"""
-setTimeout(() => {{
-  let tries = 20;
-  const go = () => {{
-    const element = document.querySelector({json.dumps(selector)});
-    if (element) element.focus();
-    else if (--tries > 0) setTimeout(go, 50);
-    else if ({json.dumps(fallback)}) document.querySelector({json.dumps(fallback)})?.focus();
+(() => {{
+  const start = window.__focusStart || document.activeElement;
+  window.__focusStart = null;
+  const free = () => {{
+    const active = document.activeElement;
+    return active === document.body || active === start || !active.isConnected || !!active.closest('.q-dialog');
   }};
-  go();
-}}, {delay_ms});
+  setTimeout(() => {{
+    let tries = 20;
+    const go = () => {{
+      if (!free()) return;
+      const element = document.querySelector({json.dumps(selector)});
+      if (element) element.focus();
+      else if (--tries > 0) setTimeout(go, 50);
+      else if ({json.dumps(fallback)}) document.querySelector({json.dumps(fallback)})?.focus();
+    }};
+    go();
+  }}, {delay_ms});
+}})();
 """
     )
+
+
+def safe_json(value: Any) -> str:
+    """Return ``value`` as JSON that is safe inside a ``<script>`` element: no ``<`` stays, so no text can end the element."""
+    return json.dumps(value).replace("<", "\\" + "u003c")
 
 
 def quasar_names_script() -> str:
@@ -146,7 +176,7 @@ def quasar_names_script() -> str:
     }
     return f"""<script>
 (() => {{
-  const names = {json.dumps(buttons)};
+  const names = {safe_json(buttons)};
   const name = () => {{
     document.querySelectorAll('.q-table__bottom .q-table__select input').forEach((input) => {{
       if (input.getAttribute('aria-label')) return;

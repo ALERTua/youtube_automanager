@@ -11,6 +11,7 @@ import urllib.request
 
 import pytest
 from nicegui import Client
+from nicegui.awaitable_response import AwaitableResponse
 from nicegui.testing.general import nicegui_reset_globals
 from sqlalchemy import create_engine, make_url, select, text
 from ui_support import running_service
@@ -659,3 +660,30 @@ class SyncHarness:
 @pytest.fixture
 def sync(db_sessions):
     return SyncHarness(db_sessions)
+
+
+@pytest.fixture
+def scripts(monkeypatch) -> list[str]:
+    """The JavaScript that the pages send to the browser, which the user simulation does not run."""
+    codes: list[str] = []
+    monkeypatch.setattr(Client, "run_javascript", recording_run_javascript(codes.append))
+    return codes
+
+
+def recording_run_javascript(record, markers=("const free = () =>",)):
+    """Return a replacement of ``Client.run_javascript`` that gives each script with one of ``markers`` to ``record``.
+
+    The script goes nowhere else, and the other scripts of NiceGUI run as before.
+    """
+    real = Client.run_javascript
+
+    async def nothing():
+        return None
+
+    def run_javascript(self, code, **kwargs):
+        if not any(marker in code for marker in markers):
+            return real(self, code, **kwargs)
+        record(code)
+        return AwaitableResponse(lambda: None, nothing)
+
+    return run_javascript

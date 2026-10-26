@@ -16,7 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
-from nicegui import ui
+from nicegui import context, ui
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -302,6 +302,7 @@ def _options(labels: dict[str, str]) -> dict[str, str]:
 @register_page("/subscriptions", label=N_("Subscriptions"), icon="subscriptions")
 async def subscriptions_page(services: Services) -> None:
     state = PageState(lists=await asyncio.to_thread(read_lists, services.sessions))
+    client = context.client
 
     def selected() -> SelectedChannel | None:
         if state.selected_id is None:
@@ -600,7 +601,15 @@ async def subscriptions_page(services: Services) -> None:
     def dialog_changed(event) -> None:
         # The row button that had the focus was drawn again while the dialog was open.
         if not event.value and state.selected_id is not None:
-            focus_when_drawn(row_button_selector(state.selected_id, state.row_scope), delay_ms=FOCUS_DELAY_MS)
+            # The row can be gone, for example after Unsubscribe with the filter Subscribed. Then the field of the
+            # table gets the focus: the search field for a found channel, and the filter field for a stored one.
+            field = search_input if state.row_scope == "found" else text_input
+            focus_when_drawn(
+                client,
+                row_button_selector(state.selected_id, state.row_scope),
+                fallback=f"#{field.html_id}",
+                delay_ms=FOCUS_DELAY_MS,
+            )
 
     with ui.dialog().mark("channel-dialog") as dialog, ui.card().classes("w-full max-w-lg"):
         dialog_content()

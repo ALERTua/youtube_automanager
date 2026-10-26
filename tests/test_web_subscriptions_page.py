@@ -10,7 +10,7 @@ from nicegui import ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
 from sqlalchemy import select
-from ui_support import element_of, elements_of, eventually, running_service, set_value, store, text_of
+from ui_support import client_of, element_of, elements_of, eventually, running_service, set_value, store, text_of
 
 from youtube_automanager import i18n
 from youtube_automanager.account_cache import REFRESHED_AT_KEY
@@ -372,7 +372,7 @@ async def test_a_refresh_of_the_lists_during_a_run_starts_nothing_and_says_so(us
 # The search.
 
 
-async def test_a_search_shows_the_found_channels_with_their_stored_state(user, stored_channels, fake_starter):
+async def test_a_search_shows_the_found_channels_with_their_stored_state(user, stored_channels, fake_starter, scripts):
     fake_starter.plan.append(
         {
             "stderr": stderr_line(
@@ -425,6 +425,13 @@ async def test_a_search_shows_the_found_channels_with_their_stored_state(user, s
     assert table.props["data-row-scope"] == "found"
     user.find(marker="found-table").trigger("rowButton", args=FOUND)
     await eventually(lambda: dialog_shows(user, FOUND), "The open dialog of the found channel")
+    scripts.clear()
+    with client_of(user):
+        element_of(user, "channel-dialog").close()
+    await eventually(lambda: scripts, "The move of the focus")
+    # The row of a found channel can go with the next search, so the search field is the second choice.
+    assert json.dumps(f'[data-row-scope="found"] [data-row-button="{FOUND}"]') in scripts[0]
+    assert json.dumps(f"#{element_of(user, 'search-input').html_id}") in scripts[0]
 
 
 async def test_the_enter_key_starts_the_search(user, fake_starter):
