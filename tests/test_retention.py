@@ -27,6 +27,7 @@ from youtube_automanager.retention import (
     delete_old_added_videos,
     delete_old_runs,
     get_retention_days,
+    runs_lost_by_retention,
     set_retention_days,
 )
 from youtube_automanager.web import app as web_app
@@ -167,6 +168,30 @@ def test_a_run_in_progress_stays_however_old_it_is(db_sessions):
 
 def test_the_cleanup_of_an_empty_history_deletes_nothing(db_sessions):
     assert delete_old_runs(db_sessions, 30, now=NOW) == CleanupResult(runs=0, actions=0)
+
+
+def test_a_smaller_retention_counts_the_runs_that_the_cleanup_deletes_and_nothing_else(db_sessions):
+    store(
+        db_sessions,
+        make_run(1, timedelta(days=500), RunStatus.RUNNING),
+        make_run(2, timedelta(days=45)),
+        make_run(3, timedelta(days=31), RunStatus.FAILED),
+        make_run(4, timedelta(days=29)),
+    )
+
+    assert runs_lost_by_retention(db_sessions, 30, now=NOW) == 2
+    assert runs_lost_by_retention(db_sessions, 40, now=NOW) == 1
+    assert runs_lost_by_retention(db_sessions, 60, now=NOW) == 0
+    assert run_ids(db_sessions) == [1, 2, 3, 4]
+
+
+def test_a_retention_that_is_not_smaller_than_the_stored_one_loses_no_run(db_sessions):
+    store(db_sessions, make_run(1, timedelta(days=100)))
+    set_retention_days(db_sessions, 30)
+
+    assert runs_lost_by_retention(db_sessions, 30, now=NOW) == 0
+    assert runs_lost_by_retention(db_sessions, 31, now=NOW) == 0
+    assert runs_lost_by_retention(db_sessions, 29, now=NOW) == 1
 
 
 def test_the_actions_go_without_the_cascade_of_the_foreign_key(db_url):

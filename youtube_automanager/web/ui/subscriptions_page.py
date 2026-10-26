@@ -310,6 +310,12 @@ async def subscriptions_page(services: Services) -> None:
         channels = filter_channels(lists, read_filter())
         channels_table.rows = [channel_row(channel, lists.rules_of(channel.channel_id)) for channel in channels]
         summary.set_text(_("{shown} of {total} channels").format(shown=len(channels), total=len(lists.channels)))
+        # A filter that matches nothing and a service without stored channels need different next steps.
+        no_channels.set_text(
+            _("No channel matches the filters.")
+            if lists.channels
+            else _("No channel is stored yet. Press Refresh lists.")
+        )
         no_channels.set_visibility(not channels)
 
     async def reload() -> None:
@@ -563,7 +569,7 @@ async def subscriptions_page(services: Services) -> None:
                 .mark("filter-rules")
             )
         summary = ui.label().mark("channels-summary")
-        no_channels = ui.label(_("No channel matches the filters.")).mark("no-channels")
+        no_channels = ui.label().mark("no-channels")
         channels_table = (
             ui.table(columns=channel_columns(), rows=[], row_key="id", pagination=PAGE_SIZE)
             .props("flat bordered dense")
