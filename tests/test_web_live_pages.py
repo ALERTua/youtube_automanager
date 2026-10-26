@@ -26,6 +26,7 @@ from ui_support import (
 from youtube_automanager.db.models import Run, RunAction, RunActionKind, RunStatus, RunTrigger, Schedule
 from youtube_automanager.run_events import ActionItem
 from youtube_automanager.web.ui import dashboard, history_page, scheduler_page
+from youtube_automanager.web.ui.common import FOCUS_KEY_ATTRIBUTE
 from youtube_automanager.web.ui.live_runs import RunFollower
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
@@ -588,10 +589,13 @@ async def test_a_progress_sends_the_larger_counts_of_the_row_to_the_browser(live
     await eventually(lambda: table in sent, "The update of the table")
     assert (row_of(user, 5)["added"], row_of(user, 5)["seen"]) == (6, 10)
 
-    # A progress that is older than the counts of the row does not lower them.
+    # A progress that is older than the counts of the row does not lower them, and it sends no update: an update draws
+    # the button of each row again, and a screen reader would read the focused button again.
+    sent.clear()
     events.progress.emit(5, 1, 1, ())
     await asyncio.sleep(SETTLE_SECONDS)
     assert (row_of(user, 5)["added"], row_of(user, 5)["seen"]) == (6, 10)
+    assert table not in sent
 
     # A read again with larger counts than the last progress shows the counts of the read.
     with sessions.begin() as session:
@@ -726,3 +730,41 @@ async def test_the_actions_that_come_during_a_read_of_one_kind_follow_that_kind(
     await asyncio.sleep(SETTLE_SECONDS)
     assert videos_of(user) == ["vid0", "vid-added"]
     end_run(fake_starter)
+
+
+def focus_keys_of(user) -> dict[str, str]:
+    """Return the focus key of each control of the open run card that has one, by its marker."""
+    return {
+        marker: element.props[FOCUS_KEY_ATTRIBUTE]
+        for marker in ("details", "details-close", "filter-action")
+        for element in elements_of(user, marker)
+    }
+
+
+async def test_each_control_of_a_redrawn_run_card_keeps_its_focus_key(live, sessions, fake_starter):
+    """The head script gives the focus back to a control with the same key when a progress or the end of the run
+    draws the card again. So each control that can hold the focus has its key also after each redraw."""
+    user, services = live
+    expected = {"details": "run-details", "details-close": "run-details-close", "filter-action": "run-action-filter"}
+    await user.open("/history")
+    run_id = await start_run(services, fake_starter)
+    await eventually(lambda: run_ids(user) == [run_id], "The row of the run")
+    user.find(marker="runs-table").trigger("rowClick", args=run_id)
+    await user.should_see("This run has no actions.")
+    assert focus_keys_of(user) == expected
+    (card,) = elements_of(user, "details")
+
+    # The first action draws the card again, because the card had no table of actions.
+    child_writes(sessions, run_id, 1, 1, (RunActionKind.ADDED, "vid1"))
+    await eventually(lambda: card.is_deleted and videos_of(user) == ["vid1"], "The card with the first action")
+    assert focus_keys_of(user) == expected
+    (card,) = elements_of(user, "details")
+
+    # The end of the run draws the card again with the status of the database.
+    end_run(fake_starter)
+    await eventually(lambda: card.is_deleted and text_of(user, "details-status") == "Succeeded", "The card of the end")
+    assert focus_keys_of(user) == expected
+    # Each key is unique on the page, so the script finds the one control.
+    with client_of(user):
+        keyed = [element for element in ElementFilter(local_scope=False) if FOCUS_KEY_ATTRIBUTE in element.props]
+    assert len(keyed) == len(expected)

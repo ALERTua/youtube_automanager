@@ -41,6 +41,7 @@ from youtube_automanager.web.ui.common import (
     busy,
     column,
     confirm,
+    focus_key,
     focus_when_drawn,
     format_time,
     icon_button,
@@ -58,6 +59,10 @@ DETAILS_SELECTOR = f"[{DETAILS_ATTRIBUTE}]"
 # The select of the kind of action in that card. Quasar puts the attribute on the field, and the focus goes to its input.
 ACTION_FILTER_ATTRIBUTE = "data-action-filter"
 ACTION_FILTER_SELECTOR = f"[{ACTION_FILTER_ATTRIBUTE}] input"
+# The keys of the controls of that card that keep the focus when a progress or the end of the run draws the card again.
+DETAILS_FOCUS_KEY = "run-details"
+CLOSE_FOCUS_KEY = "run-details-close"
+ACTION_FILTER_FOCUS_KEY = "run-action-filter"
 # The value of a filter that lets each run through.
 ANY = "any"
 WATCH_URL = "https://www.youtube.com/watch?v="
@@ -385,8 +390,11 @@ async def history_page(services: Services) -> None:
             for index, row in enumerate(table.rows):
                 if row["id"] == run_id:
                     # The rows are observed props of NiceGUI, so the new row goes to the browser. An event that is older
-                    # than the read of the row does not lower its counts.
-                    table.rows[index] = {**row, "added": max(row["added"], added), "seen": max(row["seen"], seen)}
+                    # than the read of the row does not lower its counts. NiceGUI draws each cell of a slot again at an
+                    # update of the table, also the button of each row, so a row whose counts stay sends nothing.
+                    counts = {"added": max(row["added"], added), "seen": max(row["seen"], seen)}
+                    if counts != {"added": row["added"], "seen": row["seen"]}:
+                        table.rows[index] = {**row, **counts}
                     break
         if state.arrived is not None and state.run_id == run_id:
             state.arrived.extend(actions)
@@ -510,10 +518,11 @@ async def history_page(services: Services) -> None:
         zone = ZoneInfo(detail.timezone)
         run = detail.run
         status_label, status_color = RUN_STATUSES[run.status]
-        with ui.card().props(f"tabindex=-1 {DETAILS_ATTRIBUTE}").classes("w-full outline-none").mark("details"):
+        card = ui.card().props(f"tabindex=-1 {DETAILS_ATTRIBUTE}").classes("w-full outline-none").mark("details")
+        with focus_key(card, DETAILS_FOCUS_KEY):
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label(_("Actions of run {id}").format(id=run.id)).classes("text-h6").mark("details-title")
-                icon_button("close", _("Close"), close_run).mark("details-close")
+                focus_key(icon_button("close", _("Close"), close_run), CLOSE_FOCUS_KEY).mark("details-close")
             with ui.row().classes("items-center gap-2"):
                 ui.label(format_time(run.started_at, zone)).mark("details-started")
                 ui.badge(_(status_label), color=status_color).mark("details-status")
@@ -522,11 +531,14 @@ async def history_page(services: Services) -> None:
                 ui.label(run.error_text).classes("whitespace-pre-wrap break-words font-mono text-negative").mark(
                     "run-error"
                 )
-            ui.select(
-                _filter_options(ACTION_KINDS),
-                label=_("Action"),
-                value=ANY if detail.kind is None else detail.kind.value,
-                on_change=lambda event: change_action_kind(run.id, event.value),
+            focus_key(
+                ui.select(
+                    _filter_options(ACTION_KINDS),
+                    label=_("Action"),
+                    value=ANY if detail.kind is None else detail.kind.value,
+                    on_change=lambda event: change_action_kind(run.id, event.value),
+                ),
+                ACTION_FILTER_FOCUS_KEY,
             ).props(f"outlined dense {ACTION_FILTER_ATTRIBUTE}").classes("w-48").mark("filter-action")
             if not detail.actions:
                 ui.label(_("This run has no actions.")).mark("no-actions")
