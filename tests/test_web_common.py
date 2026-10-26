@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import Mock, call
 from zoneinfo import ZoneInfo
@@ -11,11 +12,15 @@ from youtube_automanager.i18n import N_
 from youtube_automanager.web.ui import layout
 from youtube_automanager.web.ui.common import (
     ResultLabel,
+    actions_column,
+    add_row_button,
     busy,
     column,
     confirm,
     format_time,
+    icon_button,
     read_timezone,
+    set_loading,
     stored_timezone,
 )
 
@@ -31,6 +36,10 @@ class HelperPages:
     def __init__(self) -> None:
         self.options: dict = {}
         self.answers: list[bool] = []
+        # ``/busy`` keeps its button busy until this event is set.
+        self.release = asyncio.Event()
+        # The ids that the button of a row of ``/rows`` sent.
+        self.pressed: list = []
 
 
 @pytest.fixture
@@ -51,6 +60,26 @@ def helper_pages(nicegui_globals, monkeypatch):
         label = ResultLabel().mark("result")
         ui.button("Problem", on_click=lambda: label.problem("It failed")).mark("result-problem")
         ui.button("Ok", on_click=lambda: label.ok("It worked")).mark("result-ok")
+
+    @layout.register_page("/busy", label=N_("Busy"), icon="help")
+    async def busy_page(services):
+        async def work() -> None:
+            with busy(button):
+                await pages.release.wait()
+
+        async def load_icon() -> None:
+            set_loading(icon, True)
+
+        button = ui.button("Work", on_click=work).mark("busy-work")
+        icon = icon_button("delete", "Remove it", lambda: None).mark("busy-icon")
+        ui.button("Load the icon", on_click=load_icon).mark("busy-load-icon")
+
+    @layout.register_page("/rows", label=N_("Rows"), icon="help")
+    async def rows_page(services):
+        table = ui.table(
+            columns=[column("name", "Name"), actions_column()], rows=[{"id": 7, "name": 'Say "hi" <b>'}], row_key="id"
+        ).mark("rows")
+        add_row_button(table, lambda event: pages.pressed.append(event.args), icon="edit", label='Edit "it" <now>')
 
     return pages
 
@@ -90,7 +119,7 @@ def test_time_shows_in_the_zone_with_its_name():
 
 
 def test_busy_button_loads_and_is_off_during_the_block_and_back_to_normal_after_it():
-    button = Mock(is_deleted=False)
+    button = Mock(is_deleted=False, text="")
 
     with busy(button):
         assert button.mock_calls == [call.props("loading"), call.disable()]
@@ -99,7 +128,7 @@ def test_busy_button_loads_and_is_off_during_the_block_and_back_to_normal_after_
 
 
 def test_busy_button_is_back_to_normal_when_the_block_fails():
-    button = Mock(is_deleted=False)
+    button = Mock(is_deleted=False, text="")
 
     with pytest.raises(RuntimeError), busy(button):
         raise RuntimeError
@@ -108,7 +137,7 @@ def test_busy_button_is_back_to_normal_when_the_block_fails():
 
 
 def test_busy_button_that_the_block_deleted_stays_as_it_is():
-    button = Mock(is_deleted=False)
+    button = Mock(is_deleted=False, text="")
 
     with busy(button):
         button.is_deleted = True
@@ -202,3 +231,65 @@ async def test_result_label_shows_a_problem_in_the_color_of_an_error_and_an_ok_w
     user.find(marker="result-ok").click()
     await eventually(lambda: label.text == "It worked", "The ok text")
     assert "text-negative" not in label.classes
+
+
+async def test_busy_button_keeps_its_name_for_a_screen_reader_while_it_loads(helper_pages, user):
+    await user.open("/busy")
+    button = element_of(user, "busy-work")
+    assert "aria-label" not in button.props
+
+    user.find(marker="busy-work").click()
+    await eventually(lambda: button.props.get("loading"), "The loading button")
+    # Quasar hides the text of a loading button, so the button needs its text as its name.
+    assert button.props["aria-label"] == "Work"
+
+    helper_pages.release.set()
+    await eventually(lambda: not button.props.get("loading"), "The button after the work")
+    assert "aria-label" not in button.props
+
+
+async def test_a_loading_icon_button_keeps_its_own_name(helper_pages, user):
+    await user.open("/busy")
+    icon = element_of(user, "busy-icon")
+    assert isinstance(icon, ui.button)
+
+    user.find(marker="busy-load-icon").click()
+    await eventually(lambda: icon.props.get("loading"), "The loading icon button")
+    assert icon.props["aria-label"] == "Remove it"
+
+    with client_of(user):
+        set_loading(icon, False)
+    assert icon.props["aria-label"] == "Remove it"
+
+
+async def test_icon_button_has_the_label_as_its_tooltip_and_its_name(helper_pages, user):
+    await user.open("/busy")
+    icon = element_of(user, "busy-icon")
+
+    assert icon.props["aria-label"] == "Remove it"
+    assert icon.props["icon"] == "delete"
+    tooltips = [
+        element.text
+        for element in client_of(user).elements.values()
+        if isinstance(element, ui.tooltip) and element.props.get("target") == f"#{icon.html_id}"
+    ]
+    assert tooltips == ["Remove it"]
+    assert icon.text == ""
+
+
+async def test_row_button_has_the_label_as_its_name_and_sends_the_id_of_its_row(helper_pages, user):
+    await user.open("/rows")
+    table = element_of(user, "rows")
+
+    template = table.slots["body-cell-actions"].template or ""
+    # The label goes into the page as text, so a quote or a tag in it cannot break the template.
+    assert 'aria-label="Edit &quot;it&quot; &lt;now&gt;"' in template
+    assert "<q-tooltip>Edit &quot;it&quot; &lt;now&gt;</q-tooltip>" in template
+    # The click of the button does not reach the row, so the row does not act a second time.
+    assert "@click.stop" in template
+    assert [column["label"] for column in table.columns] == ["Name", "Actions"]
+
+    user.find(marker="rows").trigger("rowButton", args=7)
+
+    await eventually(lambda: helper_pages.pressed, "The press of the row button")
+    assert helper_pages.pressed == [7]

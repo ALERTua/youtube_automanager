@@ -156,7 +156,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
     await user.open("/subscriptions")
 
     table = element_of(user, "channels-table")
-    assert [column["label"] for column in table.columns] == ["Channel", "Handle", "Subscribed", "Rules"]
+    assert [column["label"] for column in table.columns] == ["Channel", "Handle", "Subscribed", "Rules", "Actions"]
     assert table.rows == [
         {
             "id": ALPHA,
@@ -391,7 +391,13 @@ async def test_a_search_shows_the_found_channels_with_their_stored_state(user, s
 
     await eventually(lambda: elements_of(user, "found-table"), "The table of the found channels")
     table = element_of(user, "found-table")
-    assert [column["label"] for column in table.columns] == ["Channel", "Handle", "Subscribers", "Subscribed"]
+    assert [column["label"] for column in table.columns] == [
+        "Channel",
+        "Handle",
+        "Subscribers",
+        "Subscribed",
+        "Actions",
+    ]
     assert table.rows == [
         {
             "id": FOUND,
@@ -412,6 +418,10 @@ async def test_a_search_shows_the_found_channels_with_their_stored_state(user, s
         {"id": BRAVO, "title": "Bravo", "thumbnail": "", "handle": "", "subscribers": "12", "subscribed": "No"},
     ]
     assert commands(fake_starter) == [["find-channels", "--query=cooking & co"]]
+    # Each row has the Edit button, which gives the keyboard the way of a click on the row.
+    assert table.slots["body-cell-actions"].template.count('aria-label="Edit"') == 1
+    user.find(marker="found-table").trigger("rowButton", args=FOUND)
+    await eventually(lambda: dialog_shows(user, FOUND), "The open dialog of the found channel")
 
 
 async def test_the_enter_key_starts_the_search(user, fake_starter):
@@ -847,6 +857,7 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
     texts = []
     # The columns of each table, by the id of the table, because the test collects the texts of the page three times.
     columns = {}
+    row_buttons = set()
 
     def collect() -> None:
         for element in user.client.elements.values():
@@ -858,6 +869,7 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
                 texts.extend(element.options.values() if isinstance(element.options, dict) else [])
             if isinstance(element, ui.table):
                 columns[element.id] = [column["label"] for column in element.columns]
+                row_buttons.update(slot.template for name, slot in element.slots.items() if name == "body-cell-actions")
                 for row in element.rows:
                     texts.extend(str(row[name]) for name in ("subscribed", "rules") if row.get(name))
 
@@ -880,7 +892,9 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
     assert "<<Lists refreshed: {time}>>" not in texts
     assert "<<The lists were never refreshed.>>" in texts
     column_labels = [label for labels in columns.values() for label in labels]
-    assert len(column_labels) == 8
+    assert len(column_labels) == 10
+    assert len(row_buttons) == 1
+    assert all('aria-label="&lt;&lt;Edit&gt;&gt;"' in template for template in row_buttons)
     assert [label for label in column_labels if not (label.startswith("<<") and label.endswith(">>"))] == []
     untranslated = [
         text

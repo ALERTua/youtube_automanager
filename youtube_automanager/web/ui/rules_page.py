@@ -43,7 +43,16 @@ from youtube_automanager.runner import RunAlreadyActive
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
-from youtube_automanager.web.ui.common import busy, column, confirm, format_time
+from youtube_automanager.web.ui.common import (
+    actions_column,
+    add_row_button,
+    busy,
+    column,
+    confirm,
+    format_time,
+    icon_button,
+    set_loading,
+)
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day, today_button, today_in
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
@@ -165,6 +174,7 @@ def rule_columns() -> list[dict]:
         column("no_shorts", _("No Shorts")),
         column("condition", _("Condition")),
         column("updated", _("Changed")),
+        actions_column(),
     ]
 
 
@@ -664,9 +674,9 @@ class RuleEditor:
                 ).props("outlined dense").classes("w-64").mark(_marker("group-kind", path))
                 ui.space()
                 if parent is not None:
-                    ui.button(icon="delete", on_click=lambda: self._remove(parent, path[-1])).props(
-                        "flat round dense"
-                    ).tooltip(_("Remove the group")).mark(_marker("remove", path))
+                    icon_button("delete", _("Remove the group"), lambda: self._remove(parent, path[-1])).mark(
+                        _marker("remove", path)
+                    )
             if not group.items and parent is None:
                 ui.label(_("Without conditions, the rule takes each video of its channels.")).classes(
                     "text-grey-7"
@@ -712,9 +722,9 @@ class RuleEditor:
                     value=leaf.case_sensitive,
                     on_change=lambda event: self._set(leaf, "case_sensitive", bool(event.value)),
                 ).mark(_marker("case", path))
-            ui.button(icon="close", on_click=lambda: self._remove(parent, path[-1])).props("flat round dense").classes(
+            icon_button("close", _("Remove the condition"), lambda: self._remove(parent, path[-1])).classes(
                 "ml-auto"
-            ).tooltip(_("Remove the condition")).mark(_marker("remove", path))
+            ).mark(_marker("remove", path))
 
     def _value_input(self, leaf: Leaf, path: tuple[int, ...]) -> None:
         def set_value(value: Any) -> None:
@@ -1019,12 +1029,8 @@ class ApplyDialog:
     def _set_working(self, working: bool) -> None:
         self.working = working
         for button in (self.preview_button, self.add_button):
-            if working:
-                button.props("loading")
-                button.disable()
-            else:
-                button.props(remove="loading")
-                button.enable()
+            set_loading(button, working)
+            button.set_enabled(not working)
         self.since_input.set_enabled(not working)
 
     def _status(self, text: str, *, error: bool = False) -> None:
@@ -1227,6 +1233,9 @@ async def rules_page(services: Services) -> None:
         playlist_select.set_options(options, value=playlist_select.value if playlist_select.value in options else ANY)
         rules_view.refresh()
 
+    async def edit_rule(event) -> None:
+        await open_editor(int(event.args))
+
     @ui.refreshable
     def rules_view() -> None:
         stored = state.stored
@@ -1248,7 +1257,8 @@ async def rules_page(services: Services) -> None:
         table.add_slot("body-cell-channels", LONG_CELL)
         table.add_slot("body-cell-condition", LONG_CELL)
         # The rule id is the only part of the click that the page needs.
-        table.on("rowClick", lambda event: open_editor(int(event.args)), js_handler="(event, row) => emit(row.id)")
+        table.on("rowClick", edit_rule, js_handler="(event, row) => emit(row.id)")
+        add_row_button(table, edit_rule, icon="edit", label=_("Edit"))
 
     def close_editor() -> None:
         editor_dialog.close()

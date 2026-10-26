@@ -122,6 +122,7 @@ async def test_runs_come_newest_first_in_the_time_zone_of_the_schedule(user, ses
         "Videos added",
         "Videos seen",
         "Error",
+        "Actions",
     ]
     assert [row["id"] for row in table.rows] == [3, 2, 1]
     assert table.rows[0] == {
@@ -839,6 +840,7 @@ async def test_each_text_of_the_history_page_goes_through_the_translation(
     data = {"Europe/Kyiv", "boom", "vid", "detail text"}
     texts = []
     column_labels = []
+    row_buttons = []
 
     async with running_service(settings, fake_starter) as user:
         await user.open("/history")
@@ -853,12 +855,14 @@ async def test_each_text_of_the_history_page_goes_through_the_translation(
                 texts.extend(element.options.values() if isinstance(element.options, dict) else [])
             if isinstance(element, ui.table):
                 column_labels.extend(column["label"] for column in element.columns)
+                row_buttons.extend(slot.template for name, slot in element.slots.items() if name == "body-cell-actions")
                 for row in element.rows:
                     texts.extend(str(row[name]) for name in ("status", "trigger", "action") if name in row)
 
     assert "<<History>>" in texts
     assert "<<Videos added>>" in column_labels
-    assert len(column_labels) == 15
+    assert len(column_labels) == 16
+    assert [template.count('aria-label="&lt;&lt;Open&gt;&gt;"') for template in row_buttons] == [1]
     assert [label for label in column_labels if not (label.startswith("<<") and label.endswith(">>"))] == []
     untranslated = [
         text

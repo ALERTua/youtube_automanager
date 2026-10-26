@@ -51,6 +51,11 @@ metadata:
 - In the user simulation, a second `PatientUser(user.http_client)` is a second tab of the same service, with its own client.
 - A page that reads the database with `asyncio.to_thread` after each change of a filter drops a read that ends after a newer read started. Without a counter of the reads, a slow old read replaces the newer table.
 
+- An icon-only button gets its name from `icon_button` in `web/ui/common.py`, which sets the tooltip and `props["aria-label"]`. Assign `props["aria-label"] = text` as a dict item: it needs no quoting, unlike `props('aria-label="..."')`. A Quasar button with `loading` hides its label, so a button that loads goes through `set_loading` (or `busy`), which gives it its text as `aria-label` for the time of the load. Do not set `loading` by hand.
+- `element.tooltip(text)` of NiceGUI 3.18 makes a sibling `Tooltip` with the prop `target` (the id of the element), not a child. A test finds it by that prop. A `with button: ui.tooltip(...)` makes a child, which has no `target`.
+- A table row that opens something on a click needs a keyboard path too: `add_row_button` and `actions_column` in `web/ui/common.py` add a column "Actions" with one `q-btn` for each row, and `@click.stop` keeps its click from the row. The event is `rowButton`, and `event.args` is the row id as for `rowClick`. The simulation does not render the slot, so a test reads `table.slots["body-cell-actions"].template` and triggers `rowButton`.
+- `ui.skip_link(text, target=element)` moves itself to the top of the layout and needs `target` to exist first, so the shell makes the content column before the link. The first Tab of a real browser reaches the link, and Enter gives the focus to the column.
+
 ## Translations
 
 - Babel 2.18 reads the extraction mapping from `[tool.babel]` of `pyproject.toml` when you give `-F pyproject.toml`. It writes each location with `/`, also on Windows.

@@ -29,10 +29,13 @@ from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.common import (
     RUN_STATUSES,
     RUN_TRIGGERS,
+    actions_column,
+    add_row_button,
     busy,
     column,
     confirm,
     format_time,
+    icon_button,
     stored_timezone,
 )
 from youtube_automanager.web.ui.dates import today_button
@@ -278,6 +281,7 @@ def run_columns() -> list[dict]:
         column("added", _("Videos added")),
         column("seen", _("Videos seen")),
         column("error", _("Error")),
+        actions_column(),
     ]
 
 
@@ -411,6 +415,7 @@ async def history_page(services: Services) -> None:
         table.add_slot("body-cell-error", ERROR_CELL)
         # The run id is the only part of the click that the page needs.
         table.on("rowClick", open_run, js_handler="(event, row) => emit(row.id)")
+        add_row_button(table, open_run, icon="open_in_new", label=_("Open"))
         if result.pages > 1:
             ui.pagination(
                 1,
@@ -430,7 +435,7 @@ async def history_page(services: Services) -> None:
         with ui.card().classes("w-full").mark("details"):
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label(_("Actions of run {id}").format(id=run.id)).classes("text-h6").mark("details-title")
-                ui.button(icon="close", on_click=lambda: show_run(None)).props("flat round dense").mark("details-close")
+                icon_button("close", _("Close"), lambda: show_run(None)).mark("details-close")
             with ui.row().classes("items-center gap-2"):
                 ui.label(format_time(run.started_at, zone)).mark("details-started")
                 ui.badge(_(status_label), color=status_color).mark("details-status")

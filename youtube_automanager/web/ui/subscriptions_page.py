@@ -33,7 +33,7 @@ from youtube_automanager.i18n import N_, _
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
-from youtube_automanager.web.ui.common import busy, column, read_timezone
+from youtube_automanager.web.ui.common import actions_column, add_row_button, busy, column, read_timezone
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day
 from youtube_automanager.web.ui.layout import register_page
 
@@ -265,6 +265,7 @@ def channel_columns() -> list[dict]:
         column("handle", _("Handle")),
         column("subscribed", _("Subscribed")),
         column("rules", _("Rules")),
+        actions_column(),
     ]
 
 
@@ -274,6 +275,7 @@ def found_columns() -> list[dict]:
         column("handle", _("Handle")),
         column("subscribers", _("Subscribers")),
         column("subscribed", _("Subscribed")),
+        actions_column(),
     ]
 
 
@@ -425,6 +427,7 @@ async def subscriptions_page(services: Services) -> None:
         )
         table.add_slot("body-cell-title", TITLE_CELL)
         table.on("rowClick", open_channel, js_handler="(event, row) => emit(row.id)")
+        add_row_button(table, open_channel, icon="edit", label=_("Edit"))
 
     def _details_view(channel: SelectedChannel) -> None:
         rules = state.lists.rules_of(channel.channel_id)
@@ -578,6 +581,7 @@ async def subscriptions_page(services: Services) -> None:
         )
         channels_table.add_slot("body-cell-title", TITLE_CELL)
         channels_table.on("rowClick", open_channel, js_handler="(event, row) => emit(row.id)")
+        add_row_button(channels_table, open_channel, icon="edit", label=_("Edit"))
     show_channels()
 
     with ui.dialog().mark("channel-dialog") as dialog, ui.card().classes("w-full max-w-lg"):

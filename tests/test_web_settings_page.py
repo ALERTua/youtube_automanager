@@ -701,6 +701,7 @@ async def test_the_controls_are_off_while_the_session_check_runs(user, sessions,
 
     button = element_of(user, "check-session")
     assert "loading" in button.props
+    assert button.props["aria-label"] == "Check the session"
     assert text_of(user, "cookie-result") == "The service checks the session with YouTube. This takes up to a minute."
     for marker in ("check-session", "cookie-upload", "cookie-text", "cookie-store"):
         assert not element_of(user, marker).enabled, marker
@@ -712,6 +713,7 @@ async def test_the_controls_are_off_while_the_session_check_runs(user, sessions,
 
     await result_is(user, "YouTube accepts the cookies.")
     assert "loading" not in element_of(user, "check-session").props
+    assert "aria-label" not in element_of(user, "check-session").props
     for marker in ("check-session", "cookie-upload", "cookie-text", "cookie-store"):
         assert element_of(user, marker).enabled, marker
 
@@ -864,6 +866,25 @@ async def test_the_stored_mode_shows_on_the_page(nicegui_globals, settings, sess
         await eventually(lambda: draft_shown(user), "The buttons of the draft")
         set_value(user, "mode-count", 7.0)
         await eventually(lambda: not draft_shown(user), "No buttons of the draft")
+
+
+async def test_the_floating_save_keeps_its_name_while_the_save_waits_for_the_question(user, sessions):
+    await user.open("/settings")
+    set_value(user, "mode", ProcessingMode.NEWEST)
+    set_value(user, "mode-count", 3)
+    button = element_of(user, "settings-save")
+
+    user.find(marker="settings-save").click()
+    await confirmation_opens(user)
+
+    # Quasar hides the text of a loading button, so the button keeps its text as its name.
+    assert "loading" in button.props
+    assert button.props["aria-label"] == "Save"
+
+    user.find(marker="mode-cancel").click()
+
+    await eventually(lambda: "loading" not in button.props, "The end of the wait")
+    assert "aria-label" not in button.props
 
 
 @pytest.mark.parametrize("count", [None, 0, -3, 2.5])
@@ -1292,6 +1313,8 @@ async def test_the_test_button_shows_a_spinner_while_the_send_runs(user, session
     user.find(marker="target-1-test").click()
     await eventually(lambda: "loading" in element_of(user, "target-1-test").props, "The spinner")
     assert not element_of(user, "target-1-test").enabled
+    # Quasar hides the text of a loading button, so the button keeps its text as its name.
+    assert element_of(user, "target-1-test").props["aria-label"] == "Send a test"
     # The other target can get its test at the same time.
     user.find(marker="target-2-test").click()
     await user.should_see("The test notification went to Fast.")
@@ -1301,6 +1324,7 @@ async def test_the_test_button_shows_a_spinner_while_the_send_runs(user, session
 
     await user.should_see("The test notification went to Slow.")
     assert "loading" not in element_of(user, "target-1-test").props
+    assert "aria-label" not in element_of(user, "target-1-test").props
     assert element_of(user, "target-1-test").enabled
 
 

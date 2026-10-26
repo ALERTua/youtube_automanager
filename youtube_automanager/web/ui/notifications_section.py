@@ -26,7 +26,7 @@ from nicegui import ui
 from youtube_automanager.i18n import _
 from youtube_automanager.notify import EVENT_LEVELS, Event, Level, Notifier
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import confirm
+from youtube_automanager.web.ui.common import confirm, icon_button, set_loading
 from youtube_automanager.web.ui.notification_targets import (
     APPRISE_URLS,
     EVENT_LABELS,
@@ -233,12 +233,9 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
         button = state.test_buttons.get(target_id)
         if button is None or button.is_deleted:
             return
-        if target_id in state.sending:
-            button.props("loading")
-            button.disable()
-        else:
-            button.props(remove="loading")
-            button.enable()
+        sending = target_id in state.sending
+        set_loading(button, sending)
+        button.set_enabled(not sending)
 
     async def send_test(target_id: int) -> None:
         if target_id in state.sending:
@@ -348,12 +345,15 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
                 .mark(f"{marker}-test")
             )
             show_sending(target.id)
-            ui.button(icon="edit", on_click=lambda record=target: open_editor(record)).props(
-                "flat round dense"
-            ).tooltip(_("Change the name or the URL")).mark(f"{marker}-edit")
-            ui.button(icon="delete", on_click=lambda record=target: ask_delete(record)).props(
-                "flat round dense color=negative"
-            ).tooltip(_("Delete the target")).mark(f"{marker}-delete")
+            icon_button("edit", _("Change the name or the URL"), lambda record=target: open_editor(record)).mark(
+                f"{marker}-edit"
+            )
+            icon_button(
+                "delete",
+                _("Delete the target"),
+                lambda record=target: ask_delete(record),
+                props="flat round dense color=negative",
+            ).mark(f"{marker}-delete")
 
     @ui.refreshable
     def targets_view() -> None:

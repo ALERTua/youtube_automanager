@@ -669,6 +669,39 @@ async def test_a_change_while_the_preview_runs_shows_no_old_result(user, session
     assert not elements_of(user, "preview-table")
 
 
+async def test_the_preview_button_of_the_apply_dialog_keeps_its_name_while_it_loads(
+    user, sessions, settings, account_copy, children
+):
+    store_cookies(sessions, settings)
+    saved_rule(sessions)
+    finish = threading.Event()
+    value = Preview((PreviewVideo("v", "Video", "Alpha", today(), Mark.WILL_ADD),), {Mark.WILL_ADD: 1}).to_value()
+
+    class SlowChild(EndedChild):
+        def wait(self, timeout=None):
+            finish.wait(timeout=10)
+            return self.returncode
+
+        def poll(self):
+            return self.returncode if finish.is_set() else None
+
+    children.plan.append(SlowChild(0, json.dumps(value) + "\n"))
+    await user.open("/rules")
+    await open_editor(user, 1)
+    await open_apply(user)
+    button = element_of(user, "apply-preview")
+
+    user.find(marker="apply-preview").click()
+    await eventually(lambda: button.props.get("loading"), "The loading preview button")
+    # Quasar hides the text of a loading button, so the button keeps its text as its name.
+    assert button.props["aria-label"] == "Preview"
+
+    finish.set()
+    await eventually(lambda: elements_of(user, "apply-result-table"), "The result of the preview")
+    assert "loading" not in button.props
+    assert "aria-label" not in button.props
+
+
 async def test_the_preview_says_that_the_matching_videos_wait_for_the_account(user, sessions, account_copy, youtube):
     # The settings have a cookie key, but no cookies are stored.
     read_before(sessions, A, "old")

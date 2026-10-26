@@ -14,6 +14,7 @@ from nicegui import ui
 
 from youtube_automanager.i18n import _
 from youtube_automanager.web.services import Services
+from youtube_automanager.web.ui.common import icon_button
 from youtube_automanager.web.ui.theme import (
     DARK_MODE,
     ICONS,
@@ -80,6 +81,7 @@ def frame(current: Page, services: Services, theme: Theme) -> Generator[None]:
         dark.value = DARK_MODE[theme]
         theme_button.props(f"icon={ICONS[theme]}")
         theme_tooltip.text = _(LABELS[theme])
+        theme_button.props["aria-label"] = _(LABELS[theme])
         await asyncio.to_thread(save_theme, services.sessions, theme)
 
     with ui.left_drawer(bordered=True).mark("navigation") as drawer, ui.list().classes("w-full"):
@@ -92,7 +94,7 @@ def frame(current: Page, services: Services, theme: Theme) -> Generator[None]:
             if page.path == current.path:
                 item.props("active")
     with ui.header(elevated=True).classes("items-center"):
-        ui.button(icon="menu", on_click=drawer.toggle).props("flat round color=white")
+        icon_button("menu", _("Menu"), drawer.toggle, props="flat round color=white").mark("menu")
         ui.label(_("YouTube AutoManager")).classes("text-h6")
         ui.space()
         with (
@@ -100,6 +102,10 @@ def frame(current: Page, services: Services, theme: Theme) -> Generator[None]:
             .props("flat round color=white")
             .mark("theme") as theme_button
         ):
+            theme_button.props["aria-label"] = _(LABELS[theme])
             theme_tooltip = ui.tooltip(_(LABELS[theme]))
-    with ui.column().classes("w-full max-w-screen-xl mx-auto p-4 gap-4"):
+    content = ui.column().classes("w-full max-w-screen-xl mx-auto p-4 gap-4")
+    # The link moves itself to the top of the page, so the keyboard reaches it first.
+    ui.skip_link(_("Skip to the content"), target=content)
+    with content:
         yield
