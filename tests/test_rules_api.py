@@ -517,6 +517,38 @@ def test_an_old_schedule_row_comes_back_from_a_get_and_a_put(settings, account, 
     assert answer.json() == old | {"interval_s": None}
 
 
+def test_the_stored_time_zone_comes_back_also_when_it_is_not_in_the_list(settings, account, fake_starter, monkeypatch):
+    # An older row can hold a name that ZoneInfo reads but the list of the time zones does not have, for example a
+    # name with a space at its end on Windows. A test cannot rely on such a name on each system, so the list loses a
+    # real name instead.
+    known = frozenset(api.available_timezones()) - {"Europe/Kyiv"}
+    monkeypatch.setattr(api, "_known_timezones", lambda: known)
+    store(account, Schedule(enabled=True, kind=ScheduleKind.CRON, cron_expression="0 18 * * *", timezone="Europe/Kyiv"))
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        old = client.get("/api/schedule").json()
+        again = client.put("/api/schedule", json=old)
+        moved = client.put("/api/schedule", json=old | {"timezone": "UTC"})
+        back = client.put("/api/schedule", json=old)
+
+    assert old["timezone"] == "Europe/Kyiv"
+    assert (again.status_code, again.json()) == (200, old)
+    assert moved.status_code == 200
+    # After the move, the zone is neither stored nor in the list.
+    assert (back.status_code, back.json()["detail"]) == (
+        422,
+        "Unknown time zone 'Europe/Kyiv'. Use an IANA name, for example Europe/Kyiv.",
+    )
+
+
+def test_a_cron_expression_loses_the_spaces_around_it(client, account):
+    answer = client.put("/api/schedule", json={"kind": "cron", "timezone": "UTC", "cron_expression": "  0 6 * * *  "})
+
+    assert (answer.status_code, answer.json()["cron_expression"]) == (200, "0 6 * * *")
+    with account() as session:
+        assert session.get(Schedule, 1).cron_expression == "0 6 * * *"
+
+
 def test_a_put_while_the_scheduler_is_stopped_tells_nobody(client, monkeypatch):
     sent = []
     monkeypatch.setattr(notify, "send_to_stored_targets", lambda sessions, notification: sent.append(notification))
@@ -549,16 +581,28 @@ def test_the_blocking_calls_of_a_schedule_put_run_off_the_event_loop(client, mon
 
         return probed
 
+    # The list of the time zones is read once, so the test empties it before and after.
+    api._known_timezones.cache_clear()
+    monkeypatch.setattr(api, "available_timezones", probe("zones", api.available_timezones))
+    monkeypatch.setattr(api, "read_timezone", probe("stored zone", api.read_timezone))
     monkeypatch.setattr(api, "upcoming_run_times", probe("run times", api.upcoming_run_times))
     monkeypatch.setattr(api, "save_schedule", probe("save", api.save_schedule))
     monkeypatch.setattr(notify, "send_to_stored_targets", probe("notify", lambda sessions, notification: None))
 
-    answer = client.put(
-        "/api/schedule", json={"kind": "cron", "timezone": "UTC", "cron_expression": "0 6 * * *", "enabled": False}
-    )
+    try:
+        # The stored zone is read only for a zone that is not in the list.
+        answer = client.put(
+            "/api/schedule",
+            json={"kind": "cron", "timezone": "Etc/Unknown", "cron_expression": "0 6 * * *", "enabled": False},
+        )
+        saved = client.put(
+            "/api/schedule", json={"kind": "cron", "timezone": "UTC", "cron_expression": "0 6 * * *", "enabled": False}
+        )
+    finally:
+        api._known_timezones.cache_clear()
 
-    assert answer.status_code == 200
-    assert calls == [("run times", False), ("save", False), ("notify", False)]
+    assert (answer.status_code, saved.status_code) == (422, 200)
+    assert calls == [("zones", False), ("stored zone", False), ("run times", False), ("save", False), ("notify", False)]
 
 
 # The runs.
@@ -629,13 +673,28 @@ def test_a_run_shows_its_actions_in_the_order_of_their_time_with_a_filter(client
     assert errors["actions"] == []
 
 
-@pytest.mark.parametrize("path", ["/api/runs/{}", "/api/rules/{}"])
-def test_an_id_out_of_the_range_of_the_database_gets_422(client, path):
-    answers = {number: client.get(path.format(number)).status_code for number in (0, -1, 2**63, 10**30)}
-    largest = client.get(path.format(2**63 - 1))
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("GET", "/api/runs/{}"), ("GET", "/api/rules/{}"), ("PUT", "/api/rules/{}"), ("DELETE", "/api/rules/{}")],
+)
+def test_an_id_out_of_the_range_of_the_database_gets_422(client, account, method, path):
+    sent = body() if method == "PUT" else None
+    answers = {
+        number: client.request(method, path.format(number), json=sent).status_code for number in (0, -1, 2**63, 10**30)
+    }
+    largest = client.request(method, path.format(2**63 - 1), json=sent)
 
     assert answers == {0: 422, -1: 422, 2**63: 422, 10**30: 422}
     assert largest.status_code == 404
+    assert set(rule_rows(account)) == {1, 2}
+
+
+def test_an_offset_of_the_runs_out_of_the_range_of_the_database_gets_422(client):
+    answers = {offset: client.get("/api/runs", params={"offset": offset}).status_code for offset in (2**63, 10**30)}
+    largest = client.get("/api/runs", params={"offset": 2**63 - 1})
+
+    assert answers == {2**63: 422, 10**30: 422}
+    assert (largest.status_code, largest.json()) == (200, [])
 
 
 def test_an_unknown_run_gets_404_and_an_unknown_action_kind_gets_422(client):

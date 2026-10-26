@@ -57,6 +57,7 @@ from youtube_automanager.scheduler import (
     SchedulerState,
     ScheduleSpec,
     load_schedule,
+    read_timezone,
     save_schedule,
     upcoming_run_times,
 )
@@ -162,7 +163,7 @@ async def status(services: ServicesDep) -> StatusOut:
 def runs(
     services: ServicesDep,
     limit: Annotated[int, Query(ge=1, le=MAX_RUNS_PAGE)] = 50,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    offset: Annotated[int, Query(ge=0, le=MAX_ID)] = 0,
 ) -> list[RunOut]:
     """Return the runs, newest first."""
     with services.sessions() as session:
@@ -420,14 +421,17 @@ def _is_valid(kind: ScheduleKind, timezone: str, cron: str | None, interval: int
     return True
 
 
-def _checked_schedule(body: ScheduleIn) -> ScheduleSpec:
+def _checked_schedule(body: ScheduleIn, services: Services) -> ScheduleSpec:
     """Return the schedule of ``body``. Raise ValueError with the reason when it cannot be saved. This call blocks.
 
-    The field that the kind does not use goes into the row only when it is valid on its own, as on the scheduler page.
-    So an old row, for example a cron schedule with an interval below MIN_INTERVAL_S, comes back from a GET and a PUT
-    without an error, and the row never holds a wrong text.
+    The time zone is a known one, or the one that the schedule has now, as on the scheduler page. The field that the
+    kind does not use goes into the row only when it is valid on its own, as on the scheduler page too. So an old row,
+    for example a cron schedule with an interval below MIN_INTERVAL_S, comes back from a GET and a PUT without an
+    error, and the row never holds a wrong text.
     """
-    if body.timezone not in _known_timezones():
+    if body.timezone not in _known_timezones() and body.timezone != read_timezone(
+        services.sessions, services.settings.tz
+    ):
         raise ValueError(f"Unknown time zone {body.timezone!r}. Use an IANA name, for example Europe/Kyiv.")
     cron = (body.cron_expression or "").strip() or None
     interval = body.interval_s
@@ -459,7 +463,7 @@ async def put_schedule(body: ScheduleIn, services: ServicesDep, background: Back
     """
     try:
         # The search for a run time of a rare cron expression takes up to a few hundred milliseconds.
-        spec = await run_in_threadpool(_checked_schedule, body)
+        spec = await run_in_threadpool(_checked_schedule, body, services)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     before = await services.scheduler.state()
