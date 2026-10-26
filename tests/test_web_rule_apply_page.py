@@ -1484,8 +1484,15 @@ async def test_a_start_that_fails_after_its_caller_is_gone_goes_to_the_log(
             assert "The apply of rule 1 did not start" in caplog.text
             assert logged in caplog.text
             assert runs(sessions) == []
-    # The error of the claim is the subject of this test.
-    caplog.clear()
+    if outcome is refuse_claim:
+        # The error of the claim is the subject of this test, so only its one record leaves the check of the fixture
+        # `no_logged_errors`. Each other error record of the test stays in that check.
+        (record,) = [
+            record
+            for record in caplog.records
+            if record.levelno >= logging.ERROR and record.getMessage() == "The apply of rule 1 did not start"
+        ]
+        caplog.records.remove(record)
 
 
 async def test_close_cancels_the_task_of_an_apply_that_does_not_end_and_waits_for_the_cancel(
