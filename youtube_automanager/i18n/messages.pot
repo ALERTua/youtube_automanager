@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-26 11:15+0200\n"
+"POT-Creation-Date: 2026-10-26 11:47+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -131,6 +131,11 @@ msgstr ""
 #: youtube_automanager/web/ui/rules_page.py
 #, python-brace-format
 msgid "Also add videos from: {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
+msgid "An apply of the rule \"{name}\" runs. Videos added: {count}."
 msgstr ""
 
 #: youtube_automanager/web/ui/notifications_section.py
@@ -1141,6 +1146,11 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 #, python-brace-format
+msgid "The apply ended, but its run {run} is not in the database any more."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
 msgid "The apply failed: {error} The History page shows it as run {run}."
 msgstr ""
 
@@ -1163,6 +1173,13 @@ msgstr ""
 msgid ""
 "The apply runs. Each add takes {seconds} s or more, so the apply takes "
 "{minutes} min or more. The History page shows the apply as a run."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
+msgid ""
+"The apply runs. Videos added: {added} of {count}. The History page shows "
+"the apply as run {run}."
 msgstr ""
 
 #. Translators: {cause} is the English cause from the service.

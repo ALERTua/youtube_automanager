@@ -12,7 +12,7 @@ YouTube AutoManager adds new YouTube videos to your playlists by your rules. It 
 - It reads the uploads of each channel of a rule, or the subscriptions feed of your account for a rule without channels.
 - It checks each new video against each enabled rule, and it adds a matching video to the target playlist once. A video that you removed from the playlist does not come back.
 - A rule condition is a tree of groups: "all of", "any of" and "none of". Its conditions read the title, the channel, the duration, the upload date, the live status and Shorts. A title condition can be a regular expression.
-- The rules page shows a preview of what the next run does with a rule. The button "Apply to videos from a date" adds the matching older videos of a saved rule.
+- The rules page shows a preview of what the next run does with a rule. The button "Apply to videos from a date" adds the matching older videos of a saved rule. The apply runs in the background of the service, so you can close the page, and the Rules page and the History page show it while it runs.
 - The subscriptions page lists your subscriptions, finds channels on YouTube, and subscribes or unsubscribes.
 - The scheduler page sets the schedule of the runs, and the history page shows each run with each decision about a video.
 - The service sends notifications through [Apprise](https://appriseit.com/services/), for example to Telegram or Discord. Examples are a summary of each run, a failed run, and cookies that stop to work.

@@ -717,6 +717,28 @@ def test_a_run_waits_for_an_active_apply(runner, fake_starter, db_sessions):
     runner.abandon(run_id, "The test needs no child.")
 
 
+def test_an_apply_tells_the_id_of_its_run_before_the_child_starts(runner, fake_starter, db_sessions):
+    told = []
+
+    applied = apply_in_child(
+        runner, db_sessions, 3, SINCE, lambda run_id: told.append((run_id, len(fake_starter.calls)))
+    )
+
+    assert told == [(applied.run_id, 0)]
+    assert len(fake_starter.calls) == 1
+
+
+def test_a_failed_listener_of_the_run_id_does_not_stop_the_apply(runner, fake_starter, db_sessions, caplog):
+    def on_claimed(run_id):
+        raise RuntimeError("the event loop is closed")
+
+    applied = apply_in_child(runner, db_sessions, 3, SINCE, on_claimed)
+
+    assert applied.status is RunStatus.SUCCEEDED
+    assert not runner.is_active()
+    assert f"Run {applied.run_id}: the caller of the apply cannot learn the id of the run" in caplog.text
+
+
 def test_a_stop_of_the_service_ends_an_active_apply_as_an_interrupted_run(runner, fake_starter, db_sessions):
     fake_starter.plan.append({"blocking": True})
     outcome = []

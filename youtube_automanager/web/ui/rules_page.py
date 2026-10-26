@@ -25,7 +25,7 @@ from nicegui import ui
 from youtube_automanager.db.models import RunStatus
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.i18n import N_, _
-from youtube_automanager.rule_actions import AppliedRun, apply_in_child, preview_in_child
+from youtube_automanager.rule_actions import AppliedRun, preview_in_child, read_applied
 from youtube_automanager.rules_store import (
     MAX_DAYS_BACK,
     ChannelChoice,
@@ -38,6 +38,7 @@ from youtube_automanager.rules_store import (
     validate_name,
     validate_playlist,
 )
+from youtube_automanager.run_events import ActionItem
 from youtube_automanager.runner import RunAlreadyActive
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
@@ -933,8 +934,9 @@ class ApplyDialog:
     """The dialog that previews a saved rule for the videos since a day, and adds the matching ones to its playlist.
 
     The apply reads and evaluates the videos again, because the preview can be old. It is a run of the history with
-    the trigger ``rule_apply``, and it adds at most APPLY_LIMIT videos, the oldest first. The dialog belongs to the
-    page, so an apply that runs survives the close of the dialog and of the editor.
+    the trigger ``rule_apply``, and it adds at most APPLY_LIMIT videos, the oldest first. The apply runs in a task of
+    the service, so it goes on after the close of the dialog, of the editor and of the tab. The dialog follows its run
+    through the events of the runs.
     """
 
     def __init__(self, services: Services) -> None:
@@ -945,8 +947,18 @@ class ApplyDialog:
         self.preview: Preview | None = None
         self.preview_day: date | None = None
         self.working = False
+        # The run of the newest apply of this dialog, the number of videos that it adds, and whether its end is shown.
+        # A progress of the run can come after its end, so the flag keeps the end text.
+        self.run_id: int | None = None
+        self.count = 0
+        self.ended = False
         with ui.dialog().mark("apply-dialog") as self.dialog:
             self.card = ui.card().classes("gap-2").style("width: min(56rem, 95vw); max-width: 95vw")
+        # The page subscribes here, so NiceGUI ends each subscription when the client of the page is deleted. The type
+        # checker ty reads the callback of `Event.subscribe` as `() -> Any` only, and refuses a handler with arguments.
+        services.run_events.progress.subscribe(self._on_progress)  # ty: ignore[invalid-argument-type]
+        services.run_events.finished.subscribe(self._on_finished)  # ty: ignore[invalid-argument-type]
+        services.applies.changed.subscribe(self._on_changed)
 
     def open(self, stored: Stored, rule: RuleRecord, *, unsaved: bool) -> None:
         """Show the dialog for ``rule``. While an apply runs, the dialog shows that apply."""
@@ -1071,28 +1083,112 @@ class ApplyDialog:
             ).format(seconds=SECONDS_PER_ADD, minutes=math.ceil(count * SECONDS_PER_ADD / 60))
         )
         try:
-            applied = await asyncio.to_thread(
-                apply_in_child, self.services.runner, self.services.sessions, rule.id, since
-            )
+            run_id = await self.services.applies.start(rule.id, since)
         except ChildError as error:
             LOG.warning("The apply of rule %s did not start: %s", rule.id, error)
+            self._set_working(False)
             self._status(_("The apply did not start. {reason}").format(reason=child_error_text(error)), error=True)
             self.add_button.set_visibility(True)
             return
-        finally:
+        except BaseException:
+            # NiceGUI tells the user about another error, and the dialog lets the user try again.
             self._set_working(False)
+            self.add_button.set_visibility(True)
+            raise
+        self.run_id, self.count, self.ended = run_id, count, False
         # The preview is old now, so a new apply needs a new preview.
         self.preview, self.preview_day = None, None
         self.limit_label.set_visibility(False)
-        text = applied_text(applied)
-        if applied.status is not RunStatus.SUCCEEDED:
+
+    def _on_progress(self, run_id: int, added: int, seen: int, actions: tuple[ActionItem, ...]) -> None:
+        if run_id != self.run_id or self.ended:
+            return
+        self._status(
+            _(
+                "The apply runs. Videos added: {added} of {count}. The History page shows the apply as run {run}."
+            ).format(added=added, count=self.count, run=run_id)
+        )
+
+    async def _on_finished(self, run_id: int, status: RunStatus) -> None:
+        if run_id == self.run_id:
+            await self._show_end(run_id)
+
+    async def _on_changed(self) -> None:
+        # An apply that ends at once can end before ``run_apply`` learns its run, and then only the end of its task
+        # tells the dialog.
+        if self.run_id is not None and not self.services.applies.is_active(self.run_id):
+            await self._show_end(self.run_id)
+
+    async def _show_end(self, run_id: int) -> None:
+        """Show how the apply of ``run_id`` ended. The row of the run tells it, because the write of the end can fail."""
+        if self.ended:
+            return
+        self.ended = True
+        applied = await asyncio.to_thread(read_applied, self.services.sessions, run_id)
+        self._set_working(False)
+        if applied is None:
+            text = _("The apply ended, but its run {run} is not in the database any more.").format(run=run_id)
             kind = "negative"
-        elif applied.error_count:
-            kind = "warning"
         else:
-            kind = "positive"
+            text = applied_text(applied)
+            if applied.status is not RunStatus.SUCCEEDED:
+                kind = "negative"
+            elif applied.error_count:
+                kind = "warning"
+            else:
+                kind = "positive"
         self._status(text, error=kind == "negative")
         ui.notify(text, type=kind)
+
+
+class ApplyBanner:
+    """The line above the rules that tells about an apply that runs, also about one from another tab or an earlier load
+    of the page. It follows the apply through the events of the runs."""
+
+    def __init__(self, services: Services, rule_name: Callable[[int], str]) -> None:
+        self.services = services
+        self.rule_name = rule_name
+        # The added count of each apply run, and the runs whose end came. A progress can come after the end, and then
+        # ``show`` keeps the banner of that run hidden.
+        self.added: dict[int, int] = {}
+        self.ended: set[int] = set()
+        with ui.row().classes("w-full items-center gap-2 text-primary").mark("apply-banner") as self.row:
+            ui.spinner(size="sm")
+            self.label = ui.label().mark("apply-banner-text")
+        self.row.set_visibility(False)
+        services.run_events.progress.subscribe(self._on_progress)  # ty: ignore[invalid-argument-type]
+        services.run_events.finished.subscribe(self._on_finished)  # ty: ignore[invalid-argument-type]
+        services.applies.changed.subscribe(self.show)
+
+    async def load(self) -> None:
+        """Read the added count of the active apply, so a new load of the page shows it before the next progress."""
+        current = self.services.applies.current()
+        if current is not None:
+            applied = await asyncio.to_thread(read_applied, self.services.sessions, current.run_id)
+            if applied is not None:
+                # A progress during the read can have brought a newer count.
+                self.added[current.run_id] = max(self.added.get(current.run_id, 0), applied.added_count)
+        self.show()
+
+    def show(self) -> None:
+        current = self.services.applies.current()
+        if current is None or current.run_id in self.ended:
+            self.row.set_visibility(False)
+            return
+        self.label.set_text(
+            _('An apply of the rule "{name}" runs. Videos added: {count}.').format(
+                name=self.rule_name(current.rule_id), count=self.added.get(current.run_id, 0)
+            )
+        )
+        self.row.set_visibility(True)
+
+    def _on_progress(self, run_id: int, added: int, seen: int, actions: tuple[ActionItem, ...]) -> None:
+        self.added[run_id] = added
+        self.show()
+
+    def _on_finished(self, run_id: int, status: RunStatus) -> None:
+        self.ended.add(run_id)
+        self.show()
 
 
 @dataclass
@@ -1182,6 +1278,12 @@ async def rules_page(services: Services) -> None:
         apply_dialog.open(state.stored, rule, unsaved=unsaved)
 
     ui.label(_("Rules")).classes("text-h5")
+
+    def rule_name(rule_id: int) -> str:
+        rule = state.stored.rule(rule_id)
+        return rule.name if rule is not None else str(rule_id)
+
+    await ApplyBanner(services, rule_name).load()
     # The editor reads the stored lists again at each open, so a refresh needs only a new read of the table.
     await account_lists(services, on_refreshed=reload)
     with ui.row().classes("w-full items-center gap-4"):

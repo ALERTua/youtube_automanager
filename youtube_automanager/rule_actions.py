@@ -16,6 +16,7 @@ The engine of both is ``engine.rule_apply``. The result of a preview is a ``Prev
 import datetime
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -182,21 +183,40 @@ def preview_in_child(
 
 
 def apply_in_child(
-    runner: SyncRunner, sessions: sessionmaker[Session], rule_id: int, since: datetime.date
+    runner: SyncRunner,
+    sessions: sessionmaker[Session],
+    rule_id: int,
+    since: datetime.date,
+    on_claimed: Callable[[int], object] | None = None,
 ) -> AppliedRun:
     """Apply the saved rule ``rule_id`` to the videos since ``since`` as a run of ``runner``, and wait for its end.
 
     The run has the trigger ``rule_apply``. It does not wait for the sync lock: raise ``ChildBusy`` and write no run
-    when a run, a session check, a short child or a yt-dlp update holds the lock. This call blocks for the whole apply.
+    when a run, a session check, a short child or a yt-dlp update holds the lock. ``on_claimed`` gets the id of the run
+    after the claim and before the start of the child, in the thread of this call. A failed ``on_claimed`` does not stop
+    the apply, because only the end of the run releases the sync lock. This call blocks for the whole apply.
     """
     run_id = runner.claim(RunTrigger.RULE_APPLY)
     if run_id is None:
         raise ChildBusy(BUSY_TEXT)
+    if on_claimed is not None:
+        try:
+            on_claimed(run_id)
+        except Exception:
+            LOG.exception("Run %s: the caller of the apply cannot learn the id of the run", run_id)
     runner.execute(run_id, apply_command(run_id, rule_id, since))
+    applied = read_applied(sessions, run_id)
+    if applied is None:
+        raise ChildFailed(f"Run {run_id} of the apply is not in the database any more.")
+    return applied
+
+
+def read_applied(sessions: sessionmaker[Session], run_id: int) -> AppliedRun | None:
+    """Read the state of the apply run ``run_id`` from its ``run`` row. Return None when the row is gone."""
     with sessions() as session:
         run = session.get(Run, run_id)
         if run is None:
-            raise ChildFailed(f"Run {run_id} of the apply is not in the database any more.")
+            return None
         errors = session.scalar(
             select(func.count())
             .select_from(RunAction)
