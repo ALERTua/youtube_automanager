@@ -14,7 +14,7 @@ from nicegui import ui
 
 from youtube_automanager.i18n import _
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import icon_button
+from youtube_automanager.web.ui.common import icon_button, quasar_names_script
 from youtube_automanager.web.ui.theme import (
     DARK_MODE,
     ICONS,
@@ -72,6 +72,7 @@ def frame(current: Page, services: Services, theme: Theme) -> Generator[None]:
     ui.page_title(title)
     if style := first_paint_style(theme):
         ui.add_head_html(style)
+    ui.add_head_html(quasar_names_script())
     dark = ui.dark_mode(DARK_MODE[theme]).mark("dark-mode")
     chosen = [theme]
 
@@ -106,6 +107,8 @@ def frame(current: Page, services: Services, theme: Theme) -> Generator[None]:
             theme_tooltip = ui.tooltip(_(LABELS[theme]))
     content = ui.column().classes("w-full max-w-screen-xl mx-auto p-4 gap-4")
     # The link moves itself to the top of the page, so the keyboard reaches it first.
-    ui.skip_link(_("Skip to the content"), target=content)
+    skip_link = ui.skip_link(_("Skip to the content"), target=content)
+    # The link moves the focus itself, so the click does not follow the link. Else the address keeps a "#" part.
+    skip_link.on("click.prevent", js_handler="() => {}")
     with content:
         yield

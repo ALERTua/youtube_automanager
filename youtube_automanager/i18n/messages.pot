@@ -82,6 +82,10 @@ msgstr ""
 msgid "Add a condition"
 msgstr ""
 
+#: youtube_automanager/web/ui/common.py
+msgid "Add a file"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Add a group"
 msgstr ""
@@ -289,6 +293,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Condition as JsonLogic"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -507,6 +515,10 @@ msgstr ""
 msgid "Failure"
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Field"
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Find a channel on YouTube"
 msgstr ""
@@ -553,6 +565,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Go back to the previous version"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Group type"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -635,6 +651,7 @@ msgid "Lists refreshed: {time}"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
+#: youtube_automanager/web/ui/rules_page.py
 msgid "Live status"
 msgstr ""
 
@@ -843,6 +860,10 @@ msgstr ""
 msgid "Open on YouTube"
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Operator"
+msgstr ""
+
 #: youtube_automanager/web/ui/settings_page.py
 msgid "Or paste the text of the cookie file"
 msgstr ""
@@ -892,8 +913,16 @@ msgstr ""
 msgid "Refreshing the lists..."
 msgstr ""
 
+#: youtube_automanager/web/ui/common.py
+msgid "Remove all files"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Remove the condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Remove the file"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -1016,8 +1045,16 @@ msgstr ""
 msgid "Settings"
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Short"
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Shorts"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Show the URL"
 msgstr ""
 
 #: youtube_automanager/web/ui/layout.py
@@ -1070,6 +1107,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/service_settings.py
 msgid "Stop at the date mark"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Stop the upload"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -1679,6 +1720,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
 msgid "Upload the file here, or paste its text."
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Upload the files"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py

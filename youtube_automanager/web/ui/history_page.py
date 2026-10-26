@@ -27,6 +27,7 @@ from youtube_automanager.retention import (
 from youtube_automanager.scheduler import CLEANUP_HOUR, CLEANUP_MINUTE
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.common import (
+    FOCUS_DELAY_MS,
     RUN_STATUSES,
     RUN_TRIGGERS,
     actions_column,
@@ -34,14 +35,19 @@ from youtube_automanager.web.ui.common import (
     busy,
     column,
     confirm,
+    focus_when_drawn,
     format_time,
     icon_button,
+    row_button_selector,
     stored_timezone,
 )
 from youtube_automanager.web.ui.dates import today_button
 from youtube_automanager.web.ui.layout import register_page
 
 PAGE_SIZE = 50
+# The card of the actions of a run takes the focus when a run opens. This attribute marks it for the browser.
+DETAILS_ATTRIBUTE = "data-run-details"
+DETAILS_SELECTOR = f"[{DETAILS_ATTRIBUTE}]"
 # The value of a filter that lets each run through.
 ANY = "any"
 WATCH_URL = "https://www.youtube.com/watch?v="
@@ -356,6 +362,15 @@ async def history_page(services: Services) -> None:
 
     async def open_run(event) -> None:
         await show_run(int(event.args))
+        # The table of the runs was drawn again, so the button that had the focus is gone. The focus goes to the card.
+        focus_when_drawn(DETAILS_SELECTOR)
+
+    async def close_run() -> None:
+        run_id = state.run_id
+        await show_run(None)
+        # The close button is gone with the card, so the focus goes back to the button of the same run.
+        if run_id is not None:
+            focus_when_drawn(row_button_selector(run_id), delay_ms=FOCUS_DELAY_MS)
 
     async def change_action_kind(run_id: int, value: str) -> None:
         await show_run(run_id, None if value == ANY else RunActionKind(value))
@@ -432,10 +447,10 @@ async def history_page(services: Services) -> None:
         zone = ZoneInfo(detail.timezone)
         run = detail.run
         status_label, status_color = RUN_STATUSES[run.status]
-        with ui.card().classes("w-full").mark("details"):
+        with ui.card().props(f"tabindex=-1 {DETAILS_ATTRIBUTE}").classes("w-full outline-none").mark("details"):
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label(_("Actions of run {id}").format(id=run.id)).classes("text-h6").mark("details-title")
-                icon_button("close", _("Close"), lambda: show_run(None)).mark("details-close")
+                icon_button("close", _("Close"), close_run).mark("details-close")
             with ui.row().classes("items-center gap-2"):
                 ui.label(format_time(run.started_at, zone)).mark("details-started")
                 ui.badge(_(status_label), color=status_color).mark("details-status")

@@ -420,6 +420,9 @@ async def test_a_search_shows_the_found_channels_with_their_stored_state(user, s
     assert commands(fake_starter) == [["find-channels", "--query=cooking & co"]]
     # Each row has the Edit button, which gives the keyboard the way of a click on the row.
     assert table.slots["body-cell-actions"].template.count('aria-label="Edit"') == 1
+    assert table.slots["body-cell-actions"].template.count('icon="edit"') == 1
+    # The page has two tables of rows, so the focus finds the table of the row by its scope.
+    assert table.props["data-row-scope"] == "found"
     user.find(marker="found-table").trigger("rowButton", args=FOUND)
     await eventually(lambda: dialog_shows(user, FOUND), "The open dialog of the found channel")
 

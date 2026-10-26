@@ -17,9 +17,13 @@ from youtube_automanager.web.ui.common import (
     busy,
     column,
     confirm,
+    focus_when_drawn,
     format_time,
     icon_button,
+    named,
     read_timezone,
+    row_button_selector,
+    row_button_template,
     set_loading,
     stored_timezone,
 )
@@ -268,6 +272,8 @@ async def test_icon_button_has_the_label_as_its_tooltip_and_its_name(helper_page
 
     assert icon.props["aria-label"] == "Remove it"
     assert icon.props["icon"] == "delete"
+    # A round dense flat button is a compact icon button, not a filled rectangle.
+    assert {"flat", "round", "dense"} <= set(icon.props)
     tooltips = [
         element.text
         for element in client_of(user).elements.values()
@@ -293,3 +299,74 @@ async def test_row_button_has_the_label_as_its_name_and_sends_the_id_of_its_row(
 
     await eventually(lambda: helper_pages.pressed, "The press of the row button")
     assert helper_pages.pressed == [7]
+
+
+def test_the_template_of_a_row_button_and_its_listener_agree_on_the_event_and_the_id():
+    # The user simulation never draws a slot, so these literals are the only check of the pair that the browser runs.
+    template = row_button_template("edit", "Edit")
+
+    assert "@click.stop=\"() => $parent.$emit('rowButton', props.row.id)\"" in template
+    assert 'icon="edit"' in template
+    assert ':data-row-button="props.row.id"' in template
+    assert template.count("props.row.") == 2
+
+
+async def test_the_listener_of_a_row_button_sends_only_the_id(helper_pages, user):
+    await user.open("/rows")
+    table = element_of(user, "rows")
+
+    listeners = [
+        (listener.type, listener.js_handler)
+        for listener in table._event_listeners.values()
+        if listener.type == "rowButton"
+    ]
+
+    assert listeners == [("rowButton", "(id) => emit(id)")]
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "x {{ $parent.$emit('rowButton', 99) }} y",
+        "{{constructor.constructor('alert(1)')()}}",
+        "{ {{ } }}",
+    ],
+)
+def test_a_label_with_a_vue_expression_cannot_run_in_the_template(label):
+    template = row_button_template("edit", label)
+
+    # Vue runs {{ ... }} in the text of a tooltip, so no brace of the label may stay in the template.
+    assert "{" not in template
+    # The label is in the template twice: as the name and as the tooltip.
+    assert template.count("&#123;") == 2 * label.count("{")
+
+
+def test_the_selector_of_a_row_button_is_scoped_to_a_table_on_request():
+    assert row_button_selector(7) == '[data-row-button="7"]'
+    assert row_button_selector("UCabc", "found") == '[data-row-scope="found"] [data-row-button="UCabc"]'
+
+
+def test_the_move_of_the_focus_tries_the_selector_then_the_fallback_after_the_delay(monkeypatch):
+    sent = []
+    monkeypatch.setattr(ui, "run_javascript", lambda code, **kwargs: sent.append(code))
+
+    focus_when_drawn('[data-row-button="7"]', fallback="#c5", delay_ms=200)
+    focus_when_drawn("#c9")
+
+    first, second = sent
+    assert 'document.querySelector("[data-row-button=\\"7\\"]")' in first
+    assert 'else if ("#c5") document.querySelector("#c5")?.focus();' in first
+    assert first.rstrip().endswith("}, 200);")
+    # Without a fallback and a delay, the browser tries once at once and gives up after about a second.
+    assert "else if (null)" in second
+    assert second.rstrip().endswith("}, 0);")
+    assert "let tries = 20;" in second
+    assert "setTimeout(go, 50)" in second
+
+
+async def test_named_gives_a_field_its_name_for_a_screen_reader(helper_pages, user):
+    await user.open("/busy")
+    with client_of(user):
+        field = named(ui.input(), "Condition")
+
+    assert field.props["aria-label"] == "Condition"

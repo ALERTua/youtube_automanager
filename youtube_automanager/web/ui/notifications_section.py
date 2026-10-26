@@ -89,11 +89,16 @@ class TargetEditor:
         else:
             # A password field, so the token of a typed URL does not show on the screen.
             self.url_input = (
-                ui.input(_("Apprise URL"), password=True, password_toggle_button=True)
+                ui.input(_("Apprise URL"), password=True)
                 .props("outlined dense autocomplete=new-password")
                 .classes("w-full")
                 .mark("target-url")
             )
+            # The toggle of NiceGUI is an icon without a name, a role and a key. This button has all three.
+            with self.url_input.add_slot("append"):
+                self.url_toggle = icon_button("visibility_off", _("Show the URL"), self.toggle_url)
+                self.url_toggle.props["aria-pressed"] = "false"
+                self.url_toggle.mark("target-url-toggle")
         ui.label(
             _("The URL names the service and its token, for example tgram://bottoken/ChatID for Telegram.")
         ).classes("text-grey-7").mark("target-url-hint")
@@ -103,6 +108,13 @@ class TargetEditor:
         with ui.row().classes("gap-2"):
             self.save_button = ui.button(_("Save"), icon="save", on_click=self.save).mark("target-save")
             ui.button(_("Cancel"), on_click=self.close).props("flat").mark("target-cancel")
+
+    def toggle_url(self) -> None:
+        """Show the typed URL, or hide it again."""
+        hidden = self.url_input.props.get("type") == "password"
+        self.url_input.props["type"] = "text" if hidden else "password"
+        self.url_toggle.props["icon"] = "visibility" if hidden else "visibility_off"
+        self.url_toggle.props["aria-pressed"] = "true" if hidden else "false"
 
     def show_error(self, text: str | None) -> None:
         self.error_label.set_text(text or "")
