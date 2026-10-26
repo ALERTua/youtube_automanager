@@ -127,17 +127,23 @@ def focus_when_drawn(client: Client, selector: str, *, fallback: str | None = No
     context of the handler has no client any more.
 
     The browser gives up at once when the user has moved the focus. The focus is free when it is on the page body,
-    on the element that had it at the start, on an element that left the page, or inside a dialog. The start is the
-    element of the last ``remember_focus``, or the element that has the focus at the call.
+    on the element that had it at the start, on the button of the same row as the start, on an element that left the
+    page, or inside the dialog that held the start. A focus inside another dialog, for example a dialog that the user
+    opened meanwhile, is not free. The start is the element of the last ``remember_focus``, or the element that has
+    the focus at the call.
     """
     client.run_javascript(
         f"""
 (() => {{
   const start = window.__focusStart || document.activeElement;
   window.__focusStart = null;
+  const sameRow = (a, b) => a.hasAttribute('data-row-button') && !!b?.hasAttribute?.('data-row-button')
+    && a.getAttribute('data-row-button') === b.getAttribute('data-row-button');
   const free = () => {{
     const active = document.activeElement;
-    return active === document.body || active === start || !active.isConnected || !!active.closest('.q-dialog');
+    if (active === document.body || active === start || !active.isConnected || sameRow(active, start)) return true;
+    const dialog = active.closest('.q-dialog');
+    return !!dialog && (dialog.contains(start) || !dialog.isConnected);
   }};
   setTimeout(() => {{
     let tries = 20;
@@ -160,12 +166,18 @@ def safe_json(value: Any) -> str:
     return json.dumps(value).replace("<", "\\" + "u003c")
 
 
-def quasar_names_script() -> str:
-    """Return the ``<script>`` that names the controls inside Quasar components, which no prop of NiceGUI can name.
+def accessibility_script() -> str:
+    """Return the ``<script>`` that each page has in its head, for two things that no prop of NiceGUI can do.
 
-    The table has a select for the rows of a page, and the file upload has buttons that show only an icon. The script
-    sets ``aria-label`` on them as soon as the browser draws them. The select gets the text before it, which is a text
-    of Quasar in the language of the page. A button of the upload gets the label that belongs to its icon.
+    First, it names the controls inside Quasar components. The table has a select for the rows of a page, and the file
+    upload has buttons that show only an icon. The script sets ``aria-label`` on them as soon as the browser draws
+    them. The select gets the text before it, which is a text of Quasar in the language of the page. A button of the
+    upload gets the label that belongs to its icon.
+
+    Second, it keeps the focus on a row button. A server update that touches a table makes Vue replace the cells of its
+    rows, and the focus falls to the page body. The script remembers the row button that has the focus. When a redraw
+    removes it and the focus is on the body, the script focuses the new button with the same row id in the same table.
+    A user who moved the focus, or who clicked on the page, keeps what they chose.
     """
     buttons = {
         "add_box": _("Add a file"),
@@ -177,6 +189,20 @@ def quasar_names_script() -> str:
     return f"""<script>
 (() => {{
   const names = {safe_json(buttons)};
+  let row = null;
+  document.addEventListener('focusin', (event) => {{
+    const button = event.target.closest?.('[data-row-button]');
+    row = button && {{node: button, id: button.getAttribute('data-row-button'), scope: button.closest('[data-row-scope]')?.getAttribute('data-row-scope')}};
+  }});
+  document.addEventListener('pointerdown', () => {{ row = null; }});
+  const keepRowFocus = () => {{
+    if (!row || row.node.isConnected || document.activeElement !== document.body) return;
+    const prefix = row.scope ? `[data-row-scope="${{CSS.escape(row.scope)}}"] ` : '';
+    const again = [...document.querySelectorAll(prefix + '[data-row-button]')].find((button) => button.getAttribute('data-row-button') === row.id);
+    if (!again) return;
+    row.node = again;
+    again.focus();
+  }};
   const name = () => {{
     document.querySelectorAll('.q-table__bottom .q-table__select input').forEach((input) => {{
       if (input.getAttribute('aria-label')) return;
@@ -188,7 +214,7 @@ def quasar_names_script() -> str:
       if (label && !button.getAttribute('aria-label')) button.setAttribute('aria-label', label);
     }});
   }};
-  new MutationObserver(name).observe(document.documentElement, {{childList: true, subtree: true}});
+  new MutationObserver(() => {{ name(); keepRowFocus(); }}).observe(document.documentElement, {{childList: true, subtree: true}});
 }})();
 </script>"""
 

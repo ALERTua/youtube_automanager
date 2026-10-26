@@ -28,7 +28,7 @@ from youtube_automanager.db.models import (
     RunTrigger,
 )
 from youtube_automanager.web.ui import layout, rules_page
-from youtube_automanager.web.ui.common import focus_when_drawn, quasar_names_script, remember_focus
+from youtube_automanager.web.ui.common import accessibility_script, focus_when_drawn, remember_focus
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -275,7 +275,7 @@ async def test_the_focus_goes_to_new_rule_when_the_editor_of_a_new_rule_closes(u
     await eventually(lambda: scripts, "The move of the focus")
     (code,) = scripts
     assert selector_in(code, f"#{element_of(user, 'new-rule').html_id}")
-    assert "data-row-button" not in code
+    assert "[data-row-button=" not in code
 
 
 async def test_the_focus_goes_to_the_card_when_a_run_opens_and_back_to_its_button_when_it_closes(
@@ -471,7 +471,7 @@ def test_the_labels_of_the_upload_buttons_go_through_the_translation(monkeypatch
 
     monkeypatch.setattr(i18n, "_translations", Marking())
 
-    script = quasar_names_script()
+    script = accessibility_script()
 
     for label in ["Add a file", "Remove all files", "Upload the files", "Stop the upload", "Remove the file"]:
         # The script escapes each "<", so that no text can end the element.
@@ -546,7 +546,7 @@ async def test_the_focus_goes_to_new_rule_after_a_delete_and_waits_for_the_new_t
     assert events == ["remember", "read", "focus"]
     # The server knows that the rule is gone, so the focus does not wait for a button of the rule.
     assert selector_in(events.codes[-1], f"#{element_of(user, 'new-rule').html_id}")
-    assert "data-row-button" not in events.codes[-1]
+    assert "[data-row-button=" not in events.codes[-1]
 
 
 # The focus that the user moved.
@@ -562,10 +562,17 @@ def test_the_move_of_the_focus_gives_up_when_the_user_has_moved_it(monkeypatch):
     # The browser reads the focus at the call, and it tries only while the focus is free.
     assert "const start = window.__focusStart || document.activeElement;" in code
     assert "window.__focusStart = null;" in code
-    assert "const free = () => {" in code
     assert (
-        "active === document.body || active === start || !active.isConnected || !!active.closest('.q-dialog')" in code
+        "if (active === document.body || active === start || !active.isConnected || sameRow(active, start)) return true;"
+        in code
     )
+    # A focus inside a dialog is free only for the dialog that held the start, or for a dialog that is gone. Else a
+    # dialog that the user opened meanwhile, for example with Enter on New rule, would lose the focus to the page.
+    assert "const dialog = active.closest('.q-dialog');" in code
+    assert "return !!dialog && (dialog.contains(start) || !dialog.isConnected);" in code
+    assert "!!active.closest('.q-dialog')" not in code
+    # The button of the same row is the same place, drawn again.
+    assert "a.getAttribute('data-row-button') === b.getAttribute('data-row-button')" in code
     assert "if (!free()) return;" in code
     assert code.index("if (!free()) return;") < code.index("element.focus()")
     assert code.index("if (!free()) return;") < code.index('document.querySelector("#c5")?.focus()')
@@ -636,7 +643,7 @@ async def test_the_focus_of_a_closed_channel_dialog_has_the_filter_field_as_fall
 
 
 def test_the_script_that_names_the_parts_of_quasar_has_the_selectors_and_the_options_that_it_needs():
-    script = quasar_names_script()
+    script = accessibility_script()
 
     # The select of the table: an input in the bottom of a table, named by the text before it.
     assert "document.querySelectorAll('.q-table__bottom .q-table__select input')" in script
@@ -647,7 +654,10 @@ def test_the_script_that_names_the_parts_of_quasar_has_the_selectors_and_the_opt
     assert "names[button.querySelector('.q-icon')?.textContent.trim()]" in script
     assert "if (label && !button.getAttribute('aria-label')) button.setAttribute('aria-label', label);" in script
     # The observer sees the controls that Vue draws later, at any depth.
-    assert "new MutationObserver(name).observe(document.documentElement, {childList: true, subtree: true});" in script
+    assert (
+        "new MutationObserver(() => { name(); keepRowFocus(); }).observe(document.documentElement, {childList: true, subtree: true});"
+        in script
+    )
 
 
 def test_a_translation_with_a_closing_script_tag_cannot_end_the_script(monkeypatch):
@@ -657,9 +667,30 @@ def test_a_translation_with_a_closing_script_tag_cannot_end_the_script(monkeypat
 
     monkeypatch.setattr(i18n, "_translations", Hostile())
 
-    script = quasar_names_script()
+    script = accessibility_script()
 
     assert script.count("</script>") == 1
     assert script.endswith("</script>")
     assert "alert(1)//" in script
     assert "\\u003c/script>" in script
+
+
+def test_the_script_keeps_the_focus_on_a_row_button_that_a_redraw_replaces():
+    script = accessibility_script()
+
+    # It remembers the row button that has the focus, with the table scope, and forgets it when the user focuses
+    # another element or clicks on the page.
+    assert "document.addEventListener('focusin', (event) => {" in script
+    assert "const button = event.target.closest?.('[data-row-button]');" in script
+    assert "scope: button.closest('[data-row-scope]')?.getAttribute('data-row-scope')" in script
+    assert "document.addEventListener('pointerdown', () => { row = null; });" in script
+    # It acts only when the old button left the page and the focus fell to the body, so a user who moved on keeps it.
+    assert "if (!row || row.node.isConnected || document.activeElement !== document.body) return;" in script
+    # It looks in the table with the same scope, for the button of the same row, and it focuses that button.
+    assert "const prefix = row.scope ? `[data-row-scope=\"${CSS.escape(row.scope)}\"] ` : '';" in script
+    assert "document.querySelectorAll(prefix + '[data-row-button]')" in script
+    assert "button.getAttribute('data-row-button') === row.id" in script
+    assert "again.focus();" in script
+    assert "row.node = again;" in script
+    # The browser runs it after each change of the page.
+    assert "name(); keepRowFocus();" in script
