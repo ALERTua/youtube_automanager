@@ -1149,7 +1149,8 @@ class ApplyBanner:
     def __init__(self, services: Services, rule_name: Callable[[int], str]) -> None:
         self.services = services
         self.rule_name = rule_name
-        # The added count of each apply run, and the runs whose end came. A progress can come after the end.
+        # The added count of each apply run, and the runs whose end came. A progress can come after the end, and then
+        # ``show`` keeps the banner of that run hidden.
         self.added: dict[int, int] = {}
         self.ended: set[int] = set()
         with ui.row().classes("w-full items-center gap-2 text-primary").mark("apply-banner") as self.row:
@@ -1183,8 +1184,6 @@ class ApplyBanner:
         self.row.set_visibility(True)
 
     def _on_progress(self, run_id: int, added: int, seen: int, actions: tuple[ActionItem, ...]) -> None:
-        if run_id in self.ended:
-            return
         self.added[run_id] = added
         self.show()
 

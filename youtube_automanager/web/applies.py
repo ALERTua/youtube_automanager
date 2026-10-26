@@ -39,12 +39,14 @@ class ActiveApply:
 
 @dataclass
 class _Start:
-    """One call of ``Applies.start``. ``claimed`` gets the id of the run, or the error of a start that claimed no run."""
+    """One call of ``Applies.start``. ``claimed`` gets the id of the run, or the error of a start that claimed no run.
+    ``ended`` is set when the task of the apply ended."""
 
     rule_id: int
     since: date
     claimed: asyncio.Future[int]
     run_id: int | None = None
+    ended: bool = False
 
 
 class Applies:
@@ -88,6 +90,11 @@ class Applies:
 
     def _claimed(self, start: _Start, run_id: int) -> None:
         start.run_id = run_id
+        if start.ended:
+            # The task was cancelled while the thread still claimed, for example at the stop of the service. No task
+            # removes an entry of this run, so the run gets none, and the history shows it.
+            LOG.warning("Run %s of the apply of rule %s started after the end of its task", run_id, start.rule_id)
+            return
         self._active[run_id] = ActiveApply(run_id, start.rule_id, start.since)
         # The caller can be gone, for example after a cancel of its page handler.
         if not start.claimed.done():
@@ -101,9 +108,13 @@ class Applies:
             )
         except Exception as error:
             if start.run_id is None:
-                # No run started, so the caller tells the user.
+                # No run started, so the caller tells the user. A caller that is gone cannot, so the log tells it.
                 if not start.claimed.done():
                     start.claimed.set_exception(error)
+                elif isinstance(error, ChildError):
+                    LOG.warning("The apply of rule %s did not start: %s", start.rule_id, error)
+                else:
+                    LOG.exception("The apply of rule %s did not start", start.rule_id)
                 return
             # The apply has no page to tell, because the user can have closed it. The history shows the run.
             if isinstance(error, ChildError):
@@ -115,11 +126,14 @@ class Applies:
                 "The apply of rule %s ended as run %s with %s", start.rule_id, applied.run_id, applied.status.value
             )
         finally:
+            start.ended = True
             if not start.claimed.done():
                 # The task was cancelled before the claim, so the caller gets the cancel too.
                 start.claimed.cancel()
             if start.run_id is not None:
                 self._active.pop(start.run_id, None)
+                # The pages learn the end of the run from ``RunEvents.finished``, which comes first. This emit removes
+                # the apply from a page that loaded between the end of the run and the end of this task.
                 self.changed.emit()
 
     async def close(self) -> None:

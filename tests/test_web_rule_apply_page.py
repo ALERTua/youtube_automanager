@@ -19,6 +19,7 @@ import pytest
 from nicegui import ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
+from nicegui.testing.user_notify import UserNotify
 from sqlalchemy import select
 from test_run_events import service_with_pages
 from test_sync import LONG, A, B, entry, feed_video, upcoming
@@ -36,6 +37,7 @@ from ui_support import (
 from youtube_automanager import __main__ as cli
 from youtube_automanager import i18n, rule_actions
 from youtube_automanager import runner as runner_module
+from youtube_automanager import scheduler as scheduler_module
 from youtube_automanager.db.models import (
     AddedVideo,
     Channel,
@@ -169,6 +171,18 @@ class EndedChild:
         pass
 
     kill = terminate
+
+
+class TypedNotify(UserNotify):
+    """The notifications of a simulated browser with their type. ``user.notify = TypedNotify()`` puts it in place."""
+
+    def __init__(self):
+        super().__init__()
+        self.typed = []
+
+    def __call__(self, message, **kwargs):
+        super().__call__(message, **kwargs)
+        self.typed.append((message, kwargs.get("type")))
 
 
 class Gate:
@@ -992,6 +1006,7 @@ async def test_a_failed_apply_shows_the_error_of_its_run(user, sessions, account
 
 
 async def test_an_apply_with_errors_counts_them(user, sessions, settings, account_copy, youtube, children):
+    notify = user.notify = TypedNotify()
     store_cookies(sessions, settings)
     saved_rule(sessions, channels=(A, B))
     youtube.uploads[A] = [entry("new", A, day=today())]
@@ -1006,9 +1021,9 @@ async def test_an_apply_with_errors_counts_them(user, sessions, settings, accoun
 
     await eventually(lambda: "with errors" in text_of(user, "apply-status"), "The end of the apply")
     (run,) = runs(sessions)
-    assert text_of(user, "apply-status") == (
-        f"The apply is done with errors. Videos added: 1. Errors: 1. The History page shows them in run {run.id}."
-    )
+    text = f"The apply is done with errors. Videos added: 1. Errors: 1. The History page shows them in run {run.id}."
+    assert text_of(user, "apply-status") == text
+    assert notify.typed == [(text, "warning")]
     with sessions() as session:
         actions = session.scalars(select(RunAction).where(RunAction.run_id == run.id).order_by(RunAction.id)).all()
         assert [(action.action, action.channel_id) for action in actions] == [
@@ -1113,35 +1128,41 @@ async def test_an_apply_goes_on_after_the_dialog_and_the_tab_closed_and_the_hist
 
 
 async def test_the_dialog_and_the_banner_show_the_count_while_the_apply_runs_and_the_end_after_it(
-    user, sessions, settings, account_copy, youtube, children
+    nicegui_globals, settings, sessions, account_copy, youtube, children
 ):
-    await preview_a_saved_rule(user, sessions, settings, youtube)
-    assert not banner_shown(user)
+    async with service_with_pages(settings, children) as (user, services):
+        notify = user.notify = TypedNotify()
+        await preview_a_saved_rule(user, sessions, settings, youtube)
+        assert not banner_shown(user)
 
-    gate = await start_held_apply(user, children, run_body=False)
+        gate = await start_held_apply(user, children, run_body=False)
 
-    (run,) = runs(sessions)
-    await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=0), "The banner")
-    set_added_count(sessions, run.id, 1)
-    await eventually(
-        lambda: (
-            text_of(user, "apply-status")
-            == f"The apply runs. Videos added: 1 of 1. The History page shows the apply as run {run.id}."
-        ),
-        "The count in the dialog",
-    )
-    await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=1), "The count")
-    assert element_of(user, "apply-preview").enabled is False
+        (run,) = runs(sessions)
+        running = f"The apply runs. Videos added: 1 of 1. The History page shows the apply as run {run.id}."
+        await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=0), "The banner")
+        set_added_count(sessions, run.id, 1)
+        await eventually(lambda: text_of(user, "apply-status") == running, "The count in the dialog")
+        await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=1), "The count")
+        assert element_of(user, "apply-preview").enabled is False
+        # The end of another run, for example of a run of the schedule, is not the end of the apply.
+        services.run_events.finished.emit(run.id + 1, RunStatus.SUCCEEDED)
+        await asyncio.sleep(SETTLE_SECONDS)
+        assert text_of(user, "apply-status") == running
+        assert notify.typed == []
 
-    gate.release()
+        gate.release()
 
-    await eventually(lambda: "The apply is done" in text_of(user, "apply-status"), "The end in the dialog")
-    assert text_of(user, "apply-status") == (
-        f"The apply is done. Videos added: 1. The History page shows it as run {run.id}."
-    )
-    await eventually(lambda: not banner_shown(user), "The end of the banner")
-    assert element_of(user, "apply-preview").enabled is True
-    assert f"The apply is done. Videos added: 1. The History page shows it as run {run.id}." in user.notify.messages
+        done = f"The apply is done. Videos added: 1. The History page shows it as run {run.id}."
+        await eventually(lambda: text_of(user, "apply-status") == done, "The end in the dialog")
+        await eventually(lambda: not banner_shown(user), "The end of the banner")
+        assert element_of(user, "apply-preview").enabled is True
+        # A progress of the run that comes after its end changes nothing.
+        services.run_events.progress.emit(run.id, 7, 0, ())
+        await asyncio.sleep(SETTLE_SECONDS)
+        assert text_of(user, "apply-status") == done
+        assert not banner_shown(user)
+        # The end of the run and the end of its task both reach the dialog, and the dialog tells the end once.
+        assert notify.typed == [(done, "positive")]
 
 
 async def test_the_banner_shows_a_running_apply_after_a_new_load_of_the_page(
@@ -1179,6 +1200,8 @@ async def test_a_second_apply_from_another_tab_while_an_apply_runs_gets_the_busy
 
     await eventually(lambda: "did not start" in text_of(other, "apply-status"), "The refusal")
     assert text_of(other, "apply-status") == f"The apply did not start. {BUSY}"
+    # The dialog lets the user try again.
+    assert (element_of(other, "apply-run").enabled, element_of(other, "apply-preview").enabled) == (True, True)
     assert len(runs(sessions)) == 1
     assert text_of(other, "apply-banner-text") == BANNER_TEXT.format(count=0)
     gate.release()
@@ -1293,6 +1316,223 @@ async def test_the_stop_of_the_service_cancels_the_task_of_an_apply_that_does_no
     assert stopped_in < WAIT_SECONDS / 2
     assert "An apply did not end within 0.1 s after the stop of the service" in caplog.text
     assert "Could not cancel" not in caplog.text
+
+
+def hold_the_first_read_of_an_end(monkeypatch):
+    """Hold the read of the end in the task of the first apply until the returned event ``release`` is set.
+
+    The run of the apply has ended then, but its task still runs. Return the events ``started`` and ``release``.
+    """
+    started, release = threading.Event(), threading.Event()
+    real_read = rule_actions.read_applied
+    calls = []
+
+    def held_read(sessions, run_id):
+        calls.append(run_id)
+        if len(calls) == 1:
+            started.set()
+            # Longer than each wait of a test, so a check of a test fails before the hold ends by itself.
+            release.wait(3 * WAIT_SECONDS)
+        return real_read(sessions, run_id)
+
+    monkeypatch.setattr(rule_actions, "read_applied", held_read)
+    return started, release
+
+
+async def test_the_banner_goes_at_the_end_of_the_run_and_a_later_load_at_the_end_of_its_task(
+    user, sessions, settings, account_copy, youtube, children, monkeypatch
+):
+    read_started, read_release = hold_the_first_read_of_an_end(monkeypatch)
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    gate = await start_held_apply(user, children, run_body=False)
+    await eventually(lambda: banner_shown(user), "The banner")
+
+    gate.release()
+    assert await asyncio.to_thread(read_started.wait, WAIT_SECONDS)
+
+    # The run ended, and its task still reads the end. The page learns the end of the run at once.
+    await eventually(lambda: not banner_shown(user), "The end of the banner at the end of the run")
+    # A page that loads now still sees the apply, and only the end of the task tells it the end.
+    await user.open("/rules")
+    await eventually(lambda: banner_shown(user), "The banner of the new load")
+    read_release.set()
+    await eventually(lambda: not banner_shown(user), "The end of the banner at the end of the task")
+
+
+async def test_the_banner_shows_a_new_apply_while_the_task_of_the_old_one_still_reads_its_end(
+    user, sessions, settings, account_copy, youtube, children, monkeypatch
+):
+    read_started, read_release = hold_the_first_read_of_an_end(monkeypatch)
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    gate = await start_held_apply(user, children, run_body=False)
+    gate.release()
+    assert await asyncio.to_thread(read_started.wait, WAIT_SECONDS)
+    await eventually(lambda: "The apply is done" in text_of(user, "apply-status"), "The end of the first apply")
+    user.find(marker="apply-preview").click()
+    await user.should_see(marker="apply-run")
+
+    second = await start_held_apply(user, children, run_body=False)
+
+    # Both applies are active for a moment, and the newer one is the one that runs.
+    await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=0), "The new banner")
+    read_release.set()
+    second.release()
+    await eventually(lambda: not banner_shown(user), "The end of the banner")
+
+
+async def test_the_banner_keeps_a_newer_count_that_came_during_its_first_read(
+    user, sessions, settings, account_copy, youtube, children, monkeypatch
+):
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    gate = await start_held_apply(user, children, run_body=False)
+    (run,) = runs(sessions)
+    old_label = element_of(user, "apply-banner-text")
+    read_done, read_release = threading.Event(), threading.Event()
+    real_read = rules_page.read_applied
+
+    def slow_read(sessions, run_id):
+        applied = real_read(sessions, run_id)
+        read_done.set()
+        read_release.wait(WAIT_SECONDS)
+        return applied
+
+    monkeypatch.setattr(rules_page, "read_applied", slow_read)
+    opening = asyncio.create_task(user.open("/rules"))
+    assert await asyncio.to_thread(read_done.wait, WAIT_SECONDS)
+    # The page that loads read the count 0, and a progress with the count 2 comes before the read returns.
+    set_added_count(sessions, run.id, 2)
+    await eventually(lambda: old_label.text == BANNER_TEXT.format(count=2), "The progress")
+    read_release.set()
+    await opening
+
+    await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=2), "The newer count")
+    gate.release()
+    await eventually(lambda: not banner_shown(user), "The end of the banner")
+
+
+@contextlib.contextmanager
+def held_claim(monkeypatch, outcome):
+    """Hold each claim of a run in its thread until the returned event ``release`` is set. ``outcome`` takes the
+    runner, the trigger and the real claim, and gives the result of the claim."""
+    entered, release = threading.Event(), threading.Event()
+    real_claim = runner_module.SyncRunner.claim
+
+    def claim(self, trigger, wait_s=0):
+        entered.set()
+        release.wait(WAIT_SECONDS)
+        return outcome(self, trigger, lambda: real_claim(self, trigger, wait_s))
+
+    monkeypatch.setattr(runner_module.SyncRunner, "claim", claim)
+    try:
+        yield entered, release
+    finally:
+        release.set()
+
+
+async def test_a_cancel_of_the_task_of_an_apply_before_its_claim_leaves_no_active_apply(
+    nicegui_globals, settings, sessions, account_copy, children, monkeypatch, caplog
+):
+    saved_rule(sessions)
+    children.plan.append(EndedChild(0))
+    with held_claim(monkeypatch, lambda runner, trigger, claim: claim()) as (entered, release):
+        async with service_with_pages(settings, children) as (_, services):
+            caller = asyncio.create_task(services.applies.start(1, today()))
+            assert await asyncio.to_thread(entered.wait, WAIT_SECONDS)
+            (task,) = services.applies._tasks
+
+            task.cancel()
+
+            # The caller learns the cancel, and does not wait for ever.
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(caller, WAIT_SECONDS)
+            release.set()
+            await eventually(lambda: "started after the end of its task" in caplog.text, "The late claim")
+            assert len(runs(sessions)) == 1
+            assert services.applies.current() is None
+            # The thread runs the claimed run to its end, so the sync lock is free again.
+            await eventually(lambda: runs(sessions)[0].status is RunStatus.SUCCEEDED, "The end of the run")
+            assert not services.runner.is_active()
+
+
+def refuse_claim(runner, trigger, claim):
+    raise RuntimeError("the database is gone")
+
+
+@pytest.mark.parametrize(
+    ("outcome", "logged"),
+    [
+        (lambda runner, trigger, claim: None, f"The apply of rule 1 did not start: {runner_module.BUSY_TEXT}"),
+        (refuse_claim, "the database is gone"),
+    ],
+    ids=["busy", "error"],
+)
+async def test_a_start_that_fails_after_its_caller_is_gone_goes_to_the_log(
+    nicegui_globals, settings, sessions, account_copy, children, monkeypatch, caplog, outcome, logged
+):
+    saved_rule(sessions)
+    with held_claim(monkeypatch, outcome) as (entered, release):
+        async with service_with_pages(settings, children) as (_, services):
+            caller = asyncio.create_task(services.applies.start(1, today()))
+            assert await asyncio.to_thread(entered.wait, WAIT_SECONDS)
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+
+            release.set()
+
+            await eventually(lambda: not services.applies._tasks, "The end of the task")
+            assert "The apply of rule 1 did not start" in caplog.text
+            assert logged in caplog.text
+            assert runs(sessions) == []
+    # The error of the claim is the subject of this test.
+    caplog.clear()
+
+
+async def test_close_cancels_the_task_of_an_apply_that_does_not_end_and_waits_for_the_cancel(
+    nicegui_globals, settings, sessions, account_copy, youtube, children, monkeypatch
+):
+    monkeypatch.setattr(applies_module, "CLOSE_WAIT_SECONDS", 0.1)
+    async with service_with_pages(settings, children) as (user, services):
+        await preview_a_saved_rule(user, sessions, settings, youtube)
+        gate = await start_held_apply(user, children, run_body=False)
+        tasks = list(services.applies._tasks)
+
+        await services.applies.close()
+
+        assert [task.cancelled() for task in tasks] == [True]
+        gate.release()
+        await eventually(lambda: runs(sessions)[0].status is RunStatus.SUCCEEDED, "The end of the run")
+
+
+async def test_the_stop_of_the_service_waits_for_the_applies_before_it_stops_the_scheduler(
+    nicegui_globals, settings, sessions, children, monkeypatch
+):
+    """The order of the comments of the lifespan: the stop of the runner, the end of the applies, then the scheduler."""
+    order = []
+    real_close = applies_module.Applies.close
+    real_stop = runner_module.SyncRunner.stop
+    real_shutdown = scheduler_module.Scheduler.shutdown
+
+    async def close(self):
+        order.append("applies")
+        await real_close(self)
+
+    def stop(self, timeout):
+        order.append("runner")
+        return real_stop(self, timeout)
+
+    async def shutdown(self):
+        order.append("scheduler")
+        await real_shutdown(self)
+
+    monkeypatch.setattr(applies_module.Applies, "close", close)
+    monkeypatch.setattr(runner_module.SyncRunner, "stop", stop)
+    monkeypatch.setattr(scheduler_module.Scheduler, "shutdown", shutdown)
+
+    async with running_service(settings, children):
+        pass
+
+    assert order == ["runner", "applies", "scheduler"]
 
 
 # The texts.
