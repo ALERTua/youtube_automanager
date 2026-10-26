@@ -660,3 +660,69 @@ async def test_a_run_that_starts_during_the_first_read_of_the_scheduler_page_sho
 
     await eventually(lambda: text_of(user, "timezone") == "America/New_York", "The status after the missed start")
     end_run(fake_starter)
+
+
+def block_the_read_of_actions(monkeypatch) -> tuple[threading.Event, threading.Event]:
+    """Make the next reads of the actions wait for ``release`` after the read. Return ``reading`` and ``release``."""
+    read_run_detail = history_page.read_run_detail
+    reading = threading.Event()
+    release = threading.Event()
+
+    def slow_read(*args):
+        result = read_run_detail(*args)
+        reading.set()
+        release.wait(WAIT_SECONDS)
+        return result
+
+    monkeypatch.setattr(history_page, "read_run_detail", slow_read)
+    return reading, release
+
+
+async def test_the_actions_of_another_run_do_not_go_into_the_panel_that_a_read_opens(
+    live, sessions, fake_starter, monkeypatch
+):
+    user, services = live
+    store(
+        sessions,
+        finished_run(1),
+        RunAction(run_id=1, action=RunActionKind.ADDED, video_id="vid-run1", playlist_id="WL", rule_id=1),
+    )
+    await user.open("/history")
+    run_id = await start_run(services, fake_starter)
+    await eventually(lambda: run_ids(user) == [run_id, 1], "The row of the running run")
+    reading, release = block_the_read_of_actions(monkeypatch)
+    user.find(marker="runs-table").trigger("rowClick", args=1)
+    assert await asyncio.to_thread(reading.wait, WAIT_SECONDS)
+
+    # The running run sends a progress while the read of the finished run runs.
+    progress = await next_progress(services)
+    child_writes(sessions, run_id, 1, 1, (RunActionKind.ADDED, "vid-running"))
+    await progress
+    release.set()
+    await eventually(lambda: text_of(user, "details-title") == "Actions of run 1", "The panel of run 1")
+    await asyncio.sleep(SETTLE_SECONDS)
+
+    assert videos_of(user) == ["vid-run1"]
+    end_run(fake_starter)
+
+
+async def test_the_actions_that_come_during_a_read_of_one_kind_follow_that_kind(
+    live, sessions, fake_starter, monkeypatch
+):
+    user, services = live
+    run_id = await open_running_run_with_one_action(user, services, sessions, fake_starter)
+    user.find(marker="runs-table").trigger("rowClick", args=run_id)
+    await eventually(lambda: videos_of(user) == ["vid0"], "The panel of the run")
+    reading, release = block_the_read_of_actions(monkeypatch)
+    set_value(user, "filter-action", RunActionKind.ADDED.value)
+    assert await asyncio.to_thread(reading.wait, WAIT_SECONDS)
+
+    progress = await next_progress(services)
+    child_writes(sessions, run_id, 2, 3, (RunActionKind.SKIPPED, "vid-skipped"), (RunActionKind.ADDED, "vid-added"))
+    await progress
+    release.set()
+
+    await eventually(lambda: videos_of(user) == ["vid0", "vid-added"], "The added actions after the read")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert videos_of(user) == ["vid0", "vid-added"]
+    end_run(fake_starter)
