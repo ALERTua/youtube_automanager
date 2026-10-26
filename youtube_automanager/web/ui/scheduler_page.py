@@ -162,8 +162,16 @@ async def scheduler_page(services: Services) -> None:
         if not edited.enabled:
             ui.label(_("The schedule is off. No run starts until you turn it on.")).mark("preview-off")
 
+    # The number of the newest read of the status. A read that finishes after a newer one started drops its result.
+    status_reads = 0
+
     async def refresh_status(*_event: object) -> None:
+        nonlocal status_reads
+        status_reads += 1
+        read = status_reads
         status = await take_status(services)
+        if read != status_reads:
+            return
         status_view.refresh(status)
         pause_button.set_enabled(status.state is SchedulerState.RUNNING)
         resume_button.set_enabled(status.state is SchedulerState.PAUSED)

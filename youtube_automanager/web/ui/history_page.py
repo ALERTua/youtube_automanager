@@ -11,6 +11,7 @@ shows the new counts, and its open actions get the new actions.
 
 import asyncio
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from urllib.parse import quote
@@ -165,6 +166,21 @@ class PageState:
     detail: RunDetail | None = None
     runs_table: ui.table | None = None
     actions_table: ui.table | None = None
+    # The actions that the progress events of the open run bring while a read of its actions runs, or None when no such
+    # read runs. The read can end before their commit, and the poll gives each action only once.
+    arrived: list[ActionItem] | None = None
+
+
+def add_actions(detail: RunDetail, actions: Iterable[ActionItem]) -> tuple[RunDetail, list[ActionItem]]:
+    """Return ``detail`` with the ``actions`` that it does not hold yet and that its action kind lets through, and these
+    new actions."""
+    known = {action.id for action in detail.actions}
+    new = []
+    for action in actions:
+        if action.id not in known and (detail.kind is None or action.action is detail.kind):
+            known.add(action.id)
+            new.append(action)
+    return replace(detail, actions=[*detail.actions, *new]), new
 
 
 def parse_day(text: str | None) -> date | None:
@@ -327,7 +343,7 @@ async def history_page(services: Services) -> None:
         if read != state.runs_read:
             return
         state.page = result.page
-        runs_view.refresh(result)
+        await runs_view.refresh(result)
 
     async def show_run(run_id: int | None, kind: RunActionKind | None = None) -> None:
         state.run_id = run_id
@@ -335,15 +351,20 @@ async def history_page(services: Services) -> None:
         state.detail_read += 1
         read = state.detail_read
         detail = None
+        state.arrived = None if run_id is None else []
         if run_id is not None:
             detail = await asyncio.to_thread(read_run_detail, services.sessions, run_id, kind, services.settings.tz)
         if read != state.detail_read:
             return
+        arrived, state.arrived = state.arrived or [], None
         if detail is None:
             # The run is gone, for example after a cleanup of the history.
             state.run_id = None
+        else:
+            detail, _new = add_actions(detail, arrived)
         state.detail = detail
-        details.refresh(detail)
+        # Awaited, so the panel shows this read before the handler of the next progress runs.
+        await details.refresh()
 
     async def refresh() -> None:
         await load_runs()
@@ -361,30 +382,27 @@ async def history_page(services: Services) -> None:
         # Each change comes before the first await, so no read of the end of the run can come between. See RunFollower.
         table = state.runs_table
         if table is not None and not table.is_deleted:
-            for row in table.rows:
+            for index, row in enumerate(table.rows):
                 if row["id"] == run_id:
-                    row["added"], row["seen"] = added, seen
-                    table.update()
+                    # The rows are observed props of NiceGUI, so the new row goes to the browser. An event that is older
+                    # than the read of the row does not lower its counts.
+                    table.rows[index] = {**row, "added": max(row["added"], added), "seen": max(row["seen"], seen)}
                     break
+        if state.arrived is not None and state.run_id == run_id:
+            state.arrived.extend(actions)
         detail = state.detail
         if detail is None or detail.run.id != run_id:
             return
         # A read of the actions that ended after the poll can hold some of these actions already.
-        known = {action.id for action in detail.actions}
-        new = [
-            action
-            for action in actions
-            if action.id not in known and (detail.kind is None or action.action is detail.kind)
-        ]
+        state.detail, new = add_actions(detail, actions)
         if not new:
             return
-        state.detail = replace(detail, actions=[*detail.actions, *new])
         actions_table = state.actions_table
         if actions_table is not None and not actions_table.is_deleted:
             actions_table.add_rows([action_row(action, ZoneInfo(detail.timezone)) for action in new])
         else:
             # The panel said that the run has no actions, so it needs its table now.
-            await details.refresh(state.detail)
+            await details.refresh()
 
     def live(run: RunRecord) -> RunRecord:
         """Return ``run`` with the counts of its last progress, when it runs and its read is older."""
@@ -484,8 +502,9 @@ async def history_page(services: Services) -> None:
             ).props("max-pages=7 boundary-numbers").mark("runs-pagination")
 
     @ui.refreshable
-    def details(detail: RunDetail | None) -> None:
+    def details() -> None:
         state.actions_table = None
+        detail = state.detail
         if detail is None:
             return
         zone = ZoneInfo(detail.timezone)
@@ -564,7 +583,7 @@ async def history_page(services: Services) -> None:
         today_button(last_input, first_page.timezone).mark("filter-to-today")
         refresh_button = ui.button(_("Refresh"), icon="refresh", on_click=refresh).mark("refresh")
     runs_view(first_page)
-    details(None)
+    details()
 
     with ui.card().classes("w-full"):
         ui.label(_("Retention")).classes("text-h6")

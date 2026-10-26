@@ -46,7 +46,8 @@ class RunFollower(ui.element):
         self._live = False
         self._missed = False
         self._ended: set[int] = set()
-        # The counts of the last progress of each run that has not ended.
+        # The counts of the last progress of each run. They stay after the end of the run, because a progress handler
+        # that NiceGUI runs after the ``finished`` still reads them. Only a new start of the same run id drops them.
         self._counts: dict[int, tuple[int, int]] = {}
         self._subscriptions: list[tuple[Event[...], Handler]] = []
         self._subscribe(events.started, started, self._note_start)
@@ -80,7 +81,6 @@ class RunFollower(ui.element):
 
     def _note_end(self, run_id: int, *_args: Any) -> bool:
         self._ended.add(run_id)
-        self._counts.pop(run_id, None)
         return True
 
     def start(self) -> bool:
