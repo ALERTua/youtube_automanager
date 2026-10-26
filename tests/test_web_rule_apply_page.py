@@ -8,8 +8,11 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import re
+import subprocess
 import threading
+import time
 from datetime import timedelta
 
 import pytest
@@ -17,11 +20,22 @@ from nicegui import ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
 from sqlalchemy import select
+from test_run_events import service_with_pages
 from test_sync import LONG, A, B, entry, feed_video, upcoming
-from ui_support import element_of, elements_of, eventually, running_service, store, text_of
+from ui_support import (
+    WAIT_SECONDS,
+    PatientUser,
+    element_of,
+    elements_of,
+    eventually,
+    running_service,
+    store,
+    text_of,
+)
 
 from youtube_automanager import __main__ as cli
-from youtube_automanager import i18n
+from youtube_automanager import i18n, rule_actions
+from youtube_automanager import runner as runner_module
 from youtube_automanager.db.models import (
     AddedVideo,
     Channel,
@@ -43,8 +57,9 @@ from youtube_automanager.engine.rule_preview import APPLY_LIMIT, DraftRule, Mark
 from youtube_automanager.engine.rules import MATCH_ALL
 from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, STATE_MODE_KEY
 from youtube_automanager.rule_actions import apply_once, preview_once
-from youtube_automanager.runner import sync_lock_held
+from youtube_automanager.runner import INTERRUPTED_ERROR, sync_lock_held
 from youtube_automanager.settings import Settings
+from youtube_automanager.web import applies as applies_module
 from youtube_automanager.web.ui import rules_page
 from youtube_automanager.youtube import public
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
@@ -156,23 +171,81 @@ class EndedChild:
     kill = terminate
 
 
+class Gate:
+    """Holds the next apply child until ``release``, so a test sees the apply while it runs.
+
+    With ``run_body``, the released child runs the real body of the apply, and without it, the child ends with exit
+    code 0 and changes nothing. A stop of the service terminates the held child.
+    """
+
+    TERMINATED_CODE = -15
+
+    def __init__(self, *, run_body=True):
+        self.run_body = run_body
+        self.started = threading.Event()
+        self.released = threading.Event()
+        self.terminated = False
+
+    def release(self):
+        self.released.set()
+
+
+class GatedChild:
+    def __init__(self, gate, body):
+        self.gate = gate
+        self.body = body
+        # The runner reads stderr from the start, so a held child has an empty stderr.
+        self.stderr = io.StringIO()
+        self.returncode = None
+        gate.started.set()
+
+    def wait(self, timeout=None):
+        if not self.gate.released.wait(timeout) and timeout is not None:
+            raise subprocess.TimeoutExpired("gated child", timeout)
+        if self.returncode is None:
+            self.returncode = self.body()[0] if self.gate.run_body else 0
+        return self.returncode
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        if self.returncode is None:
+            self.gate.terminated = True
+            self.returncode = Gate.TERMINATED_CODE
+        self.gate.release()
+
+    kill = terminate
+
+
 class Children:
     """Starts the children of the service in the test process and records each command.
 
     A preview and an apply run their real body. A child of ``plan`` replaces the next start, for a result that the
-    body cannot give.
+    body cannot give, and an exception of ``plan`` fails the start. A set ``gate`` holds the next apply child.
     """
 
     def __init__(self, settings):
         self.settings = settings
         self.commands = []
         self.plan = []
+        self.gate = None
 
     def __call__(self, command, env, input_text):
         self.commands.append(list(command))
         if self.plan:
-            return self.plan.pop(0)
+            planned = self.plan.pop(0)
+            if isinstance(planned, Exception):
+                raise planned
+            return planned
         args = cli._parser().parse_args(command[3:])
+        if args.command == "apply-rule" and self.gate is not None:
+            gate, self.gate = self.gate, None
+            return GatedChild(gate, lambda: self._run(args))
+        return EndedChild(*self._run(args))
+
+    def _run(self, args):
+        """Run the body of the child ``args``, and return its exit code and its stderr."""
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             if args.command == "preview-rule":
@@ -181,7 +254,7 @@ class Children:
                 code = apply_once(args.run_id, args.rule_id, args.since, self.settings)
             else:
                 code = 0
-        return EndedChild(code, stderr.getvalue())
+        return code, stderr.getvalue()
 
     def of(self, name):
         return [command for command in self.commands if command[3] == name]
@@ -978,6 +1051,248 @@ async def test_the_apply_of_a_feed_rule_reads_the_feed_with_the_account(
     await eventually(lambda: "The apply is done" in text_of(user, "apply-status"), "The end of the apply")
 
     assert youtube.added == [("WL", "f1")]
+
+
+# The apply in the background of the service.
+
+BANNER_TEXT = 'An apply of the rule "Long videos" runs. Videos added: {count}.'
+
+
+async def preview_a_saved_rule(user, sessions, settings, youtube):
+    """Open the apply dialog of a saved rule with one video to add, and preview it."""
+    store_cookies(sessions, settings)
+    saved_rule(sessions)
+    youtube.uploads[A] = [entry("new", A, day=today())]
+    await user.open("/rules")
+    await open_editor(user, 1)
+    await open_apply(user)
+    await preview_in_dialog(user)
+
+
+async def start_held_apply(user, children, *, run_body=True):
+    """Click Add with a gate on the apply child, and wait until the child runs. Return the gate."""
+    gate = children.gate = Gate(run_body=run_body)
+    user.find(marker="apply-run").click()
+    assert await asyncio.to_thread(gate.started.wait, WAIT_SECONDS)
+    return gate
+
+
+def set_added_count(sessions, run_id, count):
+    """Write the added count of a run, as the child of an apply does after each add."""
+    with sessions.begin() as session:
+        session.get(Run, run_id).added_count = count
+
+
+def banner_shown(user):
+    return element_of(user, "apply-banner").visible
+
+
+async def test_an_apply_goes_on_after_the_dialog_and_the_tab_closed_and_the_history_shows_it(
+    nicegui_globals, settings, sessions, account_copy, youtube, children
+):
+    async with service_with_pages(settings, children) as (user, services):
+        await preview_a_saved_rule(user, sessions, settings, youtube)
+        gate = await start_held_apply(user, children)
+        user.find(marker="apply-close").click()
+        await eventually(lambda: not element_of(user, "apply-dialog").value, "The close of the dialog")
+        # The tab closes: NiceGUI deletes the client of the page, and with it each subscription of the page.
+        user.client.delete()
+        events = (services.run_events.progress, services.run_events.finished, services.applies.changed)
+        assert [event.callbacks for event in events] == [[], [], []]
+
+        gate.release()
+
+        await eventually(lambda: runs(sessions)[0].status is RunStatus.SUCCEEDED, "The end of the apply")
+        (run,) = runs(sessions)
+        assert (run.trigger, run.added_count, run.finished_at is not None) == (RunTrigger.RULE_APPLY, 1, True)
+        assert youtube.added == [("WL", "new")]
+        await user.open("/history")
+        assert [(row["id"], row["trigger"], row["status"]) for row in rows(user, "runs-table")] == [
+            (run.id, "Rule apply", "Succeeded")
+        ]
+
+
+async def test_the_dialog_and_the_banner_show_the_count_while_the_apply_runs_and_the_end_after_it(
+    user, sessions, settings, account_copy, youtube, children
+):
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    assert not banner_shown(user)
+
+    gate = await start_held_apply(user, children, run_body=False)
+
+    (run,) = runs(sessions)
+    await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=0), "The banner")
+    set_added_count(sessions, run.id, 1)
+    await eventually(
+        lambda: (
+            text_of(user, "apply-status")
+            == f"The apply runs. Videos added: 1 of 1. The History page shows the apply as run {run.id}."
+        ),
+        "The count in the dialog",
+    )
+    await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=1), "The count")
+    assert element_of(user, "apply-preview").enabled is False
+
+    gate.release()
+
+    await eventually(lambda: "The apply is done" in text_of(user, "apply-status"), "The end in the dialog")
+    assert text_of(user, "apply-status") == (
+        f"The apply is done. Videos added: 1. The History page shows it as run {run.id}."
+    )
+    await eventually(lambda: not banner_shown(user), "The end of the banner")
+    assert element_of(user, "apply-preview").enabled is True
+    assert f"The apply is done. Videos added: 1. The History page shows it as run {run.id}." in user.notify.messages
+
+
+async def test_the_banner_shows_a_running_apply_after_a_new_load_of_the_page(
+    user, sessions, settings, account_copy, youtube, children
+):
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    gate = await start_held_apply(user, children, run_body=False)
+    (run,) = runs(sessions)
+    set_added_count(sessions, run.id, 3)
+    await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=3), "The count")
+
+    # The count does not change after the new load, so no progress comes, and the page reads the count itself.
+    await user.open("/rules")
+
+    await eventually(lambda: text_of(user, "apply-banner-text") == BANNER_TEXT.format(count=3), "The banner")
+    gate.release()
+    await eventually(lambda: not banner_shown(user), "The end of the banner")
+    # A load after the end shows no banner.
+    await user.open("/rules")
+    await eventually(lambda: not banner_shown(user), "No banner after the end")
+
+
+async def test_a_second_apply_from_another_tab_while_an_apply_runs_gets_the_busy_text(
+    user, sessions, settings, account_copy, youtube, children
+):
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    other = PatientUser(user.http_client)
+    await other.open("/rules")
+    await open_editor(other, 1)
+    await open_apply(other)
+    await preview_in_dialog(other)
+
+    gate = await start_held_apply(user, children, run_body=False)
+    other.find(marker="apply-run").click()
+
+    await eventually(lambda: "did not start" in text_of(other, "apply-status"), "The refusal")
+    assert text_of(other, "apply-status") == f"The apply did not start. {BUSY}"
+    assert len(runs(sessions)) == 1
+    assert text_of(other, "apply-banner-text") == BANNER_TEXT.format(count=0)
+    gate.release()
+    await eventually(lambda: "The apply is done" in text_of(user, "apply-status"), "The end of the first apply")
+    await other.should_see(marker="apply-run")
+
+
+async def test_an_apply_whose_child_cannot_start_shows_the_error_of_its_run(
+    user, sessions, settings, account_copy, youtube, children, caplog
+):
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    children.plan.append(OSError("no such file"))
+
+    user.find(marker="apply-run").click()
+
+    await eventually(lambda: "The apply failed" in text_of(user, "apply-status"), "The failure")
+    (run,) = runs(sessions)
+    assert text_of(user, "apply-status") == (
+        "The apply failed: The service cannot start the sync process: no such file The History page shows it as run "
+        f"{run.id}."
+    )
+    assert element_of(user, "apply-preview").enabled is True
+    # The runner logs the failed start as an error, and the failed start is the subject of this test.
+    caplog.clear()
+
+
+async def test_an_apply_whose_claim_fails_tells_the_user_and_can_start_again(
+    user, sessions, settings, account_copy, youtube, children, monkeypatch, caplog
+):
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+
+    def failing_claim(self, trigger, wait_s=0):
+        raise RuntimeError("the database is gone")
+
+    monkeypatch.setattr(runner_module.SyncRunner, "claim", failing_claim)
+
+    user.find(marker="apply-run").click()
+
+    await user.should_see("Something went wrong on this page. The log of the service holds the details.")
+    await user.should_see(marker="apply-run")
+    assert element_of(user, "apply-run").enabled is True
+    assert runs(sessions) == []
+    assert "the database is gone" in caplog.text
+    # The error of the click is the subject of this test.
+    caplog.clear()
+
+
+async def test_an_apply_whose_run_is_gone_at_its_end_says_so(
+    user, sessions, settings, account_copy, youtube, children, monkeypatch, caplog
+):
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    monkeypatch.setattr(rule_actions, "read_applied", lambda sessions, run_id: None)
+    monkeypatch.setattr(rules_page, "read_applied", lambda sessions, run_id: None)
+
+    user.find(marker="apply-run").click()
+
+    await eventually(lambda: "not in the database" in text_of(user, "apply-status"), "The end")
+    (run,) = runs(sessions)
+    assert text_of(user, "apply-status") == f"The apply ended, but its run {run.id} is not in the database any more."
+    await eventually(lambda: "is not in the database any more" in caplog.text, "The log of the service task")
+    assert f"The apply of rule 1 in run {run.id} failed" in caplog.text
+    # The error of the service task is the subject of this test.
+    caplog.clear()
+
+
+async def test_the_stop_of_the_service_ends_a_running_apply_cleanly(
+    nicegui_globals, settings, sessions, account_copy, youtube, children, monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO, logger=applies_module.__name__)
+    real_read = rule_actions.read_applied
+
+    def slow_read(sessions, run_id):
+        # The task of the apply still reads after the stop of its child, so the stop of the service must wait for it.
+        time.sleep(0.5)
+        return real_read(sessions, run_id)
+
+    monkeypatch.setattr(rule_actions, "read_applied", slow_read)
+
+    async with running_service(settings, children) as user:
+        await preview_a_saved_rule(user, sessions, settings, youtube)
+        gate = await start_held_apply(user, children)
+
+    (run,) = runs(sessions)
+    assert gate.terminated
+    assert (run.status, run.error_text) == (RunStatus.FAILED, INTERRUPTED_ERROR)
+    assert f"The apply of rule 1 ended as run {run.id} with failed" in caplog.text
+    assert "Could not cancel" not in caplog.text
+    assert "did not end" not in caplog.text
+
+
+async def test_the_stop_of_the_service_cancels_the_task_of_an_apply_that_does_not_end(
+    nicegui_globals, settings, sessions, account_copy, youtube, children, monkeypatch, caplog
+):
+    monkeypatch.setattr(applies_module, "CLOSE_WAIT_SECONDS", 0.1)
+    real_read = rule_actions.read_applied
+    stuck = threading.Event()
+
+    def stuck_read(sessions, run_id):
+        stuck.wait(WAIT_SECONDS)
+        return real_read(sessions, run_id)
+
+    monkeypatch.setattr(rule_actions, "read_applied", stuck_read)
+
+    async with running_service(settings, children) as user:
+        await preview_a_saved_rule(user, sessions, settings, youtube)
+        await start_held_apply(user, children)
+        stop_started = time.monotonic()
+
+    stopped_in = time.monotonic() - stop_started
+    stuck.set()
+    # The stop does not wait for the read that does not end.
+    assert stopped_in < WAIT_SECONDS / 2
+    assert "An apply did not end within 0.1 s after the stop of the service" in caplog.text
+    assert "Could not cancel" not in caplog.text
 
 
 # The texts.

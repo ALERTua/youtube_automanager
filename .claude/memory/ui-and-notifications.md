@@ -47,6 +47,8 @@ metadata:
 - `ui.input(...).props("type=date")` gives a text `YYYY-MM-DD`, and `clearable` gives `None` after the clear. A page that parses such a text moves the date into a range that `datetime` can convert to a time zone, because a date near year 1 or 9999 fails at the conversion.
 - `ui.number` gives a `float` or `None`, also with `precision=0`. A page that needs whole numbers checks `float(value).is_integer()` and converts, because the `min` and `max` props check only in the browser.
 - `ui.select(options, with_input=True)` searches by typing and works with the 598 names of `zoneinfo.available_timezones()`. The stored value must be one of the options, or NiceGUI raises a `ValueError`.
+- ty reads the callback type of NiceGUI `Event.subscribe`, `Callable[P, Any] | Callable[[], Any]`, as `() -> Any` only, so it refuses a handler with arguments with `invalid-argument-type`. A subscribe of such a handler carries `# ty: ignore[invalid-argument-type]`.
+- In the user simulation, a second `PatientUser(user.http_client)` is a second tab of the same service, with its own client.
 - A page that reads the database with `asyncio.to_thread` after each change of a filter drops a read that ends after a newer read started. Without a counter of the reads, a slow old read replaces the newer table.
 
 ## Translations
