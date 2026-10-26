@@ -8,6 +8,7 @@ import functools
 import itertools
 import json
 import logging
+import math
 import re
 from collections.abc import Iterator, Mapping
 from enum import StrEnum
@@ -46,6 +47,10 @@ MAX_UNKNOWN_LEAVES = 8
 # The condition of a rule that takes each video of its sources. An empty group does not do this: ``{"and": []}`` and
 # ``{"or": []}`` match no video. Copy the tree before a change, because all callers share this object.
 MATCH_ALL = {"==": [1, 1]}
+# The deepest rule tree, where each object and each list counts as one level. ``{"==": [1, 1]}`` has 2 levels, and a
+# group of the editor, such as ``{"and": [...]}``, adds 2. The JSON output of a rule fails at about 97 levels, and the
+# check of a tree would reach the recursion limit of Python at about 1000.
+MAX_DEPTH = 32
 
 _GROUP_OPERATORS = frozenset({"and", "or", "!"})
 _REGEX_FLAGS = {"i": re.IGNORECASE, "m": re.MULTILINE, "s": re.DOTALL}
@@ -75,18 +80,25 @@ _ENGINE = datalogic_py.Engine(custom_operators={"regex": _regex_operator})
 
 
 def validate(tree: Any) -> None:
-    """Raise RuleError unless ``tree`` is a JsonLogic object with only the allowed operators and video fields."""
+    """Raise RuleError unless ``tree`` is a JsonLogic object with only the allowed operators and video fields, at most
+    MAX_DEPTH levels deep, and with only finite numbers."""
     if not isinstance(tree, dict):
         raise RuleError(f"The root of a rule must be an object, not {type(tree).__name__}")
-    _validate_node(tree)
+    _validate_node(tree, 1)
 
 
-def _validate_node(node: Any) -> None:
+def _validate_node(node: Any, depth: int) -> None:
+    """Check ``node``, which is at the level ``depth`` of the tree. The root object is at level 1."""
+    if isinstance(node, float) and not math.isfinite(node):
+        raise RuleError(f"A number of a rule must be finite, not {node!r}")
+    if not isinstance(node, list | dict):
+        return
+    # The check comes before the recursion, so a deep tree never reaches the recursion limit of Python.
+    if depth > MAX_DEPTH:
+        raise RuleError(f"A rule can have at most {MAX_DEPTH} levels of objects and lists")
     if isinstance(node, list):
         for item in node:
-            _validate_node(item)
-        return
-    if not isinstance(node, dict):
+            _validate_node(item, depth + 1)
         return
     operator, args = _operator_and_args(node)
     if operator not in ALLOWED_OPERATORS:
@@ -97,7 +109,7 @@ def _validate_node(node: Any) -> None:
             raise RuleError(f"The field {name!r} is not a video field")
     elif operator == "regex":
         _validate_regex(args)
-    _validate_node(args)
+    _validate_node(args, depth + 1)
 
 
 def _validate_regex(args: Any) -> None:

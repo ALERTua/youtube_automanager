@@ -7,12 +7,13 @@ same functions and the same checks as the pages, and FastAPI shows each route on
 """
 
 import dataclasses
+import functools
 import logging
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any, Literal
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, available_timezones
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,6 +70,10 @@ MAX_RUNS_PAGE = 500
 router = APIRouter()
 
 ServicesDep = Annotated[Services, Depends(get_services)]
+# The id of a rule or of a run in a path. The database keeps a 64-bit integer, so a larger id gets 422, not a
+# failure of the query.
+MAX_ID = 2**63 - 1
+IdPath = Annotated[int, Path(ge=1, le=MAX_ID)]
 
 
 class HealthOut(BaseModel):
@@ -340,7 +345,7 @@ def list_rules(services: ServicesDep) -> list[RuleOut]:
 
 
 @router.get("/api/rules/{rule_id}", response_model=RuleOut, responses=RULE_ERRORS)
-def get_rule(rule_id: int, services: ServicesDep) -> RuleOut:
+def get_rule(rule_id: IdPath, services: ServicesDep) -> RuleOut:
     return RuleOut.model_validate(_stored_rule(_read_stored(services), rule_id))
 
 
@@ -356,7 +361,7 @@ def create_rule(body: RuleIn, services: ServicesDep) -> RuleOut:
 
 
 @router.put("/api/rules/{rule_id}", response_model=RuleOut, responses=RULE_ERRORS | RULE_SAVE_ERRORS)
-def replace_rule(rule_id: int, body: RuleIn, services: ServicesDep) -> RuleOut:
+def replace_rule(rule_id: IdPath, body: RuleIn, services: ServicesDep) -> RuleOut:
     """Replace the rule with the body. The rule keeps its place in the evaluation order.
 
     The answer is 404 for an unknown id, and 422 with the reason when the rule cannot be saved, as for a POST.
@@ -365,7 +370,7 @@ def replace_rule(rule_id: int, body: RuleIn, services: ServicesDep) -> RuleOut:
 
 
 @router.delete("/api/rules/{rule_id}", status_code=204, responses=RULE_ERRORS | {409: {"model": ErrorOut}})
-def remove_rule(rule_id: int, services: ServicesDep) -> None:
+def remove_rule(rule_id: IdPath, services: ServicesDep) -> None:
     """Delete the rule. The history keeps its actions.
 
     The answer is 409 while a run, a session check or another task with YouTube holds the sync lock, because a run
@@ -401,18 +406,38 @@ class ScheduleOut(ScheduleIn):
     model_config = ConfigDict(from_attributes=True)
 
 
-def _checked_schedule(body: ScheduleIn) -> ScheduleSpec:
-    """Return the schedule of ``body``. Raise ValueError with the reason when it cannot be saved.
+@functools.cache
+def _known_timezones() -> frozenset[str]:
+    """Return the names of the time zones that the scheduler page offers. The first call scans files and blocks."""
+    return frozenset(available_timezones())
 
-    The field that the kind does not use must be empty or valid on its own, so the row never holds a wrong text.
+
+def _is_valid(kind: ScheduleKind, timezone: str, cron: str | None, interval: int | None) -> bool:
+    try:
+        ScheduleSpec(kind=kind, timezone=timezone, cron_expression=cron, interval_s=interval)
+    except ValueError:
+        return False
+    return True
+
+
+def _checked_schedule(body: ScheduleIn) -> ScheduleSpec:
+    """Return the schedule of ``body``. Raise ValueError with the reason when it cannot be saved. This call blocks.
+
+    The field that the kind does not use goes into the row only when it is valid on its own, as on the scheduler page.
+    So an old row, for example a cron schedule with an interval below MIN_INTERVAL_S, comes back from a GET and a PUT
+    without an error, and the row never holds a wrong text.
     """
+    if body.timezone not in _known_timezones():
+        raise ValueError(f"Unknown time zone {body.timezone!r}. Use an IANA name, for example Europe/Kyiv.")
     cron = (body.cron_expression or "").strip() or None
+    interval = body.interval_s
+    if body.kind is ScheduleKind.CRON:
+        interval = interval if _is_valid(ScheduleKind.INTERVAL, body.timezone, cron, interval) else None
+    else:
+        cron = cron if _is_valid(ScheduleKind.CRON, body.timezone, cron, interval) else None
     spec = ScheduleSpec(
-        kind=body.kind, timezone=body.timezone, cron_expression=cron, interval_s=body.interval_s, enabled=body.enabled
+        kind=body.kind, timezone=body.timezone, cron_expression=cron, interval_s=interval, enabled=body.enabled
     )
-    other = ScheduleKind.INTERVAL if spec.kind is ScheduleKind.CRON else ScheduleKind.CRON
-    if (spec.interval_s if other is ScheduleKind.INTERVAL else spec.cron_expression) is not None:
-        dataclasses.replace(spec, kind=other)
     # A paused schedule has no run times, but it must have them after a resume.
     if not upcoming_run_times(dataclasses.replace(spec, enabled=True), 1):
         raise ValueError("The schedule has no run time.")
@@ -433,7 +458,8 @@ async def put_schedule(body: ScheduleIn, services: ServicesDep, background: Back
     scheduler page does.
     """
     try:
-        spec = _checked_schedule(body)
+        # The search for a run time of a rare cron expression takes up to a few hundred milliseconds.
+        spec = await run_in_threadpool(_checked_schedule, body)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     before = await services.scheduler.state()
@@ -485,7 +511,7 @@ async def start_run(services: ServicesDep) -> RunStartOut:
 
 @router.get("/api/runs/{run_id}", response_model=RunDetailOut, responses={404: {"model": ErrorOut}})
 def get_run(
-    run_id: int,
+    run_id: IdPath,
     services: ServicesDep,
     action: Annotated[RunActionKind | None, Query(description="Only the actions of this kind.")] = None,
 ) -> RunDetailOut:

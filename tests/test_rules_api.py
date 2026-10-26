@@ -1,6 +1,7 @@
 """Tests of the HTTP API of the rules, the schedule and the runs. A fake child stands in for the child of a run, so no test
 reads YouTube."""
 
+import asyncio
 import base64
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -26,10 +27,11 @@ from youtube_automanager.db.models import (
     Schedule,
     ScheduleKind,
 )
-from youtube_automanager.engine.rules import MATCH_ALL
+from youtube_automanager.engine.rules import MATCH_ALL, MAX_DEPTH
 from youtube_automanager.rules_store import MAX_DAYS_BACK
 from youtube_automanager.runner import BUSY_TEXT
-from youtube_automanager.scheduler import MIN_INTERVAL_S
+from youtube_automanager.scheduler import MIN_INTERVAL_S, SchedulerState
+from youtube_automanager.web import api
 from youtube_automanager.web.api import router
 from youtube_automanager.web.app import create_app
 
@@ -124,6 +126,22 @@ def rule_rows(sessions) -> dict[int, tuple]:
         }
 
 
+def nested(levels: int) -> dict:
+    """Return a condition of ``levels`` levels: NOT objects around ``{"==": [1, 1]}``, which has 2 levels."""
+    tree: dict = {"==": [1, 1]}
+    for _ in range(levels - 2):
+        tree = {"!": tree}
+    return tree
+
+
+def on_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 def basic(password: str) -> dict[str, str]:
     token = base64.b64encode(f"api:{password}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
@@ -154,9 +172,19 @@ def test_the_rules_come_in_the_order_of_their_evaluation_with_their_fields(clien
     }
 
 
-@pytest.mark.parametrize("method", ["GET", "PUT", "DELETE"])
-def test_an_unknown_rule_id_gets_404(client, account, method):
-    answer = client.request(method, "/api/rules/99", json=body() if method == "PUT" else None)
+@pytest.mark.parametrize(
+    ("method", "sent"),
+    [
+        ("GET", None),
+        ("PUT", body()),
+        # The id comes before the checks of the body.
+        ("PUT", body(name="")),
+        ("PUT", body(playlist_id="PLother")),
+        ("DELETE", None),
+    ],
+)
+def test_an_unknown_rule_id_gets_404(client, account, method, sent):
+    answer = client.request(method, "/api/rules/99", json=sent)
 
     # The text of the route, not the "Not Found" of the catch-all of unknown API paths.
     assert (answer.status_code, answer.json()) == (404, {"detail": "No rule has this id."})
@@ -217,10 +245,13 @@ def refused_bodies() -> list:
 
 @pytest.mark.parametrize(("refused", "reason"), refused_bodies())
 @pytest.mark.parametrize("method", ["POST", "PUT"])
-def test_a_rule_that_cannot_be_saved_gets_422_with_the_reason(client, account, method, refused, reason):
+@pytest.mark.parametrize("enabled", [True, False], ids=["enabled", "disabled"])
+def test_a_rule_that_cannot_be_saved_gets_422_with_the_reason(client, account, method, refused, reason, enabled):
     before = rule_rows(account)
 
-    answer = client.request(method, "/api/rules" if method == "POST" else "/api/rules/1", json=refused)
+    answer = client.request(
+        method, "/api/rules" if method == "POST" else "/api/rules/1", json=refused | {"enabled": enabled}
+    )
 
     assert answer.status_code == 422
     assert reason in answer.json()["detail"]
@@ -234,6 +265,64 @@ def test_the_day_of_the_older_videos_can_be_today_or_the_last_day_of_the_range(c
     answer = client.post("/api/rules", json=body(catch_up_since=since.isoformat()))
 
     assert (answer.status_code, answer.json()["catch_up_since"]) == (201, since.isoformat())
+
+
+def test_the_day_of_the_older_videos_is_at_most_365_days_back(client):
+    now = today().date()
+
+    last = client.post("/api/rules", json=body(catch_up_since=(now - timedelta(days=365)).isoformat()))
+    beyond = client.post("/api/rules", json=body(catch_up_since=(now - timedelta(days=366)).isoformat()))
+
+    assert last.status_code == 201
+    assert beyond.status_code == 422
+    assert "at most 365 days back" in beyond.json()["detail"]
+
+
+def far_zone() -> str:
+    """Return a time zone whose day differs now from the day in UTC."""
+    # UTC-12 has the day before the day of UTC until 12:00 UTC, and UTC+14 has the day after it from 10:00 UTC.
+    return "Etc/GMT+12" if datetime.now(UTC).hour < 12 else "Pacific/Kiritimati"
+
+
+def test_the_day_of_the_older_videos_follows_the_time_zone_of_the_schedule(settings, account, fake_starter):
+    zone = far_zone()
+    store(account, Schedule(enabled=True, kind=ScheduleKind.CRON, cron_expression="0 18 * * *", timezone=zone))
+    local_today = datetime.now(ZoneInfo(zone)).date()
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        first = client.post("/api/rules", json=body(catch_up_since=local_today.isoformat()))
+        last = client.post(
+            "/api/rules", json=body(catch_up_since=(local_today - timedelta(days=MAX_DAYS_BACK)).isoformat())
+        )
+
+    assert local_today != datetime.now(UTC).date()
+    assert (first.status_code, last.status_code) == (201, 201)
+
+
+def test_a_condition_deeper_than_the_limit_gets_422_and_the_rules_still_answer(client, account):
+    deepest = client.post("/api/rules", json=body(condition=nested(MAX_DEPTH)))
+    deeper = client.post("/api/rules", json=body(condition=nested(MAX_DEPTH + 1)))
+    very_deep = client.post("/api/rules", json=body(condition=nested(3000)))
+    rules = client.get("/api/rules")
+
+    assert deepest.status_code == 201
+    assert deepest.json()["condition"] == nested(MAX_DEPTH)
+    assert (deeper.status_code, very_deep.status_code) == (422, 422)
+    assert f"at most {MAX_DEPTH} levels" in deeper.json()["detail"]
+    assert f"at most {MAX_DEPTH} levels" in very_deep.json()["detail"]
+    assert rules.status_code == 200
+    assert len(rules.json()) == 3
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity"])
+def test_a_condition_with_a_number_that_is_not_finite_gets_422(client, account, number):
+    sent = '{"name": "Bad", "playlist_id": "WL", "condition": {"==": [NUMBER, 1]}}'.replace("NUMBER", number)
+
+    answer = client.post("/api/rules", content=sent, headers={"Content-Type": "application/json"})
+
+    assert answer.status_code == 422
+    assert "must be finite" in answer.json()["detail"]
+    assert set(rule_rows(account)) == {1, 2}
 
 
 def test_a_body_with_an_unknown_or_a_missing_field_gets_the_422_of_the_model(client, account):
@@ -349,15 +438,19 @@ def test_a_put_that_turns_the_schedule_off_pauses_it_and_tells_the_targets(clien
         pytest.param(
             {"kind": "cron", "timezone": "Mars/Base", "cron_expression": "0 18 * * *"}, "Mars/Base", id="zone"
         ),
+        # Names that are no valid file names on Windows, too long on each system, or not exact.
+        *[
+            pytest.param(
+                {"kind": "cron", "timezone": zone, "cron_expression": "0 18 * * *"},
+                "Unknown time zone",
+                id=f"zone {zone[:12]!r}",
+            )
+            for zone in ["*", "Europe/Kyiv?", "x" * 300, "Europe/Kyiv ", "Europe\\Kyiv", ""]
+        ],
         pytest.param(
-            {"kind": "interval", "timezone": "UTC", "interval_s": 3600, "cron_expression": "bad"},
-            "5 fields",
-            id="bad unused cron",
-        ),
-        pytest.param(
-            {"kind": "cron", "timezone": "UTC", "cron_expression": "0 18 * * *", "interval_s": 1},
-            f"{MIN_INTERVAL_S} s",
-            id="bad unused interval",
+            {"kind": "cron", "timezone": "UTC", "cron_expression": "0 18 * * *", "interval": 3600},
+            None,
+            id="unknown field",
         ),
     ],
 )
@@ -365,9 +458,107 @@ def test_a_wrong_schedule_gets_422_and_changes_nothing(client, account, schedule
     answer = client.put("/api/schedule", json=schedule)
 
     assert answer.status_code == 422
-    assert reason in answer.json()["detail"]
+    if reason is None:
+        assert answer.json()["detail"][0]["type"] == "extra_forbidden"
+    else:
+        assert reason in answer.json()["detail"]
     assert client.get("/api/schedule").json()["cron_expression"] == "0 18 * * *"
     assert client.get("/api/status").json()["scheduler_state"] == "running"
+
+
+@pytest.mark.parametrize(
+    ("schedule", "stored"),
+    [
+        pytest.param(
+            {"kind": "interval", "timezone": "UTC", "interval_s": 3600, "cron_expression": "bad"},
+            (None, 3600),
+            id="bad unused cron",
+        ),
+        pytest.param(
+            {"kind": "cron", "timezone": "UTC", "cron_expression": "0 18 * * *", "interval_s": 60},
+            ("0 18 * * *", None),
+            id="bad unused interval",
+        ),
+        pytest.param(
+            {"kind": "cron", "timezone": "UTC", "cron_expression": "0 18 * * *", "interval_s": 3600},
+            ("0 18 * * *", 3600),
+            id="valid unused interval",
+        ),
+        pytest.param(
+            {"kind": "interval", "timezone": "UTC", "interval_s": 3600, "cron_expression": "0 6 * * *"},
+            ("0 6 * * *", 3600),
+            id="valid unused cron",
+        ),
+    ],
+)
+def test_the_unused_field_stays_only_when_it_is_valid_as_on_the_page(client, account, schedule, stored):
+    answer = client.put("/api/schedule", json=schedule)
+
+    assert answer.status_code == 200
+    assert (answer.json()["cron_expression"], answer.json()["interval_s"]) == stored
+    with account() as session:
+        row = session.get(Schedule, 1)
+        assert (row.cron_expression, row.interval_s) == stored
+
+
+def test_an_old_schedule_row_comes_back_from_a_get_and_a_put(settings, account, fake_starter):
+    # An older version accepted an interval of 1 s and more.
+    store(
+        account,
+        Schedule(enabled=True, kind=ScheduleKind.CRON, cron_expression="0 18 * * *", interval_s=60, timezone="UTC"),
+    )
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        old = client.get("/api/schedule").json()
+        answer = client.put("/api/schedule", json=old)
+
+    assert old["interval_s"] == 60
+    assert answer.status_code == 200
+    assert answer.json() == old | {"interval_s": None}
+
+
+def test_a_put_while_the_scheduler_is_stopped_tells_nobody(client, monkeypatch):
+    sent = []
+    monkeypatch.setattr(notify, "send_to_stored_targets", lambda sessions, notification: sent.append(notification))
+
+    async def stopped() -> SchedulerState:
+        return SchedulerState.STOPPED
+
+    monkeypatch.setattr(client.app.state.services.scheduler, "state", stopped)
+
+    # A stopped scheduler is not running, so each value of the switch would differ from its state.
+    answers = [
+        client.put(
+            "/api/schedule",
+            json={"kind": "cron", "timezone": "UTC", "cron_expression": "0 6 * * *", "enabled": enabled},
+        ).status_code
+        for enabled in (True, False)
+    ]
+
+    assert answers == [200, 200]
+    assert sent == []
+
+
+def test_the_blocking_calls_of_a_schedule_put_run_off_the_event_loop(client, monkeypatch):
+    calls = []
+
+    def probe(name, function):
+        def probed(*args):
+            calls.append((name, on_event_loop()))
+            return function(*args)
+
+        return probed
+
+    monkeypatch.setattr(api, "upcoming_run_times", probe("run times", api.upcoming_run_times))
+    monkeypatch.setattr(api, "save_schedule", probe("save", api.save_schedule))
+    monkeypatch.setattr(notify, "send_to_stored_targets", probe("notify", lambda sessions, notification: None))
+
+    answer = client.put(
+        "/api/schedule", json={"kind": "cron", "timezone": "UTC", "cron_expression": "0 6 * * *", "enabled": False}
+    )
+
+    assert answer.status_code == 200
+    assert calls == [("run times", False), ("save", False), ("notify", False)]
 
 
 # The runs.
@@ -436,6 +627,15 @@ def test_a_run_shows_its_actions_in_the_order_of_their_time_with_a_filter(client
         }
     ]
     assert errors["actions"] == []
+
+
+@pytest.mark.parametrize("path", ["/api/runs/{}", "/api/rules/{}"])
+def test_an_id_out_of_the_range_of_the_database_gets_422(client, path):
+    answers = {number: client.get(path.format(number)).status_code for number in (0, -1, 2**63, 10**30)}
+    largest = client.get(path.format(2**63 - 1))
+
+    assert answers == {0: 422, -1: 422, 2**63: 422, 10**30: 422}
+    assert largest.status_code == 404
 
 
 def test_an_unknown_run_gets_404_and_an_unknown_action_kind_gets_422(client):
