@@ -7,7 +7,8 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from nicegui import ui
+from conftest import recording_run_javascript
+from nicegui import Client, ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
 from sqlalchemy import select
@@ -20,7 +21,7 @@ from test_live_rules import (
     WATCH_LATER_RULE,
 )
 from test_sync import entry, feed_video
-from ui_support import element_of, elements_of, eventually, running_service, set_value, store, text_of
+from ui_support import client_of, element_of, elements_of, eventually, running_service, set_value, store, text_of
 
 from youtube_automanager import i18n
 from youtube_automanager.db.models import (
@@ -39,7 +40,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.engine.rules import MATCH_ALL
 from youtube_automanager.runner import sync_lock_held
-from youtube_automanager.web.ui import rules_page
+from youtube_automanager.web.ui import layout, rule_editor
 from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.web.ui.rule_form import LIVE_STATUSES
 
@@ -147,6 +148,15 @@ async def open_editor(user, rule_id: int | None = None) -> None:
     else:
         user.find(marker="rules-table").trigger("rowClick", args=rule_id)
     await eventually(lambda: elements_of(user, "editor"), "The editor")
+
+
+async def discard(user) -> None:
+    """Answer the question of Cancel with Discard, and wait until the rules show."""
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of Cancel")
+    assert text_of(user, "discard-question") == "Discard the changes?"
+    user.find(marker="discard-confirm").click()
+    await eventually(lambda: not elements_of(user, "editor"), "The close of the editor")
+    await user.should_see(marker="new-rule")
 
 
 async def save(user, message: str = "The rule is saved.") -> None:
@@ -759,7 +769,7 @@ async def test_cancel_closes_the_editor_and_keeps_the_rule(user, sessions, accou
 
     user.find(marker="editor-cancel").click()
 
-    await eventually(lambda: not elements_of(user, "editor"), "The close of the editor")
+    await discard(user)
     stored = stored_rule(sessions, 1)
     assert (stored.name, stored.condition, stored.updated_at) == ("Kept", {"and": [LEVELS]}, CHANGED_AT)
     await open_editor(user, 1)
@@ -895,7 +905,7 @@ async def test_a_new_editor_fills_the_field_again_after_a_clear_in_another_edito
     set_value(user, "rule-channels", [A])
     assert element_of(user, "rule-catch-up").value is None
     user.find(marker="editor-cancel").click()
-    await eventually(lambda: not elements_of(user, "editor"), "The close of the editor")
+    await discard(user)
 
     await open_editor(user)
     assert element_of(user, "rule-catch-up").value == days_back(7).isoformat()
@@ -945,7 +955,7 @@ async def test_a_day_out_of_the_range_is_refused(user, sessions, account_copy, d
 @pytest.fixture
 def slow_save(monkeypatch):
     """Makes each save of a rule take 0.3 s. The event is set when a save starts."""
-    real_save_rule = rules_page.save_rule
+    real_save_rule = rule_editor.save_rule
     started = threading.Event()
 
     def slow_save_rule(*arguments):
@@ -953,7 +963,7 @@ def slow_save(monkeypatch):
         time.sleep(0.3)
         return real_save_rule(*arguments)
 
-    monkeypatch.setattr(rules_page, "save_rule", slow_save_rule)
+    monkeypatch.setattr(rule_editor, "save_rule", slow_save_rule)
     return started
 
 
@@ -1053,8 +1063,8 @@ async def test_a_click_on_a_rule_that_is_gone_says_so(user, sessions, account_co
 
     user.find(marker="rules-table").trigger("rowClick", args=1)
 
-    await user.should_see("The rule does not exist any more.")
-    await names_are(user, ["Stays"])
+    await user.should_see(marker="no-such-rule")
+    assert text_of(user, "no-such-rule") == "No rule has the id 1. Another tab can have deleted it."
     await user.should_not_see(marker="editor")
 
 
@@ -1313,3 +1323,332 @@ async def test_each_text_of_the_rules_page_goes_through_the_translation(
         if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not time_text.fullmatch(text)
     ]
     assert untranslated == []
+
+
+# The view in the address and the editor as a page.
+
+
+def address(user) -> str:
+    return client_of(user).sub_pages_router.current_path
+
+
+@pytest.fixture
+def replaces(monkeypatch):
+    """Record each write of the address in place, and send it nowhere."""
+    written: list[str] = []
+    monkeypatch.setattr(Client, "run_javascript", recording_run_javascript(written.append, markers=("replaceState",)))
+    return written
+
+
+async def test_a_link_with_filters_opens_the_rules_with_them(user, three_rules):
+    await user.open("/rules?state=enabled&playlist=PLhome&q=levels")
+
+    assert element_of(user, "filter-state").value == "enabled"
+    assert element_of(user, "filter-playlist").value == "PLhome"
+    assert element_of(user, "filter-text").value == "levels"
+    await names_are(user, ["Levels of Epicurious"])
+
+
+async def test_a_link_with_the_state_filter_shows_only_those_rules(user, three_rules):
+    await user.open("/rules?state=enabled")
+
+    assert element_of(user, "filter-state").value == "enabled"
+    await names_are(user, ["Levels of Epicurious", "Hand-written"])
+
+
+async def test_a_link_with_values_that_no_field_has_shows_each_rule(user, three_rules):
+    await user.open("/rules?state=lost&playlist=PLnone")
+
+    assert (element_of(user, "filter-state").value, element_of(user, "filter-playlist").value) == ("any", "any")
+    await names_are(user, ["Everything from the feed", "Levels of Epicurious", "Hand-written"])
+
+
+async def test_a_change_of_a_filter_writes_the_address_in_place_and_keeps_the_page(user, three_rules, replaces):
+    client = await user.open("/rules")
+    new_rule = element_of(user, "new-rule")
+    history = list(user.back_history)
+
+    set_value(user, "filter-state", "disabled")
+    set_value(user, "filter-text", "feed")
+
+    await names_are(user, ["Everything from the feed"])
+    assert address(user) == "/rules?q=feed&state=disabled"
+    assert '"/rules?q=feed&state=disabled"' in replaces[-1]
+    # The page was not built again: the same button, and no new entry of the history of the browser for each letter.
+    assert element_of(user, "new-rule") is new_rule
+    assert not new_rule.is_deleted
+    assert user.back_history == history
+    assert user.client is client
+
+
+async def test_a_link_to_a_rule_opens_its_editor(user, three_rules):
+    await user.open("/rules/3")
+
+    assert text_of(user, "editor-title") == "Change the rule"
+    assert element_of(user, "rule-name").value == "Hand-written"
+    assert "active" in element_of(user, "nav:/rules").props
+    await user.should_not_see(marker="rules-table")
+
+
+async def test_a_link_to_a_new_rule_opens_an_empty_editor(user, three_rules):
+    await user.open("/rules/new")
+
+    assert text_of(user, "editor-title") == "New rule"
+    assert element_of(user, "rule-name").value == ""
+
+
+@pytest.mark.parametrize("rule_id", ["abc", "999", "-1", "1e3", "9" * 30])
+async def test_a_link_to_a_rule_that_does_not_exist_says_so_at_once(user, three_rules, rule_id):
+    started = time.monotonic()
+    answer = await user.http_client.get(f"/rules/{rule_id}")
+    seconds = time.monotonic() - started
+
+    assert answer.status_code == 200
+    # A failed conversion of the id would wait the 3 s of the response_timeout of NiceGUI, and then answer 500.
+    assert seconds < 2
+    assert f"No rule has the id {rule_id}. Another tab can have deleted it." in answer.text
+    await user.open(f"/rules/{rule_id}")
+    assert element_of(user, "back-to-rules").props["href"] == "/rules"
+    await user.should_not_see(marker="editor")
+
+
+async def test_the_link_back_from_a_rule_that_does_not_exist_keeps_the_filters(user, three_rules):
+    await user.open("/rules/999?state=enabled")
+
+    assert element_of(user, "back-to-rules").props["href"] == "/rules?state=enabled"
+
+
+async def test_the_editor_keeps_the_filters_of_the_rules_in_its_address(user, three_rules):
+    await user.open("/rules?state=enabled")
+
+    await open_editor(user, 1)
+
+    assert address(user) == "/rules/1?state=enabled"
+    assert user.back_history[-1] == "/rules/1?state=enabled"
+
+
+async def test_cancel_with_changes_asks_and_no_keeps_the_editor(user, three_rules):
+    await user.open("/rules/1")
+    set_value(user, "rule-name", "Changed")
+
+    user.find(marker="editor-cancel").click()
+
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of Cancel")
+    assert text_of(user, "discard-question") == "Discard the changes?"
+    user.find(marker="discard-cancel").click()
+    await eventually(lambda: not elements_of(user, "discard-dialog"), "The close of the question")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert element_of(user, "rule-name").value == "Changed"
+    assert address(user) == "/rules/1"
+
+
+@pytest.mark.parametrize("path", ["/rules/1", "/rules/new"])
+async def test_cancel_without_changes_goes_back_at_once(user, three_rules, path):
+    await user.open(f"{path}?state=enabled")
+
+    user.find(marker="editor-cancel").click()
+
+    await names_are(user, ["Levels of Epicurious", "Hand-written"])
+    assert not elements_of(user, "discard-dialog")
+    assert address(user) == "/rules?state=enabled"
+    assert element_of(user, "filter-state").value == "enabled"
+
+
+async def test_save_goes_back_to_the_rules_with_the_filters_of_the_rules(user, sessions, three_rules):
+    await user.open("/rules?state=enabled&q=levels")
+    await open_editor(user, 1)
+    set_value(user, "rule-name", "Levels, renamed")
+
+    await save(user)
+
+    await names_are(user, ["Levels, renamed"])
+    assert address(user) == "/rules?q=levels&state=enabled"
+    assert (element_of(user, "filter-text").value, element_of(user, "filter-state").value) == ("levels", "enabled")
+    assert stored_rule(sessions, 1).name == "Levels, renamed"
+
+
+async def test_delete_goes_back_to_the_rules_with_the_filters_of_the_rules(user, sessions, three_rules):
+    await user.open("/rules?state=enabled")
+    await open_editor(user, 3)
+
+    user.find(marker="editor-delete").click()
+    await eventually(lambda: elements_of(user, "delete-confirm"), "The question")
+    user.find(marker="delete-confirm").click()
+
+    await names_are(user, ["Levels of Epicurious"])
+    assert address(user) == "/rules?state=enabled"
+    assert stored_rule(sessions, 3) is None
+
+
+async def test_back_after_the_editor_shows_the_rules_with_their_filters(user, three_rules):
+    await user.open("/rules?state=disabled")
+    await open_editor(user, 2)
+
+    user.navigate.back()
+
+    await names_are(user, ["Everything from the feed"])
+    assert element_of(user, "filter-state").value == "disabled"
+    await user.should_not_see(marker="editor")
+
+
+async def test_the_drawer_and_back_on_the_rules_show_the_filters_of_the_address(user, three_rules):
+    await user.open("/rules?state=disabled")
+    new_rule = element_of(user, "new-rule")
+
+    user.find(marker="nav:/rules").click()
+
+    await names_are(user, ["Everything from the feed", "Levels of Epicurious", "Hand-written"])
+    assert element_of(user, "filter-state").value == "any"
+    assert element_of(user, "new-rule") is new_rule
+    user.navigate.back()
+    await names_are(user, ["Everything from the feed"])
+    assert element_of(user, "filter-state").value == "disabled"
+    assert address(user) == "/rules?state=disabled"
+
+
+async def test_a_refresh_of_the_lists_drops_a_playlist_filter_that_no_rule_targets_and_writes_the_address(
+    user, sessions, three_rules, fake_starter, replaces
+):
+    await user.open("/rules?playlist=PLhome")
+    await names_are(user, ["Levels of Epicurious"])
+    with sessions.begin() as session:
+        session.delete(session.get(Rule, 1))
+    counts = {
+        "channels_new": 0,
+        "channels_updated": 0,
+        "channels_unsubscribed": 0,
+        "playlists_new": 0,
+        "playlists_updated": 0,
+    }
+    fake_starter.plan.append({"stderr": json.dumps(counts) + "\n"})
+
+    user.find(marker="refresh-lists").click()
+
+    await names_are(user, ["Everything from the feed", "Hand-written"])
+    assert element_of(user, "filter-playlist").value == "any"
+    assert "PLhome" not in options(user, "filter-playlist")
+    assert address(user) == "/rules"
+    assert '"/rules"' in replaces[-1]
+
+
+# The leave of an editor with changes.
+
+
+@pytest.fixture
+def warnings(monkeypatch):
+    """Record each change of the warning of the browser before a reload or a close of the tab."""
+    written: list[str] = []
+    monkeypatch.setattr(
+        Client, "run_javascript", recording_run_javascript(written.append, markers=("__warnBeforeUnload",))
+    )
+    return written
+
+
+def warning_flags(written: list[str]) -> list[bool]:
+    return [code.strip() == "window.__warnBeforeUnload = true;" for code in written]
+
+
+async def test_a_click_in_the_drawer_with_changes_asks_and_keep_editing_stays(user, three_rules):
+    await user.open("/rules/1")
+    set_value(user, "rule-name", "Changed")
+
+    user.find(marker="nav:/history").click()
+
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of the drawer")
+    assert text_of(user, "discard-question") == "Discard the changes?"
+    assert text_of(user, "discard-cancel") == "Keep editing"
+    user.find(marker="discard-cancel").click()
+    await eventually(lambda: not elements_of(user, "discard-dialog"), "The close of the question")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert element_of(user, "rule-name").value == "Changed"
+    assert address(user) == "/rules/1"
+    await user.should_not_see(marker="refresh")
+
+
+async def test_a_click_in_the_drawer_with_changes_and_discard_goes_to_the_clicked_page(user, sessions, three_rules):
+    await user.open("/rules/1")
+    set_value(user, "rule-name", "Changed")
+
+    user.find(marker="nav:/history").click()
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of the drawer")
+    user.find(marker="discard-confirm").click()
+
+    await user.should_see(marker="refresh")
+    assert address(user) == "/history"
+    assert not elements_of(user, "editor")
+    assert stored_rule(sessions, 1).name == "Levels of Epicurious"
+
+
+@pytest.mark.parametrize("path", ["/rules/1", "/rules/new"])
+async def test_a_click_in_the_drawer_without_changes_leaves_at_once(user, three_rules, path):
+    await user.open(path)
+
+    user.find(marker="nav:/history").click()
+
+    await user.should_see(marker="refresh")
+    assert not elements_of(user, "discard-dialog")
+
+
+async def test_the_question_of_cancel_offers_keep_editing_and_a_delete_keeps_its_cancel(user, three_rules):
+    await user.open("/rules/1")
+    set_value(user, "rule-name", "Changed")
+
+    user.find(marker="editor-cancel").click()
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of Cancel")
+    assert text_of(user, "discard-cancel") == "Keep editing"
+    user.find(marker="discard-cancel").click()
+    await eventually(lambda: not elements_of(user, "discard-dialog"), "The close of the question")
+
+    user.find(marker="editor-delete").click()
+    await eventually(lambda: elements_of(user, "delete-dialog"), "The question of Delete")
+    assert text_of(user, "delete-cancel") == "Cancel"
+
+
+async def test_the_browser_warns_before_a_reload_only_while_the_editor_has_changes(user, three_rules, warnings):
+    await user.open("/rules/1")
+    assert warnings == []
+
+    set_value(user, "rule-name", "Changed")
+    assert warning_flags(warnings) == [True]
+    set_value(user, "rule-name", "Levels of Epicurious")
+    assert warning_flags(warnings) == [True, False]
+    set_value(user, "rule-name", "Changed again")
+    assert warning_flags(warnings) == [True, False, True]
+
+
+@pytest.mark.parametrize("leave", ["save", "cancel", "drawer", "delete", "back"])
+async def test_the_warning_before_a_reload_ends_with_the_editor(user, three_rules, warnings, leave):
+    await user.open("/rules")
+    await open_editor(user, 3)
+    set_value(user, "rule-name", "Changed")
+    assert warning_flags(warnings) == [True]
+
+    match leave:
+        case "save":
+            await save(user)
+        case "cancel":
+            user.find(marker="editor-cancel").click()
+            await discard(user)
+        case "drawer":
+            user.find(marker="nav:/history").click()
+            await eventually(lambda: elements_of(user, "discard-dialog"), "The question of the drawer")
+            user.find(marker="discard-confirm").click()
+            await user.should_see(marker="refresh")
+        case "delete":
+            user.find(marker="editor-delete").click()
+            await eventually(lambda: elements_of(user, "delete-confirm"), "The question")
+            user.find(marker="delete-confirm").click()
+            await user.should_see(marker="new-rule")
+        case "back":
+            user.navigate.back()
+            await user.should_see(marker="new-rule")
+
+    await eventually(lambda: warning_flags(warnings) == [True, False], "The end of the warning")
+    assert not elements_of(user, "editor")
+
+
+async def test_the_head_holds_the_warning_script_once(user):
+    client = await user.open("/rules/new")
+
+    assert client.head_html.count(layout.unload_warning_script()) == 1
+    assert "addEventListener('beforeunload'" in layout.unload_warning_script()

@@ -1,7 +1,9 @@
 """The shell of the pages: one route answers each page, and a click in the drawer changes only the content."""
 
 import asyncio
+import json
 import re
+from unittest.mock import Mock
 
 import pytest
 from nicegui import Client, ui
@@ -101,13 +103,39 @@ def test_a_sub_route_refuses_a_path_parameter_of_another_type_than_str(monkeypat
     assert "/items" not in layout._PAGES
 
 
+@pytest.mark.parametrize("annotation", [int, float, int | None, "int"])
+def test_a_page_refuses_a_query_parameter_of_another_type_than_str(monkeypatch, annotation):
+    monkeypatch.setattr(layout, "_PAGES", dict(layout._PAGES))
+
+    async def items_page(services, page=None):
+        pass
+
+    items_page.__annotations__["page"] = annotation
+
+    # ui.sub_pages would convert "?page=abc" before the builder starts, and the first answer would wait 3 s for a 500.
+    with pytest.raises(ValueError, match="query parameter page"):
+        layout.register_page("/items", label=N_("Items"), icon="list")(items_page)
+    assert "/items" not in layout._PAGES
+
+
+def test_a_sub_route_refuses_a_query_parameter_of_another_type_than_str(monkeypatch):
+    monkeypatch.setattr(layout, "_PAGES", dict(layout._PAGES))
+
+    async def show_item(services, item_id: str, sort: int = 0):
+        pass
+
+    with pytest.raises(ValueError, match="query parameter sort"):
+        layout.register_page("/items", label=N_("Items"), icon="list", routes=[("/items/{item_id}", show_item)])
+    assert "/items" not in layout._PAGES
+
+
 def test_a_sub_route_takes_a_path_parameter_without_a_type_or_as_str(monkeypatch):
     monkeypatch.setattr(layout, "_PAGES", dict(layout._PAGES))
 
     async def plain(services, item_id):
         pass
 
-    async def text(services, item_id: str, sort: int = 0):
+    async def text(services, item_id: str, sort: str = ""):
         pass
 
     @layout.register_page(
@@ -145,7 +173,7 @@ def marked(client, marker) -> list[ui.element]:
     return [element for element in client.elements.values() if marker in element._markers]
 
 
-@pytest.mark.parametrize(("path", "marker"), [("/no-such-page", "ytdlp-version"), ("/rules/xyz", "new-rule")])
+@pytest.mark.parametrize(("path", "marker"), [("/no-such-page", "ytdlp-version"), ("/rules/xyz/more", "no-such-rule")])
 async def test_a_full_load_of_an_unknown_path_shows_only_the_404_text(
     nicegui_globals, settings, fake_starter, path, marker
 ):
@@ -164,7 +192,8 @@ async def test_a_full_load_of_an_unknown_path_shows_only_the_404_text(
 
 
 @pytest.mark.parametrize(
-    ("start", "path", "marker"), [("/rules", "/no-such-page", "ytdlp-version"), ("/", "/rules/xyz", "new-rule")]
+    ("start", "path", "marker"),
+    [("/rules", "/no-such-page", "ytdlp-version"), ("/", "/rules/xyz/more", "no-such-rule")],
 )
 async def test_a_navigation_to_an_unknown_path_shows_only_the_404_text(
     nicegui_globals, settings, fake_starter, start, path, marker
@@ -251,7 +280,12 @@ async def test_the_rules_page_ends_its_subscriptions_when_the_drawer_leaves_it(n
         for _visit in range(2):
             user.find(marker="nav:/rules").click()
             await user.should_see(marker="new-rule")
-            # The apply banner and the apply dialog of the rules page.
+            # The apply banner of the rules page.
+            assert subscribers(services) == [0, 1, 1]
+            assert len(services.applies.changed.callbacks) == 1
+            # The editor has the apply banner and the apply dialog, and the rules page ends its banner.
+            user.find(marker="new-rule").click()
+            await user.should_see(marker="editor")
             assert subscribers(services) == [0, 2, 2]
             assert len(services.applies.changed.callbacks) == 2
 
@@ -273,6 +307,25 @@ async def test_a_navigation_adds_no_delete_handler_to_the_client(nicegui_globals
                 await user.should_see(marker=marker)
 
         assert len(client.delete_handlers) == first
+
+
+async def test_the_address_followers_of_the_pages_end_with_their_content(nicegui_globals, settings, fake_starter):
+    async with running_service(settings, fake_starter) as user:
+        client = await user.open("/rules")
+        router = client.sub_pages_router
+        handlers = len(router._path_changed_handlers)
+
+        for _round in range(3):
+            for path, marker in [("/history", "refresh"), ("/rules", "new-rule"), ("/", "ytdlp-version")]:
+                user.find(marker=f"nav:{path}").click()
+                await user.should_see(marker=marker)
+
+        # The router has one handler for the followers of the client, and the page left them all.
+        assert len(router._path_changed_handlers) == handlers
+        assert layout._FOLLOWERS[client] == []
+        user.find(marker="nav:/history").click()
+        await user.should_see(marker="refresh")
+        assert [follower.path for follower in layout._FOLLOWERS[client]] == ["/history"]
 
 
 async def test_the_first_html_holds_the_content_that_an_async_builder_shows_after_an_await(
@@ -313,3 +366,31 @@ async def test_the_shell_route_answers_no_path_of_another_route(user, path, kind
 
     assert answer.headers["content-type"].startswith(kind)
     assert "X-Nicegui-Content" not in answer.headers
+
+
+def test_a_write_of_the_address_in_place_gives_the_entry_the_new_address_as_its_state():
+    sent: list[str] = []
+    client = Mock(run_javascript=sent.append)
+    address = '/rules?q="x"&state=disabled'
+
+    layout.replace_address(client, address)
+
+    assert client.sub_pages_router.current_path == address
+    # Back opens the address of the state of the entry, so a state of the old address would open the old rules.
+    text = json.dumps(address)
+    assert sent == [f"history.replaceState({{page: {text}}}, '', (window.path_prefix || '') + {text});"]
+
+
+def test_a_write_of_the_address_from_an_old_address_replaces_only_while_the_browser_shows_it():
+    sent: list[str] = []
+    client = Mock(run_javascript=sent.append)
+
+    layout.replace_address(client, "/history?run=3#run-actions", only_from="/history?run=3#old")
+
+    (code,) = sent
+    assert code.startswith(
+        """if (location.pathname + location.search === (window.path_prefix || '') + "/history?run=3") """
+    )
+    assert code.endswith(
+        """history.replaceState({page: "/history?run=3#run-actions"}, '', (window.path_prefix || '') + "/history?run=3#run-actions");"""
+    )

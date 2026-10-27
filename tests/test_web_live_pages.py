@@ -242,6 +242,36 @@ async def test_the_open_actions_of_a_running_run_get_its_new_actions(live, sessi
     assert videos_of(user) == ["vid1", "vid3", "vid5"]
 
 
+async def test_a_link_to_a_running_run_opens_its_actions_and_follows_them(live, sessions, fake_starter):
+    user, services = live
+    run_id = await start_run(services, fake_starter)
+    child_writes(sessions, run_id, 1, 1, (RunActionKind.ADDED, "vid1"))
+
+    # The Dashboard links to a run with this address.
+    await user.open(f"/history?run={run_id}")
+
+    await eventually(lambda: videos_of(user) == ["vid1"], "The actions of the run")
+    assert element_of(user, "details").props[FOCUS_KEY_ATTRIBUTE] == "run-details"
+    child_writes(sessions, run_id, 2, 2, (RunActionKind.ADDED, "vid2"))
+    await eventually(lambda: videos_of(user) == ["vid1", "vid2"], "The next action")
+    end_run(fake_starter)
+    await eventually(lambda: text_of(user, "details-status") == "Succeeded", "The status of the end in the panel")
+
+
+async def test_a_navigation_to_a_running_run_opens_its_actions_and_follows_them(live, sessions, fake_starter):
+    user, services = live
+    await user.open("/")
+    run_id = await start_run(services, fake_starter)
+
+    user.navigate.to(f"/history?run={run_id}")
+
+    await user.should_see("This run has no actions.")
+    child_writes(sessions, run_id, 1, 1, (RunActionKind.ADDED, "vid1"))
+    await eventually(lambda: videos_of(user) == ["vid1"], "The first action")
+    end_run(fake_starter)
+    await eventually(lambda: text_of(user, "details-status") == "Succeeded", "The status of the end in the panel")
+
+
 async def test_a_late_progress_changes_no_row_and_no_action_of_an_ended_run(live, sessions, fake_starter):
     user, services = live
     await user.open("/history")

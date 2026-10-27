@@ -32,6 +32,8 @@ ROW_SCOPE_ATTRIBUTE = "data-row-scope"
 ROW_BUTTON_JS_HANDLER = "(id) => emit(id)"
 # The attribute of a control that keeps the focus when a redraw replaces it. See ``focus_key``.
 FOCUS_KEY_ATTRIBUTE = "data-focus-key"
+# The most digits of a whole number in an address. Each number of 18 digits fits into the 64 bits of a database id.
+MAX_NUMBER_DIGITS = 18
 # The wait before the focus moves back to a button, so a dialog that is closing does not take the focus again.
 FOCUS_DELAY_MS = 200
 
@@ -261,12 +263,14 @@ async def confirm(
     detail: str | None = None,
     color: str = "primary",
     classes: str = "",
+    cancel_label: str | None = None,
 ) -> bool:
     """Ask ``question`` in a dialog and return True only when the user presses the ``action`` button.
 
     The dialog, the question and the two buttons get the markers ``{marker}-dialog``, ``{marker}-question``,
     ``{marker}-confirm`` and ``{marker}-cancel``. ``detail`` is a second line under the question, ``color`` is the color
-    of the ``action`` button, and ``classes`` go to the card. A close of the dialog without a button returns False.
+    of the ``action`` button, and ``classes`` go to the card. ``cancel_label`` is the text of the second button, "Cancel"
+    when it is not given. A close of the dialog without a button returns False.
     """
     with ui.dialog() as dialog, ui.card().classes(classes).mark(f"{marker}-dialog"):
         ui.label(question).mark(f"{marker}-question")
@@ -274,7 +278,9 @@ async def confirm(
             ui.label(detail).classes("text-grey-7")
         with ui.row().classes("gap-2"):
             ui.button(action, color=color, on_click=lambda: dialog.submit(True)).mark(f"{marker}-confirm")
-            ui.button(_("Cancel"), on_click=lambda: dialog.submit(False)).props("flat").mark(f"{marker}-cancel")
+            ui.button(cancel_label or _("Cancel"), on_click=lambda: dialog.submit(False)).props("flat").mark(
+                f"{marker}-cancel"
+            )
     confirmed = await dialog
     if not dialog.is_deleted:
         dialog.delete()
@@ -360,3 +366,14 @@ class ResultLabel(ui.label):
 
 def format_time(value: datetime, zone: ZoneInfo) -> str:
     return value.astimezone(zone).strftime(TIME_FORMAT)
+
+
+def whole_number(text: str | None) -> int | None:
+    """Return the whole number of ``text``, a part of an address, or None when the text is not one, for example "abc".
+
+    Only the ASCII digits count, so a text such as "1e3" or "-1" is not a number here. A number of more than
+    ``MAX_NUMBER_DIGITS`` digits is not one either: a database id has 64 bits, and SQLite refuses a larger Python int.
+    """
+    if not text or len(text) > MAX_NUMBER_DIGITS or not (text.isascii() and text.isdigit()):
+        return None
+    return int(text)

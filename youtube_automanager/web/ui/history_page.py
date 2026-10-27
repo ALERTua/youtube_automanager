@@ -7,6 +7,11 @@ Each date shows in the time zone of the schedule, and a date filter counts whole
 The page follows each run with no click. At the start and at the end of a run, it reads its page of runs again with its
 filters, so a new run shows at the top only when the filters and the page let it through. While a run runs, its row
 shows the new counts, and its open actions get the new actions.
+
+The address keeps the view in its query: ``status``, ``trigger``, ``from`` and ``to`` are the filters, ``page`` the page
+of the table, and ``run`` the run whose actions are open. A change of a filter or of the page writes the address in
+place. The open and the close of a run are new entries of the history of the browser, so Back closes a run that the
+user opened. A link to ``/history?run=<id>`` opens the actions of that run.
 """
 
 import asyncio
@@ -47,12 +52,27 @@ from youtube_automanager.web.ui.common import (
     icon_button,
     row_button_selector,
     stored_timezone,
+    whole_number,
 )
 from youtube_automanager.web.ui.dates import today_button
-from youtube_automanager.web.ui.layout import register_page
+from youtube_automanager.web.ui.layout import (
+    AddressFollower,
+    address_query,
+    register_page,
+    replace_address,
+    with_query,
+)
 from youtube_automanager.web.ui.live_runs import RunFollower
 
+HISTORY_PATH = "/history"
+# The fragment of the address of an open run. ui.sub_pages scrolls the window to the top at each new address with the
+# same path and no fragment (``_handle_scrolling`` of nicegui/elements/sub_pages.py), and the card of the run is under the
+# table. With a fragment, it scrolls to the element with that id instead. No element has this id, so the window stays,
+# and the focus of the card brings it into view.
+RUN_FRAGMENT = "run-actions"
 PAGE_SIZE = 50
+# The scope of the row buttons of the runs, so a focus move that ends after a navigation finds no button of another page.
+RUNS_SCOPE = "runs"
 # The card of the actions of a run takes the focus when a run opens. This attribute marks it for the browser.
 DETAILS_ATTRIBUTE = "data-run-details"
 DETAILS_SELECTOR = f"[{DETAILS_ATTRIBUTE}]"
@@ -124,6 +144,64 @@ class RunFilter:
 
 
 @dataclass(frozen=True)
+class FilterTexts:
+    """The values of the filter fields of the runs, as the query of the address holds them. A date is the text of its
+    field, so a wrong date stays in its field with its mark."""
+
+    status: str = ANY
+    trigger: str = ANY
+    first: str = ""
+    last: str = ""
+
+    def run_filter(self) -> RunFilter:
+        """Return the filter of these values. A wrong date does not filter."""
+        return RunFilter(
+            status=None if self.status == ANY else RunStatus(self.status),
+            trigger=None if self.trigger == ANY else RunTrigger(self.trigger),
+            first_day=_day_or_none(self.first),
+            last_day=_day_or_none(self.last),
+        )
+
+
+@dataclass(frozen=True)
+class View:
+    """What the address of the page shows: the filters, the page of the table and the open run."""
+
+    filters: FilterTexts = FilterTexts()
+    page: int = 1
+    run_id: int | None = None
+
+    def address(self) -> str:
+        filters = self.filters
+        address = with_query(
+            HISTORY_PATH,
+            {
+                "status": None if filters.status == ANY else filters.status,
+                "trigger": None if filters.trigger == ANY else filters.trigger,
+                "from": filters.first,
+                "to": filters.last,
+                "page": str(self.page) if self.page > 1 else None,
+                "run": None if self.run_id is None else str(self.run_id),
+            },
+        )
+        return address if self.run_id is None else f"{address}#{RUN_FRAGMENT}"
+
+
+def view_of(query: dict[str, str]) -> View:
+    """Return the view of the query of an address. A value that its field does not have shows each run, and a page or
+    a run that is not a whole number counts as none."""
+    status = query.get("status", ANY)
+    trigger = query.get("trigger", ANY)
+    filters = FilterTexts(
+        status=status if status in {member.value for member in RunStatus} else ANY,
+        trigger=trigger if trigger in {member.value for member in RunTrigger} else ANY,
+        first=query.get("from", ""),
+        last=query.get("to", ""),
+    )
+    return View(filters, max(whole_number(query.get("page")) or 1, 1), whole_number(query.get("run")))
+
+
+@dataclass(frozen=True)
 class RunRecord:
     id: int
     started_at: datetime
@@ -160,6 +238,7 @@ class RunDetail:
 
 @dataclass
 class PageState:
+    filters: FilterTexts = FilterTexts()
     page: int = 1
     run_id: int | None = None
     action_kind: RunActionKind | None = None
@@ -197,6 +276,13 @@ def parse_day(text: str | None) -> date | None:
         return None
     day = date.fromisoformat(text.strip())
     return min(max(day, EARLIEST_DAY), LATEST_DAY)
+
+
+def _day_or_none(text: str) -> date | None:
+    try:
+        return parse_day(text)
+    except ValueError:
+        return None
 
 
 def read_day(field: ui.input) -> date | None:
@@ -325,11 +411,29 @@ def _filter_options(labels: dict) -> dict:
     return {ANY: _("All"), **{member.value: _(label) for member, label in labels.items()}}
 
 
-@register_page("/history", label=N_("History"), icon="history")
+@register_page(HISTORY_PATH, label=N_("History"), icon="history")
 async def history_page(services: Services) -> None:
     state = PageState()
     # The client of the page. A handler can run after the element that started it is gone, so it needs the client itself.
     client = context.client
+    # The address that the page builds for. A correction of the address replaces only this entry.
+    built_from = client.sub_pages_router.current_path
+    shown = view_of(address_query(client))
+    state.filters, state.page = shown.filters, shown.page
+
+    def write_address() -> None:
+        """Write the filters, the page and the open run into the address, in place of its entry of the history."""
+        replace_address(client, View(state.filters, state.page, state.run_id).address())
+
+    def push_address(run_id: int | None) -> None:
+        """Go to the address of this view with the open run ``run_id``, as a new entry of the history of the browser.
+
+        The router gives the address to ``follow_address``, which opens or closes the run.
+        """
+        ui.navigate.to(View(state.filters, state.page, run_id).address())
+
+    def field_texts() -> FilterTexts:
+        return FilterTexts(status_select.value, trigger_select.value, first_input.value or "", last_input.value or "")
 
     def read_filter() -> RunFilter:
         return RunFilter(
@@ -339,9 +443,7 @@ async def history_page(services: Services) -> None:
             last_day=read_day(last_input),
         )
 
-    async def load_runs(page: int | None = None) -> None:
-        if page is not None:
-            state.page = page
+    async def load_runs() -> None:
         state.runs_read += 1
         read = state.runs_read
         result = await asyncio.to_thread(read_runs, services.sessions, read_filter(), state.page, services.settings.tz)
@@ -420,21 +522,55 @@ async def history_page(services: Services) -> None:
         return replace(run, added_count=added, seen_count=seen)
 
     async def filters_changed() -> None:
-        await load_runs(page=1)
+        texts = field_texts()
+        # A new address puts its filters into the fields, and the handlers of these changes find nothing new.
+        if texts == state.filters:
+            return
+        state.filters, state.page = texts, 1
+        write_address()
+        await load_runs()
 
-    async def open_run(event) -> None:
-        await show_run(int(event.args))
-        # The table of the runs was drawn again, so the button that had the focus is gone. The focus goes to the card.
-        focus_when_drawn(client, DETAILS_SELECTOR)
+    async def page_changed(page: int) -> None:
+        state.page = page
+        write_address()
+        await load_runs()
 
-    async def close_run() -> None:
-        run_id = state.run_id
-        await show_run(None)
-        # The close button is gone with the card, so the focus goes back to the button of the same run.
-        # The run can be on another page of the table, or a cleanup can have deleted it. Then Refresh gets the focus.
-        if run_id is not None:
+    def open_run(event) -> None:
+        run_id = int(event.args)
+        if run_id == state.run_id:
+            focus_when_drawn(client, DETAILS_SELECTOR)
+            return
+        push_address(run_id)
+
+    def close_run() -> None:
+        push_address(None)
+
+    async def follow_address(query: dict[str, str]) -> None:
+        """Show the view of a new address of this page: an open or a close of a run, the Back button of the browser, or
+        a click in the drawer."""
+        view = view_of(query)
+        if (view.filters, view.page) != (state.filters, state.page):
+            state.filters, state.page = view.filters, view.page
+            status_select.set_value(view.filters.status)
+            trigger_select.set_value(view.filters.trigger)
+            first_input.set_value(view.filters.first)
+            last_input.set_value(view.filters.last)
+            await load_runs()
+        if view.run_id == state.run_id:
+            return
+        closed = state.run_id
+        await show_run(view.run_id)
+        if view.run_id is not None:
+            # The table of the runs was drawn again, so the button that had the focus is gone. The focus goes to the card.
+            focus_when_drawn(client, DETAILS_SELECTOR)
+        elif closed is not None:
+            # The close button is gone with the card, so the focus goes back to the button of the same run.
+            # The run can be on another page of the table, or a cleanup can have deleted it. Then Refresh gets the focus.
             focus_when_drawn(
-                client, row_button_selector(run_id), fallback=f"#{refresh_button.html_id}", delay_ms=FOCUS_DELAY_MS
+                client,
+                row_button_selector(closed, RUNS_SCOPE),
+                fallback=f"#{refresh_button.html_id}",
+                delay_ms=FOCUS_DELAY_MS,
             )
 
     async def change_action_kind(run_id: int, value: str) -> None:
@@ -499,14 +635,14 @@ async def history_page(services: Services) -> None:
         table.add_slot("body-cell-error", ERROR_CELL)
         # The run id is the only part of the click that the page needs.
         table.on("rowClick", open_run, js_handler="(event, row) => emit(row.id)")
-        add_row_button(table, open_run, icon="open_in_new", label=_("Open"))
+        add_row_button(table, open_run, icon="open_in_new", label=_("Open"), scope=RUNS_SCOPE)
         if result.pages > 1:
             ui.pagination(
                 1,
                 result.pages,
                 direction_links=True,
                 value=result.page,
-                on_change=lambda event: load_runs(page=event.value),
+                on_change=lambda event: page_changed(event.value),
             ).props("max-pages=7 boundary-numbers").mark("runs-pagination")
 
     @ui.refreshable
@@ -561,18 +697,37 @@ async def history_page(services: Services) -> None:
     # The follower comes before the first read, so a run that starts during the read is not missed.
     follower = RunFollower(services.run_events, started=reload_for_run, progress=show_progress, finished=reload_for_run)
     retention_days = await asyncio.to_thread(get_retention_days, services.sessions)
-    first_page = await asyncio.to_thread(read_runs, services.sessions, RunFilter(), 1, services.settings.tz)
+    first_page = await asyncio.to_thread(
+        read_runs, services.sessions, state.filters.run_filter(), state.page, services.settings.tz
+    )
+    state.page = first_page.page
+    if shown.run_id is not None:
+        # A link to a run opens its actions. A run that does not exist opens nothing.
+        state.detail = await asyncio.to_thread(
+            read_run_detail, services.sessions, shown.run_id, None, services.settings.tz
+        )
+        state.run_id = None if state.detail is None else shown.run_id
 
     ui.label(_("History")).classes("text-h5")
     with ui.row().classes("w-full items-center gap-4"):
         status_select = (
-            ui.select(_filter_options(STATUS_LABELS), label=_("Status"), value=ANY, on_change=filters_changed)
+            ui.select(
+                _filter_options(STATUS_LABELS),
+                label=_("Status"),
+                value=state.filters.status,
+                on_change=filters_changed,
+            )
             .props("outlined dense")
             .classes("w-40")
             .mark("filter-status")
         )
         trigger_select = (
-            ui.select(_filter_options(RUN_TRIGGERS), label=_("Trigger"), value=ANY, on_change=filters_changed)
+            ui.select(
+                _filter_options(RUN_TRIGGERS),
+                label=_("Trigger"),
+                value=state.filters.trigger,
+                on_change=filters_changed,
+            )
             .props("outlined dense")
             .classes("w-40")
             .mark("filter-trigger")
@@ -580,22 +735,25 @@ async def history_page(services: Services) -> None:
         # The page marks a wrong date itself, in ``read_day``. The automatic validation would clear that mark at each
         # change of the value, after the change handlers.
         first_input = (
-            ui.input(_("From"), on_change=filters_changed)
+            ui.input(_("From"), value=state.filters.first, on_change=filters_changed)
             .without_auto_validation()
             .props("type=date outlined dense clearable")
             .mark("filter-from")
         )
         today_button(first_input, first_page.timezone).mark("filter-from-today")
         last_input = (
-            ui.input(_("To"), on_change=filters_changed)
+            ui.input(_("To"), value=state.filters.last, on_change=filters_changed)
             .without_auto_validation()
             .props("type=date outlined dense clearable")
             .mark("filter-to")
         )
         today_button(last_input, first_page.timezone).mark("filter-to-today")
         refresh_button = ui.button(_("Refresh"), icon="refresh", on_click=refresh).mark("refresh")
+    # The fields mark a wrong date of the address.
+    read_filter()
     runs_view(first_page)
     details()
+    AddressFollower(HISTORY_PATH, follow_address)
 
     with ui.card().classes("w-full"):
         ui.label(_("Retention")).classes("text-h6")
@@ -620,5 +778,12 @@ async def history_page(services: Services) -> None:
                 time=f"{CLEANUP_HOUR:02d}:{CLEANUP_MINUTE:02d}", zone=first_page.timezone
             )
         ).classes("text-grey-7").mark("retention-hint")
+    if shown.run_id is not None:
+        # The address of the run gets the fragment, so Back to it later keeps the window in place. A link opens the
+        # run with no click on the page, and its card is under the table, so the card takes the focus and comes into
+        # view. The wait lets the scroll of ui.sub_pages to the top of a new page come first.
+        replace_address(client, View(state.filters, state.page, state.run_id).address(), only_from=built_from)
+        if state.detail is not None:
+            focus_when_drawn(client, DETAILS_SELECTOR, delay_ms=FOCUS_DELAY_MS)
     if follower.start():
         await refresh()

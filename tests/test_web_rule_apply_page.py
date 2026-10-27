@@ -62,7 +62,7 @@ from youtube_automanager.rule_actions import apply_once, preview_once
 from youtube_automanager.runner import INTERRUPTED_ERROR, sync_lock_held
 from youtube_automanager.settings import Settings
 from youtube_automanager.web import applies as applies_module
-from youtube_automanager.web.ui import rules_page
+from youtube_automanager.web.ui import rule_editor
 from youtube_automanager.youtube import public
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -83,7 +83,7 @@ SETTLE_SECONDS = 0.3
 
 
 def today():
-    return rules_page.today_in(ZONE)
+    return rule_editor.today_in(ZONE)
 
 
 def days_back(days):
@@ -1287,7 +1287,7 @@ async def test_an_apply_whose_run_is_gone_at_its_end_says_so(
 ):
     await preview_a_saved_rule(user, sessions, settings, youtube)
     monkeypatch.setattr(rule_actions, "read_applied", lambda sessions, run_id: None)
-    monkeypatch.setattr(rules_page, "read_applied", lambda sessions, run_id: None)
+    monkeypatch.setattr(rule_editor, "read_applied", lambda sessions, run_id: None)
 
     user.find(marker="apply-run").click()
 
@@ -1421,7 +1421,7 @@ async def test_the_banner_keeps_a_newer_count_that_came_during_its_first_read(
     (run,) = runs(sessions)
     old_label = element_of(user, "apply-banner-text")
     read_done, read_release = threading.Event(), threading.Event()
-    real_read = rules_page.read_applied
+    real_read = rule_editor.read_applied
 
     def slow_read(sessions, run_id):
         applied = real_read(sessions, run_id)
@@ -1429,7 +1429,7 @@ async def test_the_banner_keeps_a_newer_count_that_came_during_its_first_read(
         read_release.wait(WAIT_SECONDS)
         return applied
 
-    monkeypatch.setattr(rules_page, "read_applied", slow_read)
+    monkeypatch.setattr(rule_editor, "read_applied", slow_read)
     opening = asyncio.create_task(user.open("/rules"))
     assert await asyncio.to_thread(read_done.wait, WAIT_SECONDS)
     # The page that loads read the count 0, and a progress with the count 2 comes before the read returns.
