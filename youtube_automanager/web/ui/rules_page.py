@@ -8,6 +8,10 @@ writes the database in a thread, never on the event loop. Each time shows in the
 The address keeps the filters in its query: ``q`` is the text of the search, ``playlist`` the target playlist and
 ``state`` the state of the rule. A change of a filter writes the address in place and does not build the page again,
 so a reload and a shared link show the same rules.
+
+The switch Enabled of a row turns its rule on and off at once. The row keeps its place until the next read of the
+table, also when the filter of the state would hide it now. A click on a column header sorts the rows in the browser, and
+the page keeps that order when it builds the table again, for example after a change of a filter.
 """
 
 import asyncio
@@ -18,10 +22,11 @@ from zoneinfo import ZoneInfo
 from nicegui import context, ui
 
 from youtube_automanager.i18n import N_, _
-from youtube_automanager.rules_store import ChannelChoice, RuleRecord, Stored, read_stored
+from youtube_automanager.rules_store import ChannelChoice, RuleRecord, Stored, read_stored, set_enabled
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists
 from youtube_automanager.web.ui.common import (
+    FOCUS_KEY_ATTRIBUTE,
     actions_column,
     add_row_button,
     column,
@@ -62,6 +67,20 @@ LONG_CELL = """
 </q-td>
 """
 
+# The event of the switch Enabled of a row. It sends the id of the rule and the new value.
+TOGGLE_EVENT = "toggleEnabled"
+TOGGLE_JS_HANDLER = "(id, value) => emit(id, value)"
+# The switch Enabled of a row. Its click does not reach the row, whose click opens the editor. Each update of the table
+# draws the switch again, and its key of ``focus_key`` brings the keyboard focus back to the switch of the same rule.
+# The name of the switch comes from the row as a value, so no text of a rule runs in the template.
+ENABLED_CELL = f"""
+<q-td :props="props" @click.stop>
+  <q-toggle dense :model-value="props.row.enabled" :aria-label="props.row.enabled_label" \
+:{FOCUS_KEY_ATTRIBUTE}="'rule-enabled-' + props.row.id" \
+@update:model-value="(value) => $parent.$emit('{TOGGLE_EVENT}', props.row.id, value)" />
+</q-td>
+"""
+
 
 @dataclass(frozen=True)
 class RuleFilter:
@@ -96,7 +115,9 @@ def rule_row(rule: RuleRecord, stored: Stored, zone: ZoneInfo) -> dict:
     return {
         "id": rule.id,
         "name": rule.name,
-        "enabled": yes_or_no(rule.enabled),
+        "enabled": rule.enabled,
+        # Translators: the name of the switch that turns the rule {name} on and off, for a screen reader.
+        "enabled_label": _("Enabled: {name}").format(name=rule.name),
         "channels": ", ".join(channels) if channels else _("Subscriptions feed"),
         "playlist": stored.playlist_title(rule.playlist_id),
         "no_shorts": yes_or_no(rule.no_shorts),
@@ -107,13 +128,13 @@ def rule_row(rule: RuleRecord, stored: Stored, zone: ZoneInfo) -> dict:
 
 def rule_columns() -> list[dict]:
     return [
-        column("name", _("Name")),
-        column("enabled", _("Enabled")),
-        column("channels", _("Channels")),
-        column("playlist", _("Playlist")),
-        column("no_shorts", _("No Shorts")),
-        column("condition", _("Condition")),
-        column("updated", _("Changed")),
+        column("name", _("Name"), sortable=True),
+        column("enabled", _("Enabled"), sortable=True),
+        column("channels", _("Channels"), sortable=True),
+        column("playlist", _("Playlist"), sortable=True),
+        column("no_shorts", _("No Shorts"), sortable=True),
+        column("condition", _("Condition"), sortable=True),
+        column("updated", _("Changed"), sortable=True),
         actions_column(),
     ]
 
@@ -162,6 +183,10 @@ class PageState:
     reads: int = 0
     # True while the page puts the filters of a new address into the fields, so their change writes no address.
     following: bool = False
+    # The table that shows now, or None when the page shows a text instead.
+    table: ui.table | None = None
+    # The sort of the table that the user chose, so a new table of the same page keeps it.
+    pagination: dict | None = None
 
 
 def _playlist_filter_options(stored: Stored) -> dict[str, str]:
@@ -211,7 +236,13 @@ async def rules_page(services: Services) -> None:
             state.following = False
         rules_view.refresh()
 
-    async def reload() -> None:
+    async def reload(*, in_place: bool = False) -> None:
+        """Read the rules again and show them.
+
+        With ``in_place``, the rows of the table change in place: each row stays, also a row that the filters would
+        hide now, and only a rule that is gone leaves the table. The next change of a filter shows the rules of the
+        filters again.
+        """
         state.reads += 1
         read = state.reads
         stored = await asyncio.to_thread(read_stored, services.sessions, services.settings.tz)
@@ -221,6 +252,15 @@ async def rules_page(services: Services) -> None:
         options = _playlist_filter_options(stored)
         # A playlist that no rule targets any more leaves the filter, and its change writes the address.
         playlist_select.set_options(options, value=playlist_select.value if playlist_select.value in options else ANY)
+        table = state.table
+        if in_place and table is not None and not table.is_deleted:
+            zone = ZoneInfo(stored.timezone)
+            rows = [rule_row(rule, stored, zone) for row in table.rows if (rule := stored.rule(row["id"])) is not None]
+            if rows:
+                # A table update draws each row again, so the page sends the rows only when they change.
+                if rows != table.rows:
+                    table.update_rows(rows)
+                return
         rules_view.refresh()
 
     def open_editor(path: str) -> None:
@@ -230,9 +270,21 @@ async def rules_page(services: Services) -> None:
     def edit_rule(event) -> None:
         open_editor(f"{RULES_PATH}/{int(event.args)}")
 
+    async def toggle_rule(event) -> None:
+        """Turn a rule on or off from the switch of its row, and show the stored state in the row."""
+        rule_id, enabled = event.args
+        found = await asyncio.to_thread(set_enabled, services.sessions, int(rule_id), bool(enabled))
+        if not found:
+            ui.notify(_("The rule does not exist any more, so the page did not save it."), type="warning")
+        await reload(in_place=True)
+
+    def keep_sort(event) -> None:
+        state.pagination = event.value
+
     @ui.refreshable
     def rules_view() -> None:
         stored = state.stored
+        state.table = None
         if not stored.rules:
             ui.label(_("No rule yet. The button New rule creates one.")).mark("no-rules")
             return
@@ -247,6 +299,12 @@ async def rules_page(services: Services) -> None:
             .classes("w-full cursor-pointer")
             .mark("rules-table")
         )
+        state.table = table
+        if state.pagination is not None:
+            table.pagination = state.pagination
+        table.on_pagination_change(keep_sort)
+        table.add_slot("body-cell-enabled", ENABLED_CELL)
+        table.on(TOGGLE_EVENT, toggle_rule, js_handler=TOGGLE_JS_HANDLER)
         table.add_slot("body-cell-channels", LONG_CELL)
         table.add_slot("body-cell-condition", LONG_CELL)
         # The rule id is the only part of the click that the page needs.

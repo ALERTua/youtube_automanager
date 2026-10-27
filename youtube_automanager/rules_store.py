@@ -155,6 +155,22 @@ def read_stored(sessions: sessionmaker[Session], default_timezone: str) -> Store
         )
 
 
+def set_enabled(sessions: sessionmaker[Session], rule_id: int, enabled: bool) -> bool:
+    """Turn the rule on or off. Return False when the rule does not exist any more. This call blocks.
+
+    The change counts as a change of the rule, as a save does, and it does not hold the sync lock, as a save does not:
+    a run reads the enabled rules once at its start, so the change takes effect from the next run.
+    """
+    with sessions.begin() as session:
+        rule = session.get(Rule, rule_id)
+        if rule is None:
+            return False
+        if rule.enabled != enabled:
+            rule.enabled = enabled
+            rule.updated_at = utc_now()
+        return True
+
+
 def save_rule(sessions: sessionmaker[Session], rule_id: int | None, draft: RuleDraft) -> int | None:
     """Create a rule when ``rule_id`` is None, else change it. Return the id of the rule. This call blocks.
 
