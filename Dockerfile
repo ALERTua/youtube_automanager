@@ -38,6 +38,33 @@ RUN --mount=type=cache,target=$UV_CACHE_DIR \
 
 
 # -----------------------------------------------------------------
+# Babel is a development dependency, so this stage compiles the catalogs, and the runtime image copies only the .mo files.
+FROM ${UV_IMAGE} AS catalog
+
+ARG APP_DIR
+ARG UV_CACHE_DIR
+
+ENV \
+    UV_PYTHON_DOWNLOADS=0 \
+    UV_LINK_MODE=copy \
+    UV_FROZEN=1 \
+    UV_NO_PROGRESS=true \
+    UV_CACHE_DIR=$UV_CACHE_DIR \
+    UV_PROJECT_ENVIRONMENT=$APP_DIR/.venv
+
+WORKDIR $APP_DIR
+
+# Only the development group, without the project: this layer stays while the catalogs change.
+RUN --mount=type=cache,target=$UV_CACHE_DIR \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --only-group dev
+
+COPY youtube_automanager/i18n/locale youtube_automanager/i18n/locale
+RUN $APP_DIR/.venv/bin/pybabel compile --statistics -d youtube_automanager/i18n/locale -D messages
+
+
+# -----------------------------------------------------------------
 FROM python:${PYTHON_VERSION}-slim-trixie AS runtime
 
 ARG APP_DIR
@@ -80,6 +107,8 @@ COPY --link --from=deps --exclude=lib $APP_DIR/.venv $APP_DIR/.venv
 
 # The code goes into its own small layer, so a change of the code does not push the dependencies again.
 COPY youtube_automanager youtube_automanager
+# The compiled catalogs: the .po files are in the code layer already.
+COPY --from=catalog --exclude=**/*.po $APP_DIR/youtube_automanager/i18n/locale youtube_automanager/i18n/locale
 RUN python -m compileall -q --invalidation-mode unchecked-hash youtube_automanager
 
 EXPOSE 8080

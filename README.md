@@ -185,6 +185,8 @@ You need [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/ju
 | `just cov` | Runs the tests with the coverage report, and fails when the coverage of the service drops below the limit of the justfile. |
 | `just lint` | Formats the code, fixes the lint findings and checks the types with ty. |
 | `just pot` | Extracts the texts of the web UI into `youtube_automanager/i18n/messages.pot` again. |
+| `just po` | Updates the Ukrainian catalog `youtube_automanager/i18n/locale/uk/LC_MESSAGES/messages.po` from `messages.pot`. Translate each new message and check each fuzzy one in it: the tests fail on both. |
+| `just mo` | Compiles the catalog into the `messages.mo` file that the service loads. Run it once before `just serve`, so the pages can show Ukrainian. Git ignores the `.mo` file, and the image build makes it. |
 | `just pre` | Runs each pre-commit hook on each file. |
 | `just smoke` | Builds the image with wslc, starts a container of it on port 18080 with the settings of `.env`, waits until wslc reports it healthy, and calls `/health`. It removes the container at the end. |
 
