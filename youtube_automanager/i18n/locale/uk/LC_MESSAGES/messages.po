@@ -788,7 +788,7 @@ msgstr "Назва або @handle"
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Name, @handle, channel ID or channel URL"
-msgstr "Назва, @handle, ID каналу або URL каналу"
+msgstr "Назва, @handle, ID або URL каналу"
 
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/settings_page.py
