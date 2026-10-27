@@ -211,6 +211,7 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
         "No Shorts",
         "Condition",
         "Changed",
+        "Actions",
     ]
     assert table.rows == [
         {

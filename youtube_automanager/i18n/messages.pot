@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-26 11:47+0200\n"
+"POT-Creation-Date: 2026-10-27 09:40+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -64,6 +64,7 @@ msgstr ""
 msgid "Action"
 msgstr ""
 
+#: youtube_automanager/web/ui/common.py
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "Actions"
 msgstr ""
@@ -79,6 +80,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Add a condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Add a file"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -267,6 +272,7 @@ msgstr ""
 msgid "Choose whether the video is a Short."
 msgstr ""
 
+#: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Close"
@@ -287,6 +293,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Condition as JsonLogic"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -429,6 +439,11 @@ msgstr ""
 msgid "Earliest cookie expiry"
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Edit"
+msgstr ""
+
 #: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
@@ -500,6 +515,10 @@ msgstr ""
 msgid "Failure"
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Field"
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Find a channel on YouTube"
 msgstr ""
@@ -546,6 +565,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Go back to the previous version"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Group type"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -628,6 +651,7 @@ msgid "Lists refreshed: {time}"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
+#: youtube_automanager/web/ui/rules_page.py
 msgid "Live status"
 msgstr ""
 
@@ -651,6 +675,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Matches now"
+msgstr ""
+
+#: youtube_automanager/web/ui/layout.py
+msgid "Menu"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -818,6 +846,10 @@ msgid ""
 "add the rest."
 msgstr ""
 
+#: youtube_automanager/web/ui/history_page.py
+msgid "Open"
+msgstr ""
+
 #: youtube_automanager/web/ui/settings_page.py
 msgid ""
 "Open a new private window, and sign in to YouTube there with the account "
@@ -826,6 +858,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Open on YouTube"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Operator"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -877,8 +913,16 @@ msgstr ""
 msgid "Refreshing the lists..."
 msgstr ""
 
+#: youtube_automanager/web/ui/common.py
+msgid "Remove all files"
+msgstr ""
+
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Remove the condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Remove the file"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -1001,8 +1045,20 @@ msgstr ""
 msgid "Settings"
 msgstr ""
 
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Short"
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Shorts"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Show the URL"
+msgstr ""
+
+#: youtube_automanager/web/ui/layout.py
+msgid "Skip to the content"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -1051,6 +1107,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/service_settings.py
 msgid "Stop at the date mark"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Stop the upload"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py
@@ -1660,6 +1720,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
 msgid "Upload the file here, or paste its text."
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Upload the files"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py

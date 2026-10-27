@@ -180,6 +180,7 @@ async def test_update_now_shows_a_spinner_and_then_the_result_and_the_new_versio
 
         button = element_of(user, "ytdlp-update-now")
         assert "loading" in button.props
+        assert button.props["aria-label"] == "Update now"
         assert not button.enabled
         assert text_of(user, "ytdlp-result") == (
             "The service installs the newest yt-dlp of the saved channel. This can take a few minutes."
@@ -192,6 +193,7 @@ async def test_update_now_shows_a_spinner_and_then_the_result_and_the_new_versio
 
         await eventually(lambda: text_of(user, "ytdlp-result") == f"Updated from {OLD} to {NEW}.", "The result")
         assert "loading" not in element_of(user, "ytdlp-update-now").props
+        assert "aria-label" not in element_of(user, "ytdlp-update-now").props
         assert element_of(user, "ytdlp-update-now").enabled
         assert text_of(user, "ytdlp-version") == NEW
         assert text_of(user, "ytdlp-source") == "Data folder"

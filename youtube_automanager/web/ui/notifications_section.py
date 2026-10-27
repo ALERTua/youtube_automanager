@@ -26,7 +26,7 @@ from nicegui import ui
 from youtube_automanager.i18n import _
 from youtube_automanager.notify import EVENT_LEVELS, Event, Level, Notifier
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import confirm
+from youtube_automanager.web.ui.common import confirm, icon_button, set_loading
 from youtube_automanager.web.ui.notification_targets import (
     APPRISE_URLS,
     EVENT_LABELS,
@@ -89,11 +89,16 @@ class TargetEditor:
         else:
             # A password field, so the token of a typed URL does not show on the screen.
             self.url_input = (
-                ui.input(_("Apprise URL"), password=True, password_toggle_button=True)
+                ui.input(_("Apprise URL"), password=True)
                 .props("outlined dense autocomplete=new-password")
                 .classes("w-full")
                 .mark("target-url")
             )
+            # The toggle of NiceGUI is an icon without a name, a role and a key. This button has all three.
+            with self.url_input.add_slot("append"):
+                self.url_toggle = icon_button("visibility_off", _("Show the URL"), self.toggle_url)
+                self.url_toggle.props["aria-pressed"] = "false"
+                self.url_toggle.mark("target-url-toggle")
         ui.label(
             _("The URL names the service and its token, for example tgram://bottoken/ChatID for Telegram.")
         ).classes("text-grey-7").mark("target-url-hint")
@@ -103,6 +108,13 @@ class TargetEditor:
         with ui.row().classes("gap-2"):
             self.save_button = ui.button(_("Save"), icon="save", on_click=self.save).mark("target-save")
             ui.button(_("Cancel"), on_click=self.close).props("flat").mark("target-cancel")
+
+    def toggle_url(self) -> None:
+        """Show the typed URL, or hide it again."""
+        hidden = self.url_input.props.get("type") == "password"
+        self.url_input.props["type"] = "text" if hidden else "password"
+        self.url_toggle.props["icon"] = "visibility" if hidden else "visibility_off"
+        self.url_toggle.props["aria-pressed"] = "true" if hidden else "false"
 
     def show_error(self, text: str | None) -> None:
         self.error_label.set_text(text or "")
@@ -233,12 +245,9 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
         button = state.test_buttons.get(target_id)
         if button is None or button.is_deleted:
             return
-        if target_id in state.sending:
-            button.props("loading")
-            button.disable()
-        else:
-            button.props(remove="loading")
-            button.enable()
+        sending = target_id in state.sending
+        set_loading(button, sending)
+        button.set_enabled(not sending)
 
     async def send_test(target_id: int) -> None:
         if target_id in state.sending:
@@ -348,12 +357,15 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
                 .mark(f"{marker}-test")
             )
             show_sending(target.id)
-            ui.button(icon="edit", on_click=lambda record=target: open_editor(record)).props(
-                "flat round dense"
-            ).tooltip(_("Change the name or the URL")).mark(f"{marker}-edit")
-            ui.button(icon="delete", on_click=lambda record=target: ask_delete(record)).props(
-                "flat round dense color=negative"
-            ).tooltip(_("Delete the target")).mark(f"{marker}-delete")
+            icon_button("edit", _("Change the name or the URL"), lambda record=target: open_editor(record)).mark(
+                f"{marker}-edit"
+            )
+            icon_button(
+                "delete",
+                _("Delete the target"),
+                lambda record=target: ask_delete(record),
+                props="flat round dense color=negative",
+            ).mark(f"{marker}-delete")
 
     @ui.refreshable
     def targets_view() -> None:

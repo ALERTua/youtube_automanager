@@ -34,7 +34,7 @@ from youtube_automanager.runner import SessionCheckOutcome, SessionCheckResult
 from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildUnavailable
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text
-from youtube_automanager.web.ui.common import SESSION_STATES, ResultLabel, format_time
+from youtube_automanager.web.ui.common import SESSION_STATES, ResultLabel, format_time, set_loading
 from youtube_automanager.web.ui.cookie_upload import (
     COMPOSE_KEY_COMMAND,
     KEY_COMMAND,
@@ -216,10 +216,7 @@ async def _cookies_section(services: Services) -> None:
         """Turn the controls on and off for the work of this moment."""
         working = state.checking or state.uploading
         check_button.set_enabled(not working and state.stored.session is not None)
-        if state.checking:
-            check_button.props("loading")
-        else:
-            check_button.props(remove="loading")
+        set_loading(check_button, state.checking)
         can_store = cipher is not None and not working
         for element in (upload, paste_input, paste_button):
             element.set_enabled(can_store)

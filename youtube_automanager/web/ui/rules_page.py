@@ -20,7 +20,7 @@ from datetime import date, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from nicegui import ui
+from nicegui import context, ui
 
 from youtube_automanager.db.models import RunStatus
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, DraftRule, Mark, Preview, PreviewVideo
@@ -43,7 +43,21 @@ from youtube_automanager.runner import RunAlreadyActive
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
-from youtube_automanager.web.ui.common import busy, column, confirm, format_time
+from youtube_automanager.web.ui.common import (
+    FOCUS_DELAY_MS,
+    actions_column,
+    add_row_button,
+    busy,
+    column,
+    confirm,
+    focus_when_drawn,
+    format_time,
+    icon_button,
+    named,
+    remember_focus,
+    row_button_selector,
+    set_loading,
+)
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day, today_button, today_in
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.rule_form import (
@@ -165,6 +179,7 @@ def rule_columns() -> list[dict]:
         column("no_shorts", _("No Shorts")),
         column("condition", _("Condition")),
         column("updated", _("Changed")),
+        actions_column(),
     ]
 
 
@@ -424,6 +439,7 @@ class RuleEditor:
     """The form that creates or changes one rule. ``done`` runs after a save or a delete.
 
     ``open_apply`` opens the apply dialog of a saved rule, and it gets whether the form has changes that are not saved.
+    ``cancel`` runs at the Cancel button, and it closes the dialog when it is not given.
     """
 
     def __init__(
@@ -434,6 +450,7 @@ class RuleEditor:
         close: Callable[[], None],
         done: Callable[[], Awaitable[None]],
         open_apply: Callable[[RuleRecord, bool], None] | None = None,
+        cancel: Callable[[], None] | None = None,
     ) -> None:
         self.services = services
         self.stored = stored
@@ -441,6 +458,8 @@ class RuleEditor:
         self.close = close
         self.done = done
         self.open_apply = open_apply
+        # The Cancel button closes the dialog, and the page can also move the focus back.
+        self.cancel = cancel or close
         # None when the visual editor cannot show the condition. The form then shows the condition as JSON text.
         self.root: Group | None = from_tree(rule.condition) if rule else Group()
         self.saving = False
@@ -460,11 +479,12 @@ class RuleEditor:
         ui.label(_("Condition")).classes("text-subtitle1")
         if rule is not None and self.root is None:
             ui.label(_("The visual editor cannot show this condition. Edit it as JsonLogic.")).classes("text-grey-7")
-            self.json_input = (
+            self.json_input = named(
                 ui.textarea(value=json_text(rule.condition), on_change=self._rule_changed)
                 .props("outlined autogrow")
                 .classes("w-full font-mono")
-                .mark("rule-json")
+                .mark("rule-json"),
+                _("Condition as JsonLogic"),
             )
         elif self.root is not None:
             self._condition_editor(self.root)
@@ -602,7 +622,7 @@ class RuleEditor:
         self.error_label.set_visibility(False)
         with ui.row().classes("w-full items-center gap-2"):
             self.save_button = ui.button(_("Save"), icon="save", on_click=self.save).mark("editor-save")
-            ui.button(_("Cancel"), on_click=self.close).props("flat").mark("editor-cancel")
+            ui.button(_("Cancel"), on_click=self.cancel).props("flat").mark("editor-cancel")
             if rule:
                 ui.space()
                 ui.button(_("Apply to videos from a date"), icon="playlist_add_check", on_click=self.apply).props(
@@ -657,16 +677,22 @@ class RuleEditor:
     def _group_view(self, group: Group, parent: Group | None, path: tuple[int, ...]) -> None:
         with ui.card().props("flat bordered").classes("w-full gap-2 p-2").mark(_marker("group", path)):
             with ui.row().classes("w-full items-center gap-2"):
-                ui.select(
-                    {kind: _(label) for kind, label in GROUP_KINDS.items()},
-                    value=group.kind,
-                    on_change=lambda event: self._set(group, "kind", GroupKind(event.value)),
-                ).props("outlined dense").classes("w-64").mark(_marker("group-kind", path))
+                named(
+                    ui.select(
+                        {kind: _(label) for kind, label in GROUP_KINDS.items()},
+                        value=group.kind,
+                        on_change=lambda event: self._set(group, "kind", GroupKind(event.value)),
+                    )
+                    .props("outlined dense")
+                    .classes("w-64")
+                    .mark(_marker("group-kind", path)),
+                    _("Group type"),
+                )
                 ui.space()
                 if parent is not None:
-                    ui.button(icon="delete", on_click=lambda: self._remove(parent, path[-1])).props(
-                        "flat round dense"
-                    ).tooltip(_("Remove the group")).mark(_marker("remove", path))
+                    icon_button("delete", _("Remove the group"), lambda: self._remove(parent, path[-1])).mark(
+                        _marker("remove", path)
+                    )
             if not group.items and parent is None:
                 ui.label(_("Without conditions, the rule takes each video of its channels.")).classes(
                     "text-grey-7"
@@ -696,15 +722,25 @@ class RuleEditor:
             self._changed()
 
         with ui.row().classes("w-full items-center gap-2").mark(_marker("leaf", path)):
-            ui.select({name: _(label) for name, label in FIELDS.items()}, value=leaf.field, on_change=set_field).props(
-                "outlined dense"
-            ).classes("w-48").mark(_marker("field", path))
+            named(
+                ui.select({name: _(label) for name, label in FIELDS.items()}, value=leaf.field, on_change=set_field)
+                .props("outlined dense")
+                .classes("w-48")
+                .mark(_marker("field", path)),
+                _("Field"),
+            )
             if len(OPERATORS[leaf.field]) > 1:
-                ui.select(
-                    {operator: _(label) for operator, label in OPERATORS[leaf.field].items()},
-                    value=leaf.operator,
-                    on_change=set_operator,
-                ).props("outlined dense").classes("w-48").mark(_marker("operator", path))
+                named(
+                    ui.select(
+                        {operator: _(label) for operator, label in OPERATORS[leaf.field].items()},
+                        value=leaf.operator,
+                        on_change=set_operator,
+                    )
+                    .props("outlined dense")
+                    .classes("w-48")
+                    .mark(_marker("operator", path)),
+                    _("Operator"),
+                )
             self._value_input(leaf, path)
             if leaf.operator == "regex":
                 ui.checkbox(
@@ -712,9 +748,9 @@ class RuleEditor:
                     value=leaf.case_sensitive,
                     on_change=lambda event: self._set(leaf, "case_sensitive", bool(event.value)),
                 ).mark(_marker("case", path))
-            ui.button(icon="close", on_click=lambda: self._remove(parent, path[-1])).props("flat round dense").classes(
+            icon_button("close", _("Remove the condition"), lambda: self._remove(parent, path[-1])).classes(
                 "ml-auto"
-            ).tooltip(_("Remove the condition")).mark(_marker("remove", path))
+            ).mark(_marker("remove", path))
 
     def _value_input(self, leaf: Leaf, path: tuple[int, ...]) -> None:
         def set_value(value: Any) -> None:
@@ -729,20 +765,32 @@ class RuleEditor:
                     on_change=lambda event: set_value(event.value or ""),
                 ).props("outlined dense").classes("flex-1 min-w-48").mark(marker)
             case ValueKind.CHANNEL:
-                ui.select(
-                    channel_options(self.stored, [leaf.value] if leaf.value else []),
-                    value=leaf.value,
-                    with_input=True,
-                    on_change=lambda event: set_value(event.value),
-                ).props("outlined dense").classes("flex-1 min-w-48").mark(marker)
+                named(
+                    ui.select(
+                        channel_options(self.stored, [leaf.value] if leaf.value else []),
+                        value=leaf.value,
+                        with_input=True,
+                        on_change=lambda event: set_value(event.value),
+                    )
+                    .props("outlined dense")
+                    .classes("flex-1 min-w-48")
+                    .mark(marker),
+                    _("Channel"),
+                )
             case ValueKind.CHANNELS:
-                ui.select(
-                    channel_options(self.stored, list(leaf.value or [])),
-                    value=list(leaf.value or []),
-                    multiple=True,
-                    with_input=True,
-                    on_change=lambda event: set_value(list(event.value or [])),
-                ).props("outlined dense use-chips").classes("flex-1 min-w-48").mark(marker)
+                named(
+                    ui.select(
+                        channel_options(self.stored, list(leaf.value or [])),
+                        value=list(leaf.value or []),
+                        multiple=True,
+                        with_input=True,
+                        on_change=lambda event: set_value(list(event.value or [])),
+                    )
+                    .props("outlined dense use-chips")
+                    .classes("flex-1 min-w-48")
+                    .mark(marker),
+                    _("Channels"),
+                )
             case ValueKind.SECONDS:
                 minutes, seconds = duration_fields(leaf.value)
 
@@ -770,17 +818,29 @@ class RuleEditor:
                 )
                 today_button(day, self.stored.timezone).mark(_marker("today", path))
             case ValueKind.LIVE_STATUS:
-                ui.select(
-                    {status: _(label) for status, label in LIVE_STATUSES.items()},
-                    value=leaf.value,
-                    on_change=lambda event: set_value(event.value),
-                ).props("outlined dense").classes("w-64").mark(marker)
+                named(
+                    ui.select(
+                        {status: _(label) for status, label in LIVE_STATUSES.items()},
+                        value=leaf.value,
+                        on_change=lambda event: set_value(event.value),
+                    )
+                    .props("outlined dense")
+                    .classes("w-64")
+                    .mark(marker),
+                    _("Live status"),
+                )
             case ValueKind.SHORT:
-                ui.select(
-                    {choice: _(label) for choice, label in SHORT_CHOICES.items()},
-                    value=leaf.value,
-                    on_change=lambda event: set_value(event.value),
-                ).props("outlined dense").classes("w-48").mark(marker)
+                named(
+                    ui.select(
+                        {choice: _(label) for choice, label in SHORT_CHOICES.items()},
+                        value=leaf.value,
+                        on_change=lambda event: set_value(event.value),
+                    )
+                    .props("outlined dense")
+                    .classes("w-48")
+                    .mark(marker),
+                    _("Short"),
+                )
 
     # Save and delete.
 
@@ -1019,12 +1079,8 @@ class ApplyDialog:
     def _set_working(self, working: bool) -> None:
         self.working = working
         for button in (self.preview_button, self.add_button):
-            if working:
-                button.props("loading")
-                button.disable()
-            else:
-                button.props(remove="loading")
-                button.enable()
+            set_loading(button, working)
+            button.set_enabled(not working)
         self.since_input.set_enabled(not working)
 
     def _status(self, text: str, *, error: bool = False) -> None:
@@ -1196,6 +1252,8 @@ class PageState:
     stored: Stored
     # The number of the newest read. A read that finishes after a newer one started drops its result.
     reads: int = 0
+    # The id of the rule in the open editor, and None for a new rule.
+    edited: int | None = None
 
 
 def _playlist_filter_options(stored: Stored) -> dict[str, str]:
@@ -1207,6 +1265,7 @@ def _playlist_filter_options(stored: Stored) -> dict[str, str]:
 @register_page("/rules", label=N_("Rules"), icon="rule")
 async def rules_page(services: Services) -> None:
     state = PageState(await asyncio.to_thread(read_stored, services.sessions, services.settings.tz))
+    client = context.client
 
     def current_filter() -> RuleFilter:
         playlist_id = playlist_select.value
@@ -1226,6 +1285,9 @@ async def rules_page(services: Services) -> None:
         options = _playlist_filter_options(stored)
         playlist_select.set_options(options, value=playlist_select.value if playlist_select.value in options else ANY)
         rules_view.refresh()
+
+    async def edit_rule(event) -> None:
+        await open_editor(int(event.args))
 
     @ui.refreshable
     def rules_view() -> None:
@@ -1248,11 +1310,36 @@ async def rules_page(services: Services) -> None:
         table.add_slot("body-cell-channels", LONG_CELL)
         table.add_slot("body-cell-condition", LONG_CELL)
         # The rule id is the only part of the click that the page needs.
-        table.on("rowClick", lambda event: open_editor(int(event.args)), js_handler="(event, row) => emit(row.id)")
+        table.on("rowClick", edit_rule, js_handler="(event, row) => emit(row.id)")
+        add_row_button(table, edit_rule, icon="edit", label=_("Edit"))
 
     def close_editor() -> None:
+        # A save or a delete reads the rules again before the focus moves. A key that the user presses meanwhile wins.
+        remember_focus(client)
         editor_dialog.close()
         editor_view.refresh(None)
+
+    def focus_after_editor() -> None:
+        """Move the focus to where the editor was opened. The table must have its new rows already.
+
+        The table was drawn again while the editor was open, so the button that had the focus is gone. The focus goes
+        back to the button of the same rule. It goes to New rule when the rule is new, or when the stored rules no
+        longer have it, for example after a delete.
+        """
+        new_rule = f"#{new_rule_button.html_id}"
+        if state.edited is None or state.stored.rule(state.edited) is None:
+            focus_when_drawn(client, new_rule, delay_ms=FOCUS_DELAY_MS)
+        else:
+            focus_when_drawn(client, row_button_selector(state.edited), fallback=new_rule, delay_ms=FOCUS_DELAY_MS)
+
+    def cancel_editor() -> None:
+        close_editor()
+        focus_after_editor()
+
+    async def editor_done() -> None:
+        """Read the rules again after a save or a delete, and move the focus after the table has its new rows."""
+        await reload()
+        focus_after_editor()
 
     @ui.refreshable
     def editor_view(editor: RuleEditor | None) -> None:
@@ -1271,7 +1358,10 @@ async def rules_page(services: Services) -> None:
             if rule is None:
                 ui.notify(_("The rule does not exist any more."), type="warning")
                 return
-        editor_view.refresh(RuleEditor(services, state.stored, rule, close_editor, reload, open_apply))
+        state.edited = rule_id
+        editor_view.refresh(
+            RuleEditor(services, state.stored, rule, close_editor, editor_done, open_apply, cancel_editor)
+        )
         editor_dialog.open()
 
     def open_apply(rule: RuleRecord, unsaved: bool) -> None:
@@ -1316,7 +1406,7 @@ async def rules_page(services: Services) -> None:
             .mark("filter-state")
         )
         ui.space()
-        ui.button(_("New rule"), icon="add", on_click=lambda: open_editor(None)).mark("new-rule")
+        new_rule_button = ui.button(_("New rule"), icon="add", on_click=lambda: open_editor(None)).mark("new-rule")
     rules_view()
 
     # A user can close the dialog only with its buttons, so an edit does not get lost by a click outside it.

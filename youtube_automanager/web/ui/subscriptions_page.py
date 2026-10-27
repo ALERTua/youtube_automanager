@@ -16,7 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
-from nicegui import ui
+from nicegui import context, ui
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -33,7 +33,17 @@ from youtube_automanager.i18n import N_, _
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
-from youtube_automanager.web.ui.common import busy, column, read_timezone
+from youtube_automanager.web.ui.common import (
+    FOCUS_DELAY_MS,
+    ROW_SCOPE_ATTRIBUTE,
+    actions_column,
+    add_row_button,
+    busy,
+    column,
+    focus_when_drawn,
+    read_timezone,
+    row_button_selector,
+)
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day
 from youtube_automanager.web.ui.layout import register_page
 
@@ -163,6 +173,8 @@ class PageState:
     # The channels of the last search that gave a result, by their id. A failed later search keeps them, so an open
     # dialog of a found channel still works.
     found_by_id: dict[str, FoundChannel] = field(default_factory=dict)
+    # The scope of the table whose row opened the dialog, so the focus goes back to that row when the dialog closes.
+    row_scope: str | None = None
 
 
 def read_lists(sessions: sessionmaker[Session]) -> StoredLists:
@@ -265,6 +277,7 @@ def channel_columns() -> list[dict]:
         column("handle", _("Handle")),
         column("subscribed", _("Subscribed")),
         column("rules", _("Rules")),
+        actions_column(),
     ]
 
 
@@ -274,6 +287,7 @@ def found_columns() -> list[dict]:
         column("handle", _("Handle")),
         column("subscribers", _("Subscribers")),
         column("subscribed", _("Subscribed")),
+        actions_column(),
     ]
 
 
@@ -288,6 +302,7 @@ def _options(labels: dict[str, str]) -> dict[str, str]:
 @register_page("/subscriptions", label=N_("Subscriptions"), icon="subscriptions")
 async def subscriptions_page(services: Services) -> None:
     state = PageState(lists=await asyncio.to_thread(read_lists, services.sessions))
+    client = context.client
 
     def selected() -> SelectedChannel | None:
         if state.selected_id is None:
@@ -349,6 +364,7 @@ async def subscriptions_page(services: Services) -> None:
 
     def open_channel(event) -> None:
         state.selected_id = str(event.args)
+        state.row_scope = event.sender.props.get(ROW_SCOPE_ATTRIBUTE)
         state.view = DialogView.DETAILS
         state.rule_id = None
         state.error = None
@@ -425,6 +441,7 @@ async def subscriptions_page(services: Services) -> None:
         )
         table.add_slot("body-cell-title", TITLE_CELL)
         table.on("rowClick", open_channel, js_handler="(event, row) => emit(row.id)")
+        add_row_button(table, open_channel, icon="edit", label=_("Edit"), scope="found")
 
     def _details_view(channel: SelectedChannel) -> None:
         rules = state.lists.rules_of(channel.channel_id)
@@ -578,7 +595,22 @@ async def subscriptions_page(services: Services) -> None:
         )
         channels_table.add_slot("body-cell-title", TITLE_CELL)
         channels_table.on("rowClick", open_channel, js_handler="(event, row) => emit(row.id)")
+        add_row_button(channels_table, open_channel, icon="edit", label=_("Edit"), scope="channels")
     show_channels()
+
+    def dialog_changed(event) -> None:
+        # The row button that had the focus was drawn again while the dialog was open.
+        if not event.value and state.selected_id is not None:
+            # The row can be gone, for example after Unsubscribe with the filter Subscribed. Then the field of the
+            # table gets the focus: the search field for a found channel, and the filter field for a stored one.
+            field = search_input if state.row_scope == "found" else text_input
+            focus_when_drawn(
+                client,
+                row_button_selector(state.selected_id, state.row_scope),
+                fallback=f"#{field.html_id}",
+                delay_ms=FOCUS_DELAY_MS,
+            )
 
     with ui.dialog().mark("channel-dialog") as dialog, ui.card().classes("w-full max-w-lg"):
         dialog_content()
+    dialog.on_value_change(dialog_changed)

@@ -24,7 +24,7 @@ from youtube_automanager.i18n import N_, _
 from youtube_automanager.short_child import ChildBusy
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text
-from youtube_automanager.web.ui.common import ResultLabel, confirm, format_time, read_timezone
+from youtube_automanager.web.ui.common import ResultLabel, confirm, format_time, read_timezone, set_loading
 from youtube_automanager.web.ui.dashboard import YTDLP_SOURCES
 from youtube_automanager.web.ui.settings_draft import DraftPart, FormError, SettingsDraft, Write
 from youtube_automanager.youtube.ytdlp_updater import (
@@ -198,14 +198,14 @@ async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
         if state.busy:
             return
         state.busy = True
-        update_button.props("loading")
+        set_loading(update_button, True)
         show_work()
         show_result(_("The service installs the newest yt-dlp of the saved channel. This can take a few minutes."))
         try:
             record = await asyncio.to_thread(services.ytdlp.update_now)
         finally:
             state.busy = False
-            update_button.props(remove="loading")
+            set_loading(update_button, False)
             show_work()
         if record is None:
             show_result(child_error_text(ChildBusy("")), problem=True)

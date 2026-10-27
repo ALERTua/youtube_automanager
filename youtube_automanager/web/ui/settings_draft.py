@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from nicegui import ui
 
 from youtube_automanager.i18n import _
+from youtube_automanager.web.ui.common import set_loading
 
 
 class FormError(ValueError):
@@ -99,10 +100,7 @@ class SettingsDraft:
         self._saving = saving
         self._save_button.set_enabled(not saving)
         self._discard_button.set_enabled(not saving)
-        if saving:
-            self._save_button.props("loading")
-        else:
-            self._save_button.props(remove="loading")
+        set_loading(self._save_button, saving)
         self.update()
 
     async def save(self) -> None:
