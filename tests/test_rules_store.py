@@ -22,7 +22,9 @@ from youtube_automanager.db.models import (
     ScheduleKind,
 )
 from youtube_automanager.engine.rules import MATCH_ALL, RuleError
+from youtube_automanager.i18n import set_language
 from youtube_automanager.rules_store import (
+    AS_ENGLISH,
     AddedCounts,
     RuleDraft,
     delete_rule,
@@ -117,6 +119,24 @@ def test_the_check_of_a_draft_goes_in_the_order_name_playlist_condition():
         validate_draft(draft(playlist_id="", condition=[]))
     with pytest.raises(RuleError, match="The root of a rule must be an object, not list"):
         validate_draft(draft(condition=[]))
+
+
+def test_the_checks_say_their_message_in_the_language_of_the_pages_unless_they_get_as_english(real_uk_catalog):
+    set_language("uk")
+
+    with pytest.raises(ValueError, match=r"^Введіть назву\.$"):
+        validate_name(" ")
+    with pytest.raises(ValueError, match=r"^Виберіть цільовий плейлист\.$"):
+        validate_playlist("")
+    with pytest.raises(ValueError, match=r"^Введіть назву\.$"):
+        validate_draft(draft(name=""))
+    # The HTTP API passes AS_ENGLISH.
+    with pytest.raises(ValueError, match=r"^Enter a name\.$"):
+        validate_name(" ", AS_ENGLISH)
+    with pytest.raises(ValueError, match=r"^Choose a target playlist\.$"):
+        validate_playlist("", AS_ENGLISH)
+    with pytest.raises(ValueError, match=r"^Choose a target playlist\.$"):
+        validate_draft(draft(playlist_id=""), AS_ENGLISH)
 
 
 def test_the_check_of_a_draft_refuses_a_condition_with_a_field_that_is_not_a_video_field():
