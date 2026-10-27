@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-27 09:40+0200\n"
+"POT-Creation-Date: 2026-10-27 12:21+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -28,7 +28,7 @@ msgid ""
 "videos that came since the last run are not checked."
 msgstr ""
 
-#: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/common.py
 msgid "A run is already active, so no new run started."
 msgstr ""
 
@@ -983,7 +983,7 @@ msgstr ""
 msgid "Run failed"
 msgstr ""
 
-#: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/common.py
 msgid "Run now"
 msgstr ""
 
@@ -991,7 +991,7 @@ msgstr ""
 msgid "Run summary"
 msgstr ""
 
-#: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/common.py
 #, python-brace-format
 msgid "Run {id} started."
 msgstr ""
@@ -1716,6 +1716,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Upload date"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Upload new cookies"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
