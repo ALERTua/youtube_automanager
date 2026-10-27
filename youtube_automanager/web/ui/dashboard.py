@@ -18,7 +18,15 @@ from youtube_automanager.db.models import Account, Run, RunStatus, RunTrigger, S
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.scheduler import SchedulerState
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import RUN_STATUSES, RUN_TRIGGERS, SESSION_STATES, format_time, stored_timezone
+from youtube_automanager.web.ui.common import (
+    RUN_STATUSES,
+    RUN_TRIGGERS,
+    SESSION_STATES,
+    focus_key,
+    format_time,
+    run_now_button,
+    stored_timezone,
+)
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.live_runs import RunFollower
 from youtube_automanager.youtube.ytdlp_updater import Source, active_version
@@ -31,6 +39,16 @@ SCHEDULER_STATES = {
     SchedulerState.PAUSED: (N_("Paused"), "warning"),
     SchedulerState.STOPPED: (N_("Stopped"), "negative"),
 }
+# The paths that the cards link to. Each is a page of the shell, so a click changes only the content.
+SETTINGS_PATH = "/settings"
+HISTORY_PATH = "/history"
+# The keys that keep the keyboard focus on a control when a refresh of the cards draws it again. See ``focus_key``.
+RUN_NOW_FOCUS_KEY = "dashboard-run-now"
+LAST_RUN_FOCUS_KEY = "dashboard-last-run"
+YTDLP_FOCUS_KEY = "dashboard-ytdlp"
+COOKIES_FOCUS_KEY = "dashboard-cookies"
+# The states in which the cookies need a new upload.
+NEEDS_NEW_COOKIES = frozenset({SessionState.DEAD, SessionState.EXPIRING})
 YTDLP_SOURCES: dict[Source, str] = {
     "data_folder": N_("Data folder"),
     "image": N_("Image of the service"),
@@ -153,9 +171,11 @@ def _session_card(session: CookieSession | None, zone: ZoneInfo) -> None:
             with _field(_("Earliest cookie expiry")):
                 expiry = session.earliest_cookie_expiry
                 _value(format_time(expiry, zone) if expiry else _("No expiry date"), "session-expiry")
+        if session.state in NEEDS_NEW_COOKIES:
+            focus_key(ui.link(_("Upload new cookies"), SETTINGS_PATH), COOKIES_FOCUS_KEY).mark("cookies-link")
 
 
-def _scheduler_card(state: SchedulerState, next_run_at: datetime | None, zone: ZoneInfo) -> None:
+def _scheduler_card(services: Services, state: SchedulerState, next_run_at: datetime | None, zone: ZoneInfo) -> None:
     with ui.card().classes("flex-1 min-w-72").mark("scheduler-card"):
         ui.label(_("Scheduler")).classes("text-h6")
         with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-center"):
@@ -165,14 +185,18 @@ def _scheduler_card(state: SchedulerState, next_run_at: datetime | None, zone: Z
                 _value(format_time(next_run_at, zone) if next_run_at else _("No run is planned"), "next-run")
             with _field(_("Time zone")):
                 _value(zone.key, "timezone")
+        focus_key(run_now_button(services, "dashboard-run-now"), RUN_NOW_FOCUS_KEY)
 
 
 def _last_run_card(last_run: LastRun | None, zone: ZoneInfo) -> None:
     with ui.card().classes("flex-1 min-w-72").mark("last-run-card"):
-        ui.label(_("Last run")).classes("text-h6")
         if last_run is None:
+            ui.label(_("Last run")).classes("text-h6")
             ui.label(_("No run yet.")).mark("no-run")
             return
+        # The title opens the run in History.
+        link = ui.link(_("Last run"), f"{HISTORY_PATH}?run={last_run.id}").classes("text-h6").mark("last-run-link")
+        focus_key(link, LAST_RUN_FOCUS_KEY)
         with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-center"):
             with _field(_("Started")):
                 _value(format_time(last_run.started_at, zone), "run-started")
@@ -193,7 +217,8 @@ def _last_run_card(last_run: LastRun | None, zone: ZoneInfo) -> None:
 
 def _ytdlp_card(version: str | None, source: Source) -> None:
     with ui.card().classes("flex-1 min-w-72").mark("ytdlp-card"):
-        ui.label(_("yt-dlp")).classes("text-h6")
+        # The title opens the Settings page, where the block of yt-dlp updates it.
+        focus_key(ui.link(_("yt-dlp"), SETTINGS_PATH).classes("text-h6").mark("ytdlp-link"), YTDLP_FOCUS_KEY)
         with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-center"):
             with _field(_("Version")):
                 _value(version or _("Unknown"), "ytdlp-version")
@@ -216,7 +241,7 @@ async def dashboard_page(services: Services) -> None:
         zone = ZoneInfo(snapshot.stored.timezone)
         with ui.row().classes("w-full gap-4 items-stretch"):
             _session_card(snapshot.stored.session, zone)
-            _scheduler_card(snapshot.scheduler_state, snapshot.next_run_at, zone)
+            _scheduler_card(services, snapshot.scheduler_state, snapshot.next_run_at, zone)
             last_run_view()
             _ytdlp_card(snapshot.ytdlp_version, snapshot.ytdlp_source)
 

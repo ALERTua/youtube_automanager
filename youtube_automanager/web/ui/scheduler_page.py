@@ -21,7 +21,6 @@ from youtube_automanager.i18n import N_, _
 from youtube_automanager.scheduler import (
     MAX_INTERVAL_S,
     MIN_INTERVAL_S,
-    RunNowOutcome,
     SchedulerState,
     ScheduleSpec,
     load_schedule,
@@ -30,7 +29,7 @@ from youtube_automanager.scheduler import (
     upcoming_run_times,
 )
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import format_time, read_timezone
+from youtube_automanager.web.ui.common import format_time, read_timezone, run_now_button
 from youtube_automanager.web.ui.dashboard import SCHEDULER_STATES
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.live_runs import RunFollower
@@ -207,13 +206,6 @@ async def scheduler_page(services: Services) -> None:
         await refresh_status()
         await tell_state(enabled)
 
-    async def run_now() -> None:
-        result = await services.scheduler.run_now()
-        if result.outcome is RunNowOutcome.STARTED:
-            ui.notify(_("Run {id} started.").format(id=result.run_id), type="positive")
-        else:
-            ui.notify(_("A run is already active, so no new run started."), type="warning")
-
     # The follower comes before the first read, so a run that starts during the read is not missed.
     follower = RunFollower(services.run_events, started=refresh_status, finished=refresh_status)
     initial = await take_status(services)
@@ -227,7 +219,7 @@ async def scheduler_page(services: Services) -> None:
                 resume_button = ui.button(_("Resume"), icon="play_arrow", on_click=lambda: set_enabled(True)).mark(
                     "resume"
                 )
-                ui.button(_("Run now"), icon="bolt", on_click=run_now).mark("run-now")
+                run_now_button(services, "run-now")
     pause_button.set_enabled(initial.state is SchedulerState.RUNNING)
     resume_button.set_enabled(initial.state is SchedulerState.PAUSED)
 

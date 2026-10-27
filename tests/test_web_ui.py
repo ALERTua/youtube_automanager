@@ -1,3 +1,4 @@
+import asyncio
 import importlib.metadata
 import re
 from datetime import UTC, datetime, timedelta
@@ -6,7 +7,8 @@ from zoneinfo import ZoneInfo
 import pytest
 from nicegui import ui
 from nicegui.elements.mixins.text_element import TextElement
-from ui_support import element_of, eventually, running_service, store, text_of
+from sqlalchemy import select
+from ui_support import element_of, elements_of, eventually, running_service, store, text_of
 
 from youtube_automanager import i18n
 from youtube_automanager.db.models import (
@@ -20,7 +22,8 @@ from youtube_automanager.db.models import (
     Setting,
 )
 from youtube_automanager.i18n import N_
-from youtube_automanager.web.ui import dashboard, layout
+from youtube_automanager.web.ui import common, dashboard, layout
+from youtube_automanager.web.ui.common import FOCUS_KEY_ATTRIBUTE
 from youtube_automanager.web.ui.theme import THEME_KEY, Theme, first_paint_style, read_theme
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
@@ -168,6 +171,179 @@ async def test_dashboard_refreshes_itself(user, sessions, monkeypatch):
 
     await user.should_see(marker="run-status", retries=50)
     assert (text_of(user, "run-status"), text_of(user, "run-added")) == ("Succeeded", "5")
+
+
+# The actions of the cards.
+
+
+def stored_runs(sessions) -> list[Run]:
+    with sessions() as session:
+        return list(session.scalars(select(Run).order_by(Run.id)))
+
+
+async def test_run_now_on_the_dashboard_starts_a_manual_run_and_the_last_run_card_follows_it(
+    user, sessions, fake_starter
+):
+    await user.open("/")
+    await user.should_see("No run yet.")
+
+    user.find(marker="dashboard-run-now").click()
+
+    await user.should_see("Run 1 started.")
+    await eventually(
+        lambda: [run.status for run in stored_runs(sessions)] == [RunStatus.SUCCEEDED], "The end of the run"
+    )
+    assert [run.trigger for run in stored_runs(sessions)] == [RunTrigger.MANUAL]
+    assert len(fake_starter.calls) == 1
+    await eventually(lambda: text_of(user, "run-status") == "Succeeded", "The last run card shows the end")
+    assert text_of(user, "run-trigger") == "Manual"
+    # The Scheduler page has its own button, so the Dashboard does not use its marker.
+    assert elements_of(user, "run-now") == []
+
+
+async def test_a_second_run_now_on_the_dashboard_while_a_run_is_active_shows_the_warning(user, sessions, fake_starter):
+    fake_starter.plan.append({"blocking": True})
+    await user.open("/")
+
+    user.find(marker="dashboard-run-now").click()
+    await user.should_see("Run 1 started.")
+    await eventually(fake_starter.child_started.is_set, "The start of the child")
+    await eventually(lambda: text_of(user, "run-status") == "In progress", "The last run card shows the run")
+    user.find(marker="dashboard-run-now").click()
+
+    await user.should_see("A run is already active, so no new run started.")
+    fake_starter.children[0].finish(0)
+    await eventually(
+        lambda: [run.status for run in stored_runs(sessions)] == [RunStatus.SUCCEEDED], "The end of the run"
+    )
+    assert len(fake_starter.calls) == 1
+
+
+async def test_the_dashboard_button_is_disabled_while_the_start_of_the_run_waits(user, fake_starter, monkeypatch):
+    release = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def slow_run_now(services):
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(common, "run_now", slow_run_now)
+    await user.open("/")
+
+    user.find(marker="dashboard-run-now").click()
+    await eventually(entered.is_set, "The start of the action")
+    button = element_of(user, "dashboard-run-now")
+    assert not button.enabled
+    assert "loading" in button.props
+
+    release.set()
+    await eventually(lambda: button.enabled and "loading" not in button.props, "The end of the action")
+
+
+async def test_the_last_run_title_links_to_that_run_in_history(user, sessions):
+    store(
+        sessions,
+        Run(
+            id=4, status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=datetime(2026, 10, 1, tzinfo=UTC)
+        ),
+        Run(id=9, status=RunStatus.FAILED, trigger=RunTrigger.MANUAL, started_at=datetime(2026, 10, 2, tzinfo=UTC)),
+    )
+
+    await user.open("/")
+
+    link = element_of(user, "last-run-link")
+    assert (link.text, link.props["href"]) == ("Last run", "/history?run=9")
+
+
+async def test_the_last_run_title_is_no_link_without_a_run(user):
+    await user.open("/")
+
+    await user.should_see("No run yet.")
+    assert elements_of(user, "last-run-link") == []
+
+
+@pytest.mark.parametrize(
+    ("state", "linked"),
+    [
+        (SessionState.DEAD, True),
+        (SessionState.EXPIRING, True),
+        (SessionState.OK, False),
+        (SessionState.UNKNOWN, False),
+    ],
+)
+async def test_the_session_card_links_to_the_cookie_upload_only_for_a_dead_or_expiring_session(
+    user, sessions, state, linked
+):
+    store(sessions, Account(cookies=b"encrypted", session_state=state))
+
+    await user.open("/")
+
+    await user.should_see(marker="session-state")
+    links = elements_of(user, "cookies-link")
+    assert [(link.text, link.props["href"]) for link in links] == (
+        [("Upload new cookies", "/settings")] if linked else []
+    )
+
+
+async def test_the_session_card_has_no_cookie_link_without_stored_cookies(user, sessions):
+    store(sessions, Account(cookies=None, session_state=SessionState.DEAD))
+
+    await user.open("/")
+
+    await user.should_see("No cookies are stored yet.")
+    assert elements_of(user, "cookies-link") == []
+
+
+async def test_the_ytdlp_title_links_to_the_settings(user):
+    await user.open("/")
+
+    link = element_of(user, "ytdlp-link")
+    assert (link.text, link.props["href"]) == ("yt-dlp", "/settings")
+
+
+FOCUS_KEYS = {
+    "dashboard-run-now": "dashboard-run-now",
+    "last-run-link": "dashboard-last-run",
+    "ytdlp-link": "dashboard-ytdlp",
+    "cookies-link": "dashboard-cookies",
+}
+
+
+async def test_each_control_of_a_redrawn_card_keeps_its_focus_key(user, sessions, monkeypatch):
+    """The head script gives the focus back to the control with the same key after a redraw. The cards are drawn
+    again at the start and at the end of a run and at each read, so each new control has its key."""
+    monkeypatch.setattr(dashboard, "REFRESH_SECONDS", 0.1)
+    store(
+        sessions,
+        Account(cookies=b"encrypted", session_state=SessionState.EXPIRING),
+        Run(status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=datetime(2026, 10, 1, tzinfo=UTC)),
+    )
+    await user.open("/")
+    before = {marker: element_of(user, marker) for marker in FOCUS_KEYS}
+    assert {marker: element.props[FOCUS_KEY_ATTRIBUTE] for marker, element in before.items()} == FOCUS_KEYS
+
+    # Each read draws the cards again, so the controls are new elements.
+    await eventually(lambda: all(element.is_deleted for element in before.values()), "The redraw of the cards")
+
+    after = {marker: element_of(user, marker) for marker in FOCUS_KEYS}
+    assert all(after[marker] is not before[marker] for marker in FOCUS_KEYS)
+    assert {marker: element.props[FOCUS_KEY_ATTRIBUTE] for marker, element in after.items()} == FOCUS_KEYS
+    # Each key is unique on the page, so the script finds the one control.
+    assert len(set(FOCUS_KEYS.values())) == len(FOCUS_KEYS)
+
+
+async def test_the_dashboard_button_has_its_focus_key_after_the_start_of_a_run_draws_the_cards_again(
+    user, sessions, fake_starter
+):
+    fake_starter.plan.append({"blocking": True})
+    await user.open("/")
+    button = element_of(user, "dashboard-run-now")
+
+    user.find(marker="dashboard-run-now").click()
+
+    await eventually(lambda: button.is_deleted, "The redraw at the start of the run")
+    assert element_of(user, "dashboard-run-now").props[FOCUS_KEY_ATTRIBUTE] == "dashboard-run-now"
+    fake_starter.children[0].finish(0)
 
 
 async def test_shell_shows_the_service_name_and_each_registered_page(

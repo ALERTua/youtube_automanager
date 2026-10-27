@@ -1,6 +1,6 @@
 """The helpers that two or more pages share: the table columns, the button of a table row, the icon button, the confirm
-dialog, the busy button, the result label, the time zone of the schedule, the format of a time, and the labels of the
-run statuses, the session states and the run triggers.
+dialog, the busy button, the button "Run now", the result label, the time zone of the schedule, the format of a time,
+and the labels of the run statuses, the session states and the run triggers.
 """
 
 import html
@@ -19,7 +19,8 @@ from youtube_automanager.db.models import RunStatus, RunTrigger, SessionState
 from youtube_automanager.i18n import N_, _
 
 # The pages import the time zone readers from here, and the scheduler owns them.
-from youtube_automanager.scheduler import read_timezone, stored_timezone  # noqa: F401
+from youtube_automanager.scheduler import RunNowOutcome, read_timezone, stored_timezone  # noqa: F401
+from youtube_automanager.web.services import Services
 
 TIME_FORMAT = "%Y-%m-%d %H:%M %Z"
 # The name of the table column that holds the button of each row.
@@ -320,6 +321,29 @@ def busy(button: ui.button) -> Generator[None]:
         if not button.is_deleted:
             set_loading(button, False)
             button.enable()
+
+
+async def run_now(services: Services) -> None:
+    """Start a manual run and tell the user whether it started. The Scheduler page and the Dashboard share it."""
+    result = await services.scheduler.run_now()
+    if result.outcome is RunNowOutcome.STARTED:
+        ui.notify(_("Run {id} started.").format(id=result.run_id), type="positive")
+    else:
+        ui.notify(_("A run is already active, so no new run started."), type="warning")
+
+
+def run_now_button(services: Services, marker: str) -> ui.button:
+    """Return the button "Run now" with the marker ``marker``.
+
+    The button is busy while the start runs, so a double click starts one run.
+    """
+
+    async def press() -> None:
+        with busy(button):
+            await run_now(services)
+
+    button = ui.button(_("Run now"), icon="bolt", on_click=press).mark(marker)
+    return button
 
 
 class ResultLabel(ui.label):
