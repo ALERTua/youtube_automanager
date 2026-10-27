@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-27 15:32+0200\n"
+"POT-Creation-Date: 2026-10-27 20:42+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -109,6 +109,12 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "Added"
+msgstr ""
+
+#. Translators: the column of the videos that the rule added in the last 7 days
+#. and in the last 30 days.
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Added 7 d / 30 d"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -325,6 +331,13 @@ msgstr ""
 msgid "Cookies refused"
 msgstr ""
 
+#. Translators: the name of a new rule that the button Duplicate makes from the
+#. rule {name}.
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Copy of {name}"
+msgstr ""
+
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "Cron"
 msgstr ""
@@ -401,6 +414,10 @@ msgstr ""
 msgid "Discard the changes?"
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Duplicate"
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Duration"
 msgstr ""
@@ -460,6 +477,13 @@ msgstr ""
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "Enabled"
+msgstr ""
+
+#. Translators: the name of the switch that turns the rule {name} on and off,
+#. for a screen reader.
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
+msgid "Enabled: {name}"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
@@ -1422,6 +1446,7 @@ msgid ""
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rules_page.py
 msgid "The rule does not exist any more, so the page did not save it."
 msgstr ""
 

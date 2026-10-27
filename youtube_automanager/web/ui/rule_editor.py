@@ -7,17 +7,21 @@ run of the history. The page reads and writes the database in a thread, never on
 
 The address of the editor keeps the query of the rules page that opened it, so Save, Delete and Cancel go back to the
 rules with the same filters, also after a reload of the editor.
+
+Duplicate opens ``/rules/new?from=<id>``: a new rule with a copy of the saved rule <id> and the name "Copy of <name>".
+The address holds only the id, so a reload shows the same copy, and the copy comes from the database, not from the form.
 """
 
 import asyncio
 import copy
+import dataclasses
 import json
 import logging
 import math
 from collections.abc import Callable, Sequence
 from datetime import date, timedelta
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from nicegui import context, ui
 
@@ -52,7 +56,7 @@ from youtube_automanager.web.ui.common import (
     whole_number,
 )
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day, today_button, today_in
-from youtube_automanager.web.ui.layout import LeaveCheck
+from youtube_automanager.web.ui.layout import LeaveCheck, address_query, with_query
 from youtube_automanager.web.ui.live_runs import Subscriptions
 from youtube_automanager.web.ui.rule_form import (
     FIELDS,
@@ -83,6 +87,8 @@ NEW_RULE_PATH = "/rules/new"
 # The key of ``app.storage.client`` that tells the rules page where the focus goes after the editor: the id of the
 # rule whose Edit button gets it, or None for the button New rule.
 RETURN_FOCUS = "rules-return-focus"
+# The query parameter of ``/rules/new`` with the id of the rule that the new rule copies.
+COPY_PARAMETER = "from"
 
 # The table of a preview shows this many videos on one page.
 PREVIEW_PAGE_SIZE = 20
@@ -120,6 +126,12 @@ def channel_label(channel: ChannelChoice) -> str:
         # Translators: a channel that left the subscriptions. A rule can still read it by its id.
         label = _("{channel}, not subscribed").format(channel=label)
     return label
+
+
+def copy_name(name: str) -> str:
+    """Return the name of a copy of the rule with the name ``name``."""
+    # Translators: the name of a new rule that the button Duplicate makes from the rule {name}.
+    return _("Copy of {name}").format(name=name)
 
 
 def channel_options(stored: Stored, extra: list[str]) -> dict[str, str]:
@@ -371,7 +383,8 @@ class RuleEditor:
 
     ``leave`` goes back to the rules after a save, a delete or a cancel. ``open_apply`` opens the apply dialog of a
     saved rule, and it gets whether the form has changes that are not saved. ``changed`` gets the same after each change
-    of a field.
+    of a field. ``duplicate`` opens a new rule with a copy of the saved rule that it gets. ``template`` gives a new rule
+    the fields of a rule, for example of the rule that it copies.
     """
 
     def __init__(
@@ -382,17 +395,23 @@ class RuleEditor:
         leave: Callable[[], None],
         open_apply: Callable[[RuleRecord, bool], None] | None = None,
         changed: Callable[[bool], None] | None = None,
+        *,
+        duplicate: Callable[[RuleRecord], None] | None = None,
+        template: RuleRecord | None = None,
     ) -> None:
         self.services = services
         self.stored = stored
         self.rule = rule
+        # The rule whose fields the form opens with: the saved rule, or the template of a new rule.
+        self.source = rule if rule is not None else template
+        self.duplicate_to = duplicate
         self.leave = leave
         self.open_apply = open_apply
         self.changed = changed
         # The values of the fields when the form opened. A new rule has changes when its fields differ from them.
         self.initial: tuple | None = None
         # None when the visual editor cannot show the condition. The form then shows the condition as JSON text.
-        self.root: Group | None = from_tree(rule.condition) if rule else Group()
+        self.root: Group | None = from_tree(self.source.condition) if self.source else Group()
         self.saving = False
         self.previewing = False
         # The number of the changes of the form. A preview that ends after a change shows no old result.
@@ -401,8 +420,8 @@ class RuleEditor:
         self.catch_up_cleared = False
 
     def build(self) -> None:
-        rule = self.rule
-        ui.label(_("Change the rule") if rule else _("New rule")).classes("text-h6").mark("editor-title")
+        rule = self.source
+        ui.label(_("Change the rule") if self.rule else _("New rule")).classes("text-h6").mark("editor-title")
         self.name_input = (
             ui.input(_("Name"), value=rule.name if rule else "", on_change=self._form_changed)
             .props("outlined dense")
@@ -513,7 +532,7 @@ class RuleEditor:
 
     def _sources(self) -> None:
         """Add the channels that the rule reads and its target playlist."""
-        rule = self.rule
+        rule = self.source
         channel_ids = list(rule.channel_ids) if rule else []
         self.channel_select = (
             ui.select(
@@ -562,8 +581,9 @@ class RuleEditor:
     def _actions(self) -> None:
         """Add the switch that turns the rule on and off, the hint about new videos, the error and the buttons."""
         rule = self.rule
+        source = self.source
         self.enabled_switch = ui.switch(
-            _("Enabled"), value=rule.enabled if rule else True, on_change=self._preview_old
+            _("Enabled"), value=source.enabled if source else True, on_change=self._preview_old
         ).mark("rule-enabled")
         ui.label(
             _(
@@ -579,6 +599,9 @@ class RuleEditor:
             ui.button(_("Cancel"), on_click=self.cancel).props("flat").mark("editor-cancel")
             if rule:
                 ui.space()
+                ui.button(_("Duplicate"), icon="content_copy", on_click=self.duplicate).props("flat").mark(
+                    "editor-duplicate"
+                )
                 ui.button(_("Apply to videos from a date"), icon="playlist_add_check", on_click=self.apply).props(
                     "flat"
                 ).mark("editor-apply")
@@ -942,6 +965,15 @@ class RuleEditor:
         if await self.may_leave():
             self._leave_once()
 
+    async def duplicate(self) -> None:
+        """Open a new rule with a copy of the saved rule. A form with changes asks first, because the copy takes the
+        saved rule and not the changes."""
+        rule = self.rule
+        if rule is None or self.duplicate_to is None:
+            return
+        if await self.may_leave() and not self.save_button.is_deleted:
+            self.duplicate_to(rule)
+
     async def ask_delete(self) -> None:
         rule = self.rule
         if rule is None:
@@ -1225,17 +1257,33 @@ class ApplyBanner:
         self.show()
 
 
+def rules_query(address: str) -> dict[str, str]:
+    """Return the query of the rules page in ``address``, the address of an editor: its query without the id of the
+    rule that a new rule copies."""
+    return {name: value for name, value in parse_qsl(urlsplit(address).query) if name != COPY_PARAMETER}
+
+
 def rules_address(address: str) -> str:
     """Return the address of the rules with the query of ``address``, the address of an editor.
 
     The rules page opens the editor with its own query, so the editor goes back to the rules with the same filters.
     """
-    query = urlsplit(address).query
-    return f"{RULES_PATH}?{query}" if query else RULES_PATH
+    query = rules_query(address)
+    return f"{RULES_PATH}?{urlencode(query)}" if query else RULES_PATH
+
+
+def copy_address(rule_id: int, address: str) -> str:
+    """Return the address of a new rule that copies the rule ``rule_id``, with the query of the rules in ``address``."""
+    return with_query(NEW_RULE_PATH, {COPY_PARAMETER: str(rule_id), **rules_query(address)})
 
 
 async def new_rule_page(services: Services) -> None:
-    """The page of the address ``/rules/new``: the editor of a new rule."""
+    """The page of the address ``/rules/new``: the editor of a new rule.
+
+    With the query parameter ``from``, the new rule starts with the fields of that saved rule and the name "Copy of
+    <name>". A ``from`` that names no rule gives an empty new rule. The builder reads the query itself: a parameter of
+    the builder would make ``ui.sub_pages`` build the page again at each change of the query.
+    """
     await editor_page(services, None)
 
 
@@ -1254,7 +1302,13 @@ async def editor_page(services: Services, rule_id: str | None) -> None:
     back = rules_address(client.sub_pages_router.current_path)
     stored = await asyncio.to_thread(read_stored, services.sessions, services.settings.tz)
     rule = None
-    if rule_id is not None:
+    template = None
+    if rule_id is None:
+        source_id = whole_number(address_query(client).get(COPY_PARAMETER))
+        source = None if source_id is None else stored.rule(source_id)
+        if source is not None:
+            template = dataclasses.replace(source, name=copy_name(source.name))
+    else:
         number = whole_number(rule_id)
         rule = None if number is None else stored.rule(number)
         if rule is None:
@@ -1278,11 +1332,17 @@ async def editor_page(services: Services, rule_id: str | None) -> None:
     def open_apply(saved: RuleRecord, unsaved: bool) -> None:
         apply_dialog.open(stored, saved, unsaved=unsaved)
 
+    def duplicate(saved: RuleRecord) -> None:
+        with client:
+            ui.navigate.to(copy_address(saved.id, client.sub_pages_router.current_path))
+
     await ApplyBanner(services, rule_name).load()
     # A click in the drawer asks before it leaves a form with changes, and the browser warns before a reload or a close of
     # the tab. The Back button of the browser leaves without a question, see LeaveCheck.
     leave_check = LeaveCheck(lambda: editor.may_leave())
-    editor = RuleEditor(services, stored, rule, leave, open_apply, leave_check.warn_on_unload)
+    editor = RuleEditor(
+        services, stored, rule, leave, open_apply, leave_check.warn_on_unload, duplicate=duplicate, template=template
+    )
     with ui.card().classes("w-full gap-2").mark("editor"):
         editor.build()
     apply_dialog = ApplyDialog(services)

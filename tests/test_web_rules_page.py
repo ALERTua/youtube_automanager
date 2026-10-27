@@ -21,7 +21,17 @@ from test_live_rules import (
     WATCH_LATER_RULE,
 )
 from test_sync import entry, feed_video
-from ui_support import client_of, element_of, elements_of, eventually, running_service, set_value, store, text_of
+from ui_support import (
+    client_of,
+    element_of,
+    elements_of,
+    eventually,
+    running_service,
+    service_with_pages,
+    set_value,
+    store,
+    text_of,
+)
 
 from youtube_automanager import i18n
 from youtube_automanager.db.models import (
@@ -40,8 +50,10 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.engine.rules import MATCH_ALL
 from youtube_automanager.i18n.setting import NAMES
+from youtube_automanager.rules_store import validate_name
 from youtube_automanager.runner import sync_lock_held
-from youtube_automanager.web.ui import layout, rule_editor
+from youtube_automanager.web.ui import layout, rule_editor, rules_page
+from youtube_automanager.web.ui.common import keyboard_sort_template
 from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.web.ui.rule_form import LIVE_STATUSES
 
@@ -221,6 +233,7 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
         "Playlist",
         "No Shorts",
         "Condition",
+        "Added 7 d / 30 d",
         "Changed",
         "Actions",
     ]
@@ -228,32 +241,41 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
         {
             "id": 2,
             "name": "Everything from the feed",
-            "enabled": "No",
+            "enabled": False,
+            "enabled_label": "Enabled: Everything from the feed",
             "channels": "Subscriptions feed",
             "playlist": "Watch later",
             "no_shorts": "No",
             "condition": "Each video",
+            "added": "0 / 0",
+            "added_month": 0,
             # Kyiv is at UTC+3 on this day.
             "updated": "2026-10-01 15:00 EEST",
         },
         {
             "id": 1,
             "name": "Levels of Epicurious",
-            "enabled": "Yes",
+            "enabled": True,
+            "enabled_label": "Enabled: Levels of Epicurious",
             "channels": "Alpha, Beta",
             "playlist": "Home",
             "no_shorts": "Yes",
             "condition": 'Title matches the pattern "Levels of" and Duration is at least 2:00',
+            "added": "0 / 0",
+            "added_month": 0,
             "updated": "2026-10-01 15:00 EEST",
         },
         {
             "id": 3,
             "name": "Hand-written",
-            "enabled": "Yes",
+            "enabled": True,
+            "enabled_label": "Enabled: Hand-written",
             "channels": "Gamma",
             "playlist": "Saved from another channel",
             "no_shorts": "No",
             "condition": "Custom JSON condition",
+            "added": "0 / 0",
+            "added_month": 0,
             "updated": "2026-10-01 15:00 EEST",
         },
     ]
@@ -723,7 +745,7 @@ async def test_a_change_of_a_rule_is_stored(user, sessions, account_copy):
     await names_are(user, ["New name", "Other"])
     row = table_rows(user)[0]
     assert (row["enabled"], row["no_shorts"], row["channels"], row["playlist"], row["condition"]) == (
-        "No",
+        False,
         "Yes",
         "Beta, Gamma",
         "Home",
@@ -748,7 +770,7 @@ async def test_a_change_of_the_channels_alone_changes_the_time_of_the_change(use
 async def test_a_disabled_rule_turns_on_in_the_editor(user, sessions, account_copy):
     store(sessions, rule(1, "Off", enabled=False))
     await user.open("/rules")
-    assert table_rows(user)[0]["enabled"] == "No"
+    assert table_rows(user)[0]["enabled"] is False
     await open_editor(user, 1)
     assert element_of(user, "rule-enabled").value is False
 
@@ -756,7 +778,7 @@ async def test_a_disabled_rule_turns_on_in_the_editor(user, sessions, account_co
     await save(user)
 
     assert stored_rule(sessions, 1).enabled is True
-    await eventually(lambda: table_rows(user)[0]["enabled"] == "Yes", "The new state in the table")
+    await eventually(lambda: table_rows(user)[0]["enabled"] is True, "The new state in the table")
 
 
 async def test_cancel_closes_the_editor_and_keeps_the_rule(user, sessions, account_copy):
@@ -1256,7 +1278,7 @@ def shown_texts(user) -> list[str]:
         if isinstance(element, ui.table):
             texts.extend(column["label"] for column in element.columns)
             for row in element.rows:
-                texts.extend(row[name] for name in ("enabled", "no_shorts"))
+                texts.extend(row[name] for name in ("enabled_label", "no_shorts"))
                 if row["id"] == 2:
                     texts.extend((row["channels"], row["condition"]))
     return texts
@@ -1656,3 +1678,295 @@ async def test_the_head_holds_the_warning_script_once(user):
 
     assert client.head_html.count(layout.unload_warning_script()) == 1
     assert "addEventListener('beforeunload'" in layout.unload_warning_script()
+
+
+# The switch Enabled of a row, the sort of the columns and Duplicate.
+
+
+def toggle(user, rule_id: int, enabled: bool) -> None:
+    """Turn the switch Enabled of the row of ``rule_id``, as the template of its cell does."""
+    user.find(marker="rules-table").trigger(rules_page.TOGGLE_EVENT, args=[rule_id, enabled])
+
+
+async def test_the_switch_of_a_row_writes_the_rule_and_changes_the_row_in_place(user, sessions, three_rules):
+    await user.open("/rules")
+    table = element_of(user, "rules-table")
+
+    toggle(user, 1, False)
+
+    await eventually(lambda: stored_rule(sessions, 1).enabled is False, "The rule off in the database")
+    await eventually(lambda: table_rows(user)[1]["enabled"] is False, "The rule off in the table")
+    assert stored_rule(sessions, 1).updated_at > CHANGED_AT
+    assert table_rows(user)[1]["updated"] != "2026-10-01 15:00 EEST"
+    # The other rules stay as they are, and the page keeps the same table.
+    assert [stored_rule(sessions, rule_id).enabled for rule_id in (2, 3)] == [False, True]
+    assert element_of(user, "rules-table") is table
+
+    toggle(user, 2, True)
+
+    await eventually(lambda: table_rows(user)[0]["enabled"] is True, "The rule on in the table")
+    assert stored_rule(sessions, 2).enabled is True
+    assert not elements_of(user, "editor")
+
+
+async def test_a_rule_turned_off_under_the_state_filter_stays_until_the_next_change_of_a_filter(
+    user, sessions, three_rules
+):
+    await user.open("/rules?state=enabled")
+
+    toggle(user, 1, False)
+
+    await eventually(lambda: table_rows(user)[0]["enabled"] is False, "The rule off in the table")
+    assert names(user) == ["Levels of Epicurious", "Hand-written"]
+    assert address(user) == "/rules?state=enabled"
+    set_value(user, "filter-text", "e")
+    await names_are(user, ["Hand-written"])
+
+
+async def test_the_switch_of_a_rule_that_is_gone_says_so_and_drops_the_row(user, sessions, three_rules):
+    await user.open("/rules")
+    with sessions.begin() as session:
+        session.delete(session.get(Rule, 1))
+
+    toggle(user, 1, False)
+
+    await user.should_see("The rule does not exist any more, so the page did not save it.")
+    await names_are(user, ["Everything from the feed", "Hand-written"])
+
+
+async def test_the_switch_has_the_name_of_its_rule_and_its_click_does_not_open_the_editor(user, three_rules):
+    await user.open("/rules")
+    table = element_of(user, "rules-table")
+
+    # The user simulation never draws a slot, so these literals are the only check of the cell that the browser runs.
+    template = table.slots["body-cell-enabled"].template or ""
+    assert '<q-td :props="props" @click.stop>' in template
+    assert ':model-value="props.row.enabled"' in template
+    assert ':aria-label="props.row.enabled_label"' in template
+    assert "@update:model-value=\"(value) => $parent.$emit('toggleEnabled', props.row.id, value)\"" in template
+    # A name of a rule comes from the row as a value, so it never runs as a part of the template.
+    assert "Levels" not in template
+    assert [row["enabled_label"] for row in table.rows] == [
+        "Enabled: Everything from the feed",
+        "Enabled: Levels of Epicurious",
+        "Enabled: Hand-written",
+    ]
+    listeners = [
+        (listener.type, listener.js_handler)
+        for listener in table._event_listeners.values()
+        if listener.type == rules_page.TOGGLE_EVENT
+    ]
+    assert listeners == [("toggleEnabled", "(id, value) => emit(id, value)")]
+
+
+async def test_the_switch_keeps_the_keyboard_focus_through_the_redraw_of_its_row(user, three_rules):
+    """Each update of the table draws the switch again. The head script focuses the new switch with the same key."""
+    await user.open("/rules")
+    table = element_of(user, "rules-table")
+
+    template = table.slots["body-cell-enabled"].template or ""
+    assert ":data-focus-key=\"'rule-enabled-' + props.row.id\"" in template
+    # The Edit button of the row keeps its own way back, and the click on a row still opens the editor.
+    assert "data-row-button" in (table.slots["body-cell-actions"].template or "")
+    user.find(marker="rules-table").trigger("rowClick", args=3)
+    await eventually(lambda: elements_of(user, "editor"), "The editor")
+
+
+async def test_each_column_but_the_actions_sorts_in_the_browser(user, three_rules):
+    await user.open("/rules")
+
+    columns = element_of(user, "rules-table").columns
+
+    assert [column["name"] for column in columns if column.get("sortable")] == [
+        "name",
+        "enabled",
+        "channels",
+        "playlist",
+        "no_shorts",
+        "condition",
+        "added",
+        "updated",
+    ]
+    assert [column["name"] for column in columns if not column.get("sortable")] == ["actions"]
+
+
+async def test_a_new_table_keeps_the_sort_that_the_user_chose(user, three_rules):
+    await user.open("/rules")
+    table = element_of(user, "rules-table")
+    sort = {"sortBy": "name", "descending": True, "page": 1, "rowsPerPage": 0}
+
+    user.find(marker="rules-table").trigger("update:pagination", args=sort)
+    await eventually(lambda: table.pagination == sort, "The sort of the user")
+    set_value(user, "filter-state", "enabled")
+
+    await names_are(user, ["Levels of Epicurious", "Hand-written"])
+    new_table = element_of(user, "rules-table")
+    assert new_table is not table
+    assert new_table.pagination == sort
+    # The table still shows each row on one page, without the bar of the pages.
+    assert new_table.props["hide-pagination"] is True
+
+
+def test_a_copy_has_the_name_copy_of_and_stays_a_valid_name():
+    assert rule_editor.copy_name("Levels") == "Copy of Levels"
+    # The name has no limit of length, so a copy of a very long name is a valid name too, and keeps the whole name.
+    long_name = "x" * 10_000
+    assert validate_name(rule_editor.copy_name(long_name)) == f"Copy of {long_name}"
+
+
+def test_the_name_of_a_copy_goes_through_the_translation(monkeypatch):
+    class Marking:
+        def gettext(self, message):
+            return f"<<{message}>>"
+
+    monkeypatch.setattr(i18n, "_translations", Marking())
+
+    assert rule_editor.copy_name("Levels") == "<<Copy of Levels>>"
+
+
+async def test_duplicate_opens_a_new_rule_with_a_copy_of_the_rule(user, sessions, three_rules):
+    await user.open("/rules?state=enabled")
+    await open_editor(user, 1)
+
+    user.find(marker="editor-duplicate").click()
+
+    await eventually(lambda: address(user) == "/rules/new?from=1&state=enabled", "The address of the copy")
+    await eventually(lambda: text_of(user, "editor-title") == "New rule", "The editor of a new rule")
+    assert element_of(user, "rule-name").value == "Copy of Levels of Epicurious"
+    assert element_of(user, "rule-channels").value == [A, B]
+    assert element_of(user, "rule-playlist").value == "PLhome"
+    assert (element_of(user, "rule-no-shorts").value, element_of(user, "rule-enabled").value) == (True, True)
+    # A copy is a new rule: no Duplicate, no apply and no delete.
+    assert not elements_of(user, "editor-duplicate")
+    assert not elements_of(user, "editor-delete")
+
+    await save(user)
+
+    await names_are(user, ["Levels of Epicurious", "Hand-written", "Copy of Levels of Epicurious"])
+    assert address(user) == "/rules?state=enabled"
+    original, duplicate = stored_rule(sessions, 1), stored_rule(sessions, 4)
+    assert (duplicate.condition, duplicate.target_playlist_id, duplicate.no_shorts, duplicate.enabled) == (
+        original.condition,
+        "PLhome",
+        True,
+        True,
+    )
+    assert rule_channels(sessions, 4) == [A, B]
+    assert original.name == "Levels of Epicurious"
+
+
+async def test_a_copy_without_changes_goes_back_at_once_and_the_address_of_the_rules_has_no_copy(user, three_rules):
+    await user.open("/rules/new?from=2&state=disabled")
+    assert element_of(user, "rule-name").value == "Copy of Everything from the feed"
+    assert element_of(user, "rule-enabled").value is False
+
+    user.find(marker="editor-cancel").click()
+
+    await names_are(user, ["Everything from the feed"])
+    assert not elements_of(user, "discard-dialog")
+    assert address(user) == "/rules?state=disabled"
+
+
+async def test_duplicate_with_changes_asks_first_and_copies_the_saved_rule(user, three_rules):
+    await user.open("/rules/1")
+    set_value(user, "rule-name", "Changed")
+
+    user.find(marker="editor-duplicate").click()
+
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of Duplicate")
+    assert text_of(user, "discard-question") == "Discard the changes?"
+    user.find(marker="discard-cancel").click()
+    await eventually(lambda: not elements_of(user, "discard-dialog"), "The close of the question")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert (address(user), element_of(user, "rule-name").value) == ("/rules/1", "Changed")
+
+    user.find(marker="editor-duplicate").click()
+    await eventually(lambda: elements_of(user, "discard-confirm"), "The question of Duplicate")
+    user.find(marker="discard-confirm").click()
+
+    await eventually(lambda: address(user) == "/rules/new?from=1", "The address of the copy")
+    await eventually(lambda: element_of(user, "rule-name").value == "Copy of Levels of Epicurious", "The copy")
+
+
+@pytest.mark.parametrize("source", ["999", "abc", ""])
+async def test_a_copy_of_a_rule_that_does_not_exist_is_an_empty_new_rule(user, three_rules, source):
+    await user.open(f"/rules/new?from={source}")
+
+    assert text_of(user, "editor-title") == "New rule"
+    assert element_of(user, "rule-name").value == ""
+
+
+# The column Added.
+
+
+def added_actions(run_id: int, now: datetime, rule_id: int | None, *days_back: float, kind=RunActionKind.ADDED):
+    return [
+        RunAction(run_id=run_id, at=now - timedelta(days=days), action=kind, video_id=f"v{index}", rule_id=rule_id)
+        for index, days in enumerate(days_back)
+    ]
+
+
+def seed_added(sessions) -> None:
+    """Rule 1 added 2 videos in the last 7 days and 3 in the last 30, rule 3 added 1 in the last 30, rule 2 none."""
+    now = datetime.now(UTC)
+    store(sessions, Run(id=1, status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=now))
+    store(
+        sessions,
+        *added_actions(1, now, 1, 1, 6, 20, 31),
+        *added_actions(1, now, 3, 29),
+        # Only the actions added of a rule count.
+        *added_actions(1, now, 2, 1, kind=RunActionKind.SKIPPED),
+        *added_actions(1, now, 2, 1, kind=RunActionKind.ERROR),
+        *added_actions(1, now, None, 1),
+    )
+
+
+async def test_the_column_added_shows_the_videos_of_7_and_30_days_and_sorts_by_the_30_days(user, sessions, three_rules):
+    seed_added(sessions)
+
+    await user.open("/rules")
+
+    rows = table_rows(user)
+    assert [(row["id"], row["added"], row["added_month"]) for row in rows] == [
+        (2, "0 / 0", 0),
+        (1, "2 / 3", 3),
+        (3, "0 / 1", 1),
+    ]
+    (added,) = [column for column in element_of(user, "rules-table").columns if column["name"] == "added"]
+    assert added == {
+        "name": "added",
+        "label": "Added 7 d / 30 d",
+        "field": "added",
+        "align": "left",
+        "sortable": True,
+        ":sort": "(a, b, rowA, rowB) => rowA.added_month - rowB.added_month",
+    }
+
+
+async def test_the_column_added_follows_the_end_of_a_run(nicegui_globals, settings, sessions, fake_starter):
+    store(sessions, playlist("WL", "Watch later"))
+    store(sessions, rule(1, "A rule"))
+    now = datetime.now(UTC)
+    store(sessions, Run(id=1, status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=now))
+
+    async with service_with_pages(settings, fake_starter) as (user, services):
+        await user.open("/rules")
+        table = element_of(user, "rules-table")
+        assert table_rows(user)[0]["added"] == "0 / 0"
+        store(sessions, *added_actions(1, now, 1, 0, 10))
+
+        services.run_events.finished.emit(1, RunStatus.SUCCEEDED)
+
+        await eventually(lambda: table_rows(user)[0]["added"] == "1 / 2", "The new counts")
+        assert element_of(user, "rules-table") is table
+
+
+async def test_each_sortable_header_of_the_rules_table_sorts_with_the_keyboard_too(user, three_rules):
+    await user.open("/rules")
+    table = element_of(user, "rules-table")
+
+    template = table.slots["header-cell"].template or ""
+
+    assert template == keyboard_sort_template("rules")
+    # The header keeps the label of its column.
+    assert "{{ props.col.label }}" in template

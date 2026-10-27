@@ -1,20 +1,35 @@
 import subprocess
 import sys
 import threading
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
 from sqlalchemy import select
 from ui_support import store
 
-from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, Schedule, ScheduleKind
+from youtube_automanager.db.models import (
+    Channel,
+    Playlist,
+    Rule,
+    RuleChannel,
+    Run,
+    RunAction,
+    RunActionKind,
+    RunStatus,
+    RunTrigger,
+    Schedule,
+    ScheduleKind,
+)
 from youtube_automanager.engine.rules import MATCH_ALL, RuleError
 from youtube_automanager.rules_store import (
+    AddedCounts,
     RuleDraft,
     delete_rule,
+    read_added_counts,
     read_stored,
     save_rule,
+    set_enabled,
     validate_draft,
     validate_name,
     validate_playlist,
@@ -288,3 +303,95 @@ def test_a_delete_while_the_sync_lock_is_taken_refuses_at_once_and_keeps_the_rul
     with account() as session:
         assert [rule.name for rule in session.scalars(select(Rule))] == ["Doomed"]
     assert channels_of(account, 1) == [A]
+
+
+# The switch Enabled.
+
+
+def enabled_and_changed(sessions, rule_id: int) -> tuple[bool, datetime]:
+    with sessions() as session:
+        rule = session.get(Rule, rule_id)
+        assert rule is not None
+        return rule.enabled, rule.updated_at
+
+
+def test_the_switch_turns_a_rule_off_and_on_and_counts_as_a_change(account):
+    store(account, rule_row(1, "Levels", 1), rule_row(2, "Other", 2), RuleChannel(rule_id=1, channel_id=A))
+
+    assert set_enabled(account, 1, False) is True
+
+    enabled, changed = enabled_and_changed(account, 1)
+    assert (enabled, changed > CHANGED_AT) == (False, True)
+    assert enabled_and_changed(account, 2) == (True, CHANGED_AT)
+    # The switch changes nothing else of the rule.
+    assert channels_of(account, 1) == [A]
+    assert set_enabled(account, 1, True) is True
+    assert enabled_and_changed(account, 1)[0] is True
+
+
+def test_the_switch_to_the_state_that_the_rule_has_changes_nothing(account):
+    store(account, rule_row(1, "Levels", 1))
+
+    assert set_enabled(account, 1, True) is True
+
+    assert enabled_and_changed(account, 1) == (True, CHANGED_AT)
+
+
+def test_the_switch_of_a_rule_that_does_not_exist_any_more_writes_nothing(account):
+    assert set_enabled(account, 99, False) is False
+
+    with account() as session:
+        assert session.scalars(select(Rule)).all() == []
+
+
+def test_the_switch_does_not_wait_for_the_sync_lock_as_a_save_does_not(account, runner):
+    """A run reads the enabled rules once at its start, so the switch takes effect from the next run."""
+    store(account, rule_row(1, "Levels", 1))
+
+    with runner.lock_held(timeout=0):
+        assert set_enabled(account, 1, False) is True
+        assert save_rule(account, 1, draft(enabled=True)) == 1
+
+    assert enabled_and_changed(account, 1)[0] is True
+
+
+# The videos that each rule added.
+
+NOW = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
+
+
+def action(rule_id: int | None, at: datetime, kind: RunActionKind = RunActionKind.ADDED) -> RunAction:
+    return RunAction(run_id=1, at=at, action=kind, video_id="v", rule_id=rule_id)
+
+
+def test_the_added_counts_take_only_the_added_actions_of_each_rule_in_each_period(account):
+    store(account, Run(id=1, status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=NOW))
+    store(
+        account,
+        # Rule 1: two in the 7 days, the first one at the start of the period, and three more in the 30 days.
+        action(1, NOW - timedelta(days=7)),
+        action(1, NOW - timedelta(hours=1)),
+        action(1, NOW - timedelta(days=7, seconds=1)),
+        action(1, NOW - timedelta(days=12)),
+        action(1, NOW - timedelta(days=30)),
+        # Older than 30 days.
+        action(1, NOW - timedelta(days=30, seconds=1)),
+        action(1, NOW - timedelta(days=100)),
+        # Other actions of the rule.
+        action(1, NOW, RunActionKind.SKIPPED),
+        action(1, NOW, RunActionKind.DEFERRED),
+        action(1, NOW, RunActionKind.ERROR),
+        # Another rule, and an action without a rule.
+        action(2, NOW - timedelta(days=20)),
+        action(None, NOW),
+    )
+
+    assert read_added_counts(account, NOW) == {1: AddedCounts(week=2, month=5), 2: AddedCounts(week=0, month=1)}
+
+
+def test_a_rule_without_added_videos_has_no_count(account):
+    store(account, Run(id=1, status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=NOW))
+    store(account, action(1, NOW, RunActionKind.SKIPPED), action(1, NOW - timedelta(days=31)))
+
+    assert read_added_counts(account, NOW) == {}
+    assert AddedCounts() == AddedCounts(week=0, month=0)
