@@ -30,14 +30,14 @@ SETTLE_SECONDS = 0.3
 HISTORY_VIEW = "/history?status=failed"
 
 
-def tooltip_of(user, button: ui.element) -> str:
-    """Return the text of the tooltip of ``button``, which NiceGUI makes as a sibling with the prop target."""
-    (text,) = [
-        element.text
+def tooltip_of(user, button: ui.element) -> ui.tooltip:
+    """Return the tooltip of ``button``, a sibling with the prop target."""
+    (tooltip,) = [
+        element
         for element in client_of(user).elements.values()
         if isinstance(element, ui.tooltip) and element.props.get("target") == f"#{button.html_id}"
     ]
-    return text
+    return tooltip
 
 
 def label_of(user, path: str) -> str:
@@ -85,7 +85,10 @@ async def test_the_language_button_names_the_language_of_its_click(user):
     button = element_of(user, "language")
     assert button.props["icon"] == "translate"
     assert button.props["aria-label"] == "Українська"
-    assert tooltip_of(user, button) == "Українська"
+    tooltip = tooltip_of(user, button)
+    assert tooltip.text == "Українська"
+    # A screen reader speaks the name with the voice of its language, also in the tooltip that Quasar moves to the body.
+    assert (button.props["lang"], tooltip.props["lang"]) == ("uk", "uk")
     assert app.config.language == "en-US"
 
 
@@ -107,7 +110,9 @@ async def test_the_switch_stores_the_language_and_the_new_load_shows_the_catalog
     assert client.title == "Історія — YouTube AutoManager"
     button = element_of(user, "language")
     assert button.props["aria-label"] == "English"
-    assert tooltip_of(user, button) == "English"
+    tooltip = tooltip_of(user, button)
+    assert tooltip.text == "English"
+    assert (button.props["lang"], tooltip.props["lang"]) == ("en", "en")
 
 
 async def test_the_new_load_of_an_open_history_run_shows_the_run_again(user, sessions, uk_catalog, browser):

@@ -373,9 +373,18 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
         icon_button("menu", _("Menu"), drawer.toggle, props="flat round color=white").mark("menu")
         ui.label(_("YouTube AutoManager")).classes("text-h6")
         ui.space()
-        # The button names the language of the click in that language, so a reader of each language finds it.
-        target_name = NAMES[NEXT_LANGUAGE[shown_language]]
-        icon_button("translate", target_name, switch_language, props="flat round color=white").mark("language")
+        # The button names the language of the click in that language, so a reader of each language finds it. The lang
+        # attribute lets a screen reader speak the name with the voice of that language. Quasar moves the tooltip to the
+        # end of the body and gives it the attributes of the q-tooltip, so the tooltip gets its own lang.
+        target = NEXT_LANGUAGE[shown_language]
+        language_button = (
+            ui.button(icon="translate", on_click=switch_language).props("flat round color=white").mark("language")
+        )
+        language_button.props["aria-label"] = NAMES[target]
+        language_button.props["lang"] = target
+        language_tooltip = ui.tooltip(NAMES[target])
+        language_tooltip.props["target"] = f"#{language_button.html_id}"
+        language_tooltip.props["lang"] = target
         with (
             ui.button(icon=ICONS[theme], on_click=switch_theme)
             .props("flat round color=white")
