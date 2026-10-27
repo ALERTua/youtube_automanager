@@ -71,7 +71,7 @@ msgid ""
 "target shows only the start of its URL, because a URL holds the token of "
 "its service."
 msgstr ""
-"Адресат отримує подію, якщо адресат увімкнений, подія відмічена і рівень "
+"Адресат отримує подію, якщо адресат увімкнений, подія позначена і рівень "
 "події не нижчий за найнижчий рівень адресата. Кожен адресат показує лише "
 "початок свого URL, бо URL містить токен сервісу."
 
@@ -348,7 +348,7 @@ msgstr "Сесія cookies"
 
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Cookies expire soon"
-msgstr "Cookies скоро спливуть"
+msgstr "Термін дії cookies скоро спливе"
 
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Cookies refused"
@@ -476,8 +476,8 @@ msgid ""
 "that an earlier run saw, and always at least the {count} newest videos."
 msgstr ""
 "Кожен запуск читає джерело від найновішого відео до першого відео, яке "
-"вже побачив попередній запуск, і завжди не менше ніж {count} найновіших "
-"відео."
+"вже побачив попередній запуск. Найновіші відео запуск читає завжди, не "
+"менше ніж {count}."
 
 #: youtube_automanager/web/ui/service_settings.py
 msgid ""
@@ -643,7 +643,7 @@ msgid ""
 "{active}, and it installs only a newer version."
 msgstr ""
 "Повернутися з yt-dlp {active} на {previous}? Тоді щоденне оновлення "
-"пропускає {active} і ставить лише новішу версію."
+"пропускає {active} і встановлює лише новішу версію."
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Go back to the previous version"
@@ -697,7 +697,7 @@ msgstr "У часовому поясі розкладу, {zone}."
 
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Info"
-msgstr "Інфо"
+msgstr "Інформація"
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 #, python-brace-format
@@ -714,7 +714,7 @@ msgstr "Інтервал у секундах"
 
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Keep editing"
-msgstr "Далі редагувати"
+msgstr "Редагувати далі"
 
 #: youtube_automanager/web/ui/history_page.py
 #, python-brace-format
@@ -766,7 +766,7 @@ msgstr "Підходить"
 
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Matches now"
-msgstr "Підходить зараз"
+msgstr "Тепер підходить"
 
 #: youtube_automanager/web/ui/layout.py
 msgid "Menu"
@@ -1086,7 +1086,7 @@ msgstr "Запуск"
 
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Run failed"
-msgstr "Запуск завершився помилкою"
+msgstr "Невдалий запуск"
 
 #: youtube_automanager/web/ui/common.py
 msgid "Run now"
@@ -1108,7 +1108,7 @@ msgstr "Працює"
 #: youtube_automanager/web/ui/history_page.py
 #, python-brace-format
 msgid "Runs {first}-{last} of {total}"
-msgstr "Запуски {first}-{last} з {total}"
+msgstr "Запуски {first}–{last} із {total}"
 
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/notifications_section.py
@@ -1208,7 +1208,7 @@ msgstr "Статус"
 
 #: youtube_automanager/web/ui/service_settings.py
 msgid "Stop at a seen video (default)"
-msgstr "Зупинитися на баченому відео (типово)"
+msgstr "Зупинитися на побаченому відео (типово)"
 
 #: youtube_automanager/web/ui/service_settings.py
 msgid "Stop at the date mark"
@@ -1451,7 +1451,7 @@ msgid ""
 "The login cookies of this export expired on {time}. Export new cookies "
 "and upload them."
 msgstr ""
-"Cookies входу з цього експорту закінчилися {time}. Експортуйте нові "
+"Термін дії cookies входу з цього експорту сплив {time}. Експортуйте нові "
 "cookies і завантажте їх."
 
 #: youtube_automanager/web/ui/rule_editor.py
@@ -1509,14 +1509,14 @@ msgid ""
 "The nightly builds get the fixes for the changes of YouTube first, and "
 "they change more often. A new channel installs at the next update."
 msgstr ""
-"Збірки nightly першими отримують виправлення для змін YouTube, але "
-"змінюються частіше. Новий тип випуску встановиться під час наступного "
-"оновлення."
+"Збірки Nightly першими отримують виправлення для змін YouTube, але "
+"змінюються частіше. Сервіс встановить новий тип випуску під час "
+"наступного оновлення."
 
 #: youtube_automanager/web/ui/rule_form.py
 #, python-brace-format
 msgid "The pattern does not compile: {error}"
-msgstr "Шаблон не компілюється: {error}"
+msgstr "Шаблон має помилку: {error}"
 
 #: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
@@ -1539,12 +1539,12 @@ msgid ""
 "The read stops after {limit} videos of a channel, so the older videos of "
 "these channels are not in the list: {sources}"
 msgstr ""
-"Читання зупиняється після {limit} відео каналу, тому старших відео цих "
+"Читання зупиняється після {limit} відео каналу, тому старіших відео цих "
 "каналів немає в списку: {sources}"
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "The retention is saved."
-msgstr "Зберігання історії збережено."
+msgstr "Термін зберігання історії збережено."
 
 #: youtube_automanager/web/ui/settings_page.py
 #, python-brace-format
@@ -1553,8 +1553,8 @@ msgid ""
 "{minutes} minutes, the way an open YouTube tab does. It is on by default."
 " A saved change acts at the next turn of the rotation, without a restart."
 msgstr ""
-"Автооновлення оновлює сесію збережених cookies приблизно кожні {minutes} "
-"хв, як це робить відкрита вкладка YouTube. Воно ввімкнене типово. "
+"Автооновлення поновлює сесію збережених cookies приблизно кожні {minutes}"
+" хв, як це робить відкрита вкладка YouTube. Воно ввімкнене типово. "
 "Збережена зміна діє з наступного оновлення, без перезапуску."
 
 #: youtube_automanager/web/ui/rule_editor.py
@@ -1584,11 +1584,11 @@ msgstr "Жодне відео джерел правила від цього дн
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "The rules that name this channel still read its videos."
-msgstr "Правила, що називають цей канал, і далі читають його відео."
+msgstr "Правила, що містять цей канал, і далі читають його відео."
 
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "The schedule has no run time."
-msgstr "У розкладу немає часу запуску."
+msgstr "У розкладі немає часу запуску."
 
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "The schedule is off. No run starts until you turn it on."
@@ -1661,8 +1661,8 @@ msgid ""
 "PyPI into its data folder, and the next run uses the new version without "
 "a new image of the service."
 msgstr ""
-"Сервіс читає YouTube через yt-dlp. Він ставить нові випуски з PyPI у свою"
-" папку даних, і наступний запуск використовує нову версію без нового "
+"Сервіс читає YouTube через yt-dlp. Він встановлює нові випуски з PyPI у "
+"свою папку даних, і наступний запуск використовує нову версію без нового "
 "образу сервісу."
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -1762,8 +1762,8 @@ msgid ""
 "The text holds no login cookie of {domain}. Export the cookies of "
 "youtube.com while you are signed in to YouTube."
 msgstr ""
-"У тексті немає cookies входу для {domain}. Експортуйте cookies "
-"youtube.com у акаунті, що увійшов у YouTube."
+"У тексті немає cookies входу для {domain}. Увійдіть у YouTube і тоді "
+"експортуйте cookies youtube.com."
 
 #: youtube_automanager/web/ui/settings_page.py
 msgid "The text is empty. Upload the cookie file, or paste its text."
@@ -1780,8 +1780,8 @@ msgid ""
 "The text lacks these login cookies of {domain}: {names}. Export the "
 "cookies again while you are signed in to YouTube."
 msgstr ""
-"У тексті немає цих cookies входу для {domain}: {names}. Експортуйте "
-"cookies ще раз у акаунті, що увійшов у YouTube."
+"У тексті немає цих cookies входу для {domain}: {names}. Увійдіть у "
+"YouTube і експортуйте cookies ще раз."
 
 #. Translators: {cause} is the English cause from the service, for example the
 #. error of uv.
@@ -1859,7 +1859,7 @@ msgstr "Сьогодні"
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/history_page.py
 msgid "Trigger"
-msgstr "Причина"
+msgstr "Тип запуску"
 
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Undecided"
@@ -1933,7 +1933,7 @@ msgid ""
 msgstr ""
 "Використати yt-dlp {image} з образу замість {active} з папки даних? "
 "Сервіс збереже {active} як попередню версію. Тоді щоденне оновлення "
-"пропускає {active} і ставить лише новішу версію."
+"пропускає {active} і встановлює лише новішу версію."
 
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/ytdlp_section.py
@@ -2024,8 +2024,8 @@ msgid ""
 "YouTube accepts the cookies, but they expire soon. Export new cookies and"
 " upload them."
 msgstr ""
-"YouTube приймає cookies, але вони скоро спливуть. Експортуйте нові "
-"cookies і завантажте їх."
+"YouTube приймає cookies, але їхній термін дії скоро спливе. Експортуйте "
+"нові cookies і завантажте їх."
 
 #: youtube_automanager/web/ui/settings_page.py
 msgid "YouTube accepts the cookies."
@@ -2075,7 +2075,7 @@ msgstr "YouTube не знайшов каналу за цим текстом."
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "a live stream that just ended"
-msgstr "трансляція, що щойно завершилась"
+msgstr "трансляція, що щойно завершилася"
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "a past live stream"
@@ -2144,7 +2144,7 @@ msgstr "є одним із"
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "live now"
-msgstr "в ефірі зараз"
+msgstr "трансляція в ефірі"
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "matches the pattern"
@@ -2159,7 +2159,7 @@ msgstr "не ({conditions})"
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "not live"
-msgstr "не в ефірі"
+msgstr "поза ефіром"
 
 #. Translators: the word between two conditions of which one must match.
 #: youtube_automanager/web/ui/rule_form.py
@@ -2176,7 +2176,7 @@ msgstr "відео не є Short"
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "upcoming"
-msgstr "запланована"
+msgstr "запланована трансляція"
 
 #: youtube_automanager/web/ui/dashboard.py
 #: youtube_automanager/web/ui/ytdlp_section.py
@@ -2217,7 +2217,7 @@ msgstr "{condition} (з урахуванням регістру)"
 #: youtube_automanager/web/ui/rule_form.py
 #, python-brace-format
 msgid "{count} channels"
-msgstr "Канали: {count}"
+msgstr "каналів: {count}"
 
 #. Translators: The label of the checkbox of an event, for example "Run summary
 #. · Success".
@@ -2286,4 +2286,4 @@ msgid ""
 "install it."
 msgstr ""
 "{version} — версія, з якої сервіс повернувся, тому щоденне оновлення її "
-"не ставить."
+"не встановлює."
