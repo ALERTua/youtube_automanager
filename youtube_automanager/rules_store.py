@@ -1,4 +1,5 @@
-"""The rules in the database: read, save, delete, and the checks of a rule before a save.
+"""The rules in the database: read, save, delete, turn on and off, the checks of a rule before a save, and the counts
+of the videos that each rule added.
 
 The rules page and the HTTP API of the rules call these functions, so both use the same code and the same texts. The
 module imports nothing from NiceGUI or from ``web``, so the API and a child process can import it too. Each function
@@ -7,14 +8,14 @@ that touches the database blocks, so a caller on the event loop runs it with ``a
 
 import functools
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 
-from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, utc_now
+from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, RunAction, RunActionKind, utc_now
 from youtube_automanager.engine.rules import validate
 from youtube_automanager.i18n import _
 from youtube_automanager.runner import SyncRunner
@@ -23,6 +24,9 @@ from youtube_automanager.scheduler import stored_timezone
 # The first day of an apply and of the older videos of a rule is at most this many days back. The rules page and the
 # HTTP API check this limit, and ``validate_draft`` does not, because the day of today depends on the caller.
 MAX_DAYS_BACK = 365
+# The two periods of the count of the videos that each rule added, in days back from now.
+ADDED_WEEK_DAYS = 7
+ADDED_MONTH_DAYS = 30
 
 
 @dataclass(frozen=True)
@@ -76,6 +80,14 @@ class Stored:
     def playlist_title(self, playlist_id: str) -> str:
         playlist = self.playlists.get(playlist_id)
         return playlist.title if playlist else playlist_id
+
+
+@dataclass(frozen=True)
+class AddedCounts:
+    """The number of the videos that a rule added in the last ``ADDED_WEEK_DAYS`` and ``ADDED_MONTH_DAYS`` days."""
+
+    week: int = 0
+    month: int = 0
 
 
 @dataclass(frozen=True)
@@ -153,6 +165,29 @@ def read_stored(sessions: sessionmaker[Session], default_timezone: str) -> Store
             playlists={row.playlist_id: PlaylistChoice(row.playlist_id, row.title, row.is_own) for row in playlists},
             timezone=timezone,
         )
+
+
+def read_added_counts(sessions: sessionmaker[Session], now: datetime) -> dict[int, AddedCounts]:
+    """Return the number of the videos that each rule added in the last 7 and 30 days before ``now``. This call blocks.
+
+    One grouped query counts the actions ``added`` of the history by their rule. The time of an action is the time of
+    its add, so a long run counts each video on its own day. A rule that added nothing in the 30 days has no entry.
+    The history keeps the actions of a deleted rule, so the result can hold the id of a rule that is gone.
+    """
+    week_start = now - timedelta(days=ADDED_WEEK_DAYS)
+    month_start = now - timedelta(days=ADDED_MONTH_DAYS)
+    query = (
+        select(RunAction.rule_id, func.sum(case((RunAction.at >= week_start, 1), else_=0)), func.count())
+        .where(RunAction.action == RunActionKind.ADDED, RunAction.at >= month_start)
+        .group_by(RunAction.rule_id)
+    )
+    with sessions() as session:
+        # The actions without a rule come as one group with the id None, which no rule asks for.
+        return {
+            rule_id: AddedCounts(int(week), int(month))
+            for rule_id, week, month in session.execute(query)
+            if rule_id is not None
+        }
 
 
 def set_enabled(sessions: sessionmaker[Session], rule_id: int, enabled: bool) -> bool:

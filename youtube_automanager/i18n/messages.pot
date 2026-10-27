@@ -111,6 +111,12 @@ msgstr ""
 msgid "Added"
 msgstr ""
 
+#. Translators: the column of the videos that the rule added in the last 7 days
+#. and in the last 30 days.
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Added 7 d / 30 d"
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/subscriptions_page.py

@@ -21,7 +21,17 @@ from test_live_rules import (
     WATCH_LATER_RULE,
 )
 from test_sync import entry, feed_video
-from ui_support import client_of, element_of, elements_of, eventually, running_service, set_value, store, text_of
+from ui_support import (
+    client_of,
+    element_of,
+    elements_of,
+    eventually,
+    running_service,
+    service_with_pages,
+    set_value,
+    store,
+    text_of,
+)
 
 from youtube_automanager import i18n
 from youtube_automanager.db.models import (
@@ -222,6 +232,7 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
         "Playlist",
         "No Shorts",
         "Condition",
+        "Added 7 d / 30 d",
         "Changed",
         "Actions",
     ]
@@ -235,6 +246,8 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
             "playlist": "Watch later",
             "no_shorts": "No",
             "condition": "Each video",
+            "added": "0 / 0",
+            "added_month": 0,
             # Kyiv is at UTC+3 on this day.
             "updated": "2026-10-01 15:00 EEST",
         },
@@ -247,6 +260,8 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
             "playlist": "Home",
             "no_shorts": "Yes",
             "condition": 'Title matches the pattern "Levels of" and Duration is at least 2:00',
+            "added": "0 / 0",
+            "added_month": 0,
             "updated": "2026-10-01 15:00 EEST",
         },
         {
@@ -258,6 +273,8 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
             "playlist": "Saved from another channel",
             "no_shorts": "No",
             "condition": "Custom JSON condition",
+            "added": "0 / 0",
+            "added_month": 0,
             "updated": "2026-10-01 15:00 EEST",
         },
     ]
@@ -1875,3 +1892,68 @@ async def test_a_copy_of_a_rule_that_does_not_exist_is_an_empty_new_rule(user, t
 
     assert text_of(user, "editor-title") == "New rule"
     assert element_of(user, "rule-name").value == ""
+
+
+# The column Added.
+
+
+def added_actions(run_id: int, now: datetime, rule_id: int | None, *days_back: float, kind=RunActionKind.ADDED):
+    return [
+        RunAction(run_id=run_id, at=now - timedelta(days=days), action=kind, video_id=f"v{index}", rule_id=rule_id)
+        for index, days in enumerate(days_back)
+    ]
+
+
+def seed_added(sessions) -> None:
+    """Rule 1 added 2 videos in the last 7 days and 3 in the last 30, rule 3 added 1 in the last 30, rule 2 none."""
+    now = datetime.now(UTC)
+    store(sessions, Run(id=1, status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=now))
+    store(
+        sessions,
+        *added_actions(1, now, 1, 1, 6, 20, 31),
+        *added_actions(1, now, 3, 29),
+        # Only the actions added of a rule count.
+        *added_actions(1, now, 2, 1, kind=RunActionKind.SKIPPED),
+        *added_actions(1, now, 2, 1, kind=RunActionKind.ERROR),
+        *added_actions(1, now, None, 1),
+    )
+
+
+async def test_the_column_added_shows_the_videos_of_7_and_30_days_and_sorts_by_the_30_days(user, sessions, three_rules):
+    seed_added(sessions)
+
+    await user.open("/rules")
+
+    rows = table_rows(user)
+    assert [(row["id"], row["added"], row["added_month"]) for row in rows] == [
+        (2, "0 / 0", 0),
+        (1, "2 / 3", 3),
+        (3, "0 / 1", 1),
+    ]
+    (added,) = [column for column in element_of(user, "rules-table").columns if column["name"] == "added"]
+    assert added == {
+        "name": "added",
+        "label": "Added 7 d / 30 d",
+        "field": "added",
+        "align": "left",
+        "sortable": True,
+        ":sort": "(a, b, rowA, rowB) => rowA.added_month - rowB.added_month",
+    }
+
+
+async def test_the_column_added_follows_the_end_of_a_run(nicegui_globals, settings, sessions, fake_starter):
+    store(sessions, playlist("WL", "Watch later"))
+    store(sessions, rule(1, "A rule"))
+    now = datetime.now(UTC)
+    store(sessions, Run(id=1, status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=now))
+
+    async with service_with_pages(settings, fake_starter) as (user, services):
+        await user.open("/rules")
+        table = element_of(user, "rules-table")
+        assert table_rows(user)[0]["added"] == "0 / 0"
+        store(sessions, *added_actions(1, now, 1, 0, 10))
+
+        services.run_events.finished.emit(1, RunStatus.SUCCEEDED)
+
+        await eventually(lambda: table_rows(user)[0]["added"] == "1 / 2", "The new counts")
+        assert element_of(user, "rules-table") is table
