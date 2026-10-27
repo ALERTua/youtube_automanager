@@ -58,6 +58,7 @@ from youtube_automanager.engine import account_session
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.engine.rules import MATCH_ALL
 from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, STATE_MODE_KEY
+from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.rule_actions import apply_once, preview_once
 from youtube_automanager.runner import INTERRUPTED_ERROR, sync_lock_held
 from youtube_automanager.settings import Settings
@@ -1665,6 +1666,9 @@ async def test_each_text_of_the_preview_and_the_apply_goes_through_the_translati
     untranslated = [
         text
         for text in texts
-        if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not time_text.fullmatch(text)
+        if not (text.startswith("<<") and text.endswith(">>"))
+        and text not in data
+        and text not in NAMES.values()
+        and not time_text.fullmatch(text)
     ]
     assert untranslated == []

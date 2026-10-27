@@ -31,6 +31,7 @@ from youtube_automanager.db.models import (
     ScheduleKind,
     Setting,
 )
+from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.web.ui import history_page
 from youtube_automanager.web.ui.dates import today_in
 
@@ -869,7 +870,10 @@ async def test_each_text_of_the_history_page_goes_through_the_translation(
     untranslated = [
         text
         for text in texts
-        if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not TIME.fullmatch(text)
+        if not (text.startswith("<<") and text.endswith(">>"))
+        and text not in data
+        and text not in NAMES.values()
+        and not TIME.fullmatch(text)
     ]
     assert untranslated == []
 

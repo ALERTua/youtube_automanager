@@ -8,14 +8,18 @@ import subprocess
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
+from babel.messages.mofile import write_mo
+from babel.messages.pofile import read_po
 from nicegui import Client
 from nicegui.awaitable_response import AwaitableResponse
 from nicegui.testing.general import nicegui_reset_globals
 from sqlalchemy import create_engine, make_url, select, text
 from ui_support import running_service
 
+from youtube_automanager import i18n
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.db.models import (
     AddedVideo,
@@ -31,10 +35,14 @@ from youtube_automanager.db.models import (
     Setting,
 )
 from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, SyncRun
+from youtube_automanager.i18n import ENGLISH, set_language
 from youtube_automanager.rotation import CookieRotation
 from youtube_automanager.runner import SYNC_LOCK
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.ytdlp_updater import UpdateResult, installed_version, is_newer, previous_dir
+
+# A tiny Ukrainian catalog for the tests of the language: a few labels of the shell.
+UK_CATALOG = Path(__file__).parent / "fixtures" / "i18n" / "uk.po"
 
 
 class FakeYtdlpInstall:
@@ -97,6 +105,33 @@ class FakeYtdlpInstall:
         package.mkdir()
         (package / "__init__.py").write_text("", encoding="utf-8")
         (package / "version.py").write_text(f"__version__ = {version!r}\n", encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def english_texts():
+    """Puts the language of the texts back to English after each test.
+
+    The language is one value for the process, and the suite runs in one process. A test that switches the language
+    would else give its language to each later test. The fixture asks for no other fixture, so it ends after the
+    ``monkeypatch`` of the test put back each patched value.
+    """
+    yield
+    set_language(ENGLISH)
+
+
+@pytest.fixture
+def uk_catalog(tmp_path, monkeypatch):
+    """Compile the tiny Ukrainian catalog of ``fixtures/i18n/uk.po`` into a folder of the test, and point the
+    translation at that folder. Return the folder of the catalogs."""
+    locale_dir = tmp_path / "locale"
+    compiled = locale_dir / "uk" / "LC_MESSAGES" / f"{i18n.DOMAIN}.mo"
+    compiled.parent.mkdir(parents=True)
+    with UK_CATALOG.open("rb") as source:
+        catalog = read_po(source)
+    with compiled.open("wb") as target:
+        write_mo(target, catalog)
+    monkeypatch.setattr(i18n, "LOCALE_DIR", locale_dir)
+    return locale_dir
 
 
 @pytest.fixture(autouse=True)

@@ -1,5 +1,5 @@
-"""The FastAPI application of the service and its lifespan: the database, the schedule, the scheduler, the cookie
-rotation and the daily yt-dlp update.
+"""The FastAPI application of the service and its lifespan: the database, the language of the pages, the schedule, the
+scheduler, the cookie rotation and the daily yt-dlp update.
 
 ``create_app`` returns a plain FastAPI application, so more routes and pages can mount on it before it starts.
 """
@@ -16,6 +16,8 @@ from sqlalchemy import make_url
 
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.db.backup import backup_before_upgrade
+from youtube_automanager.i18n import language, set_language
+from youtube_automanager.i18n.setting import read_language
 from youtube_automanager.log_setup import setup_logging
 from youtube_automanager.retention import clean_history
 from youtube_automanager.rotation import CookieRotation
@@ -60,6 +62,11 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
         engine = make_engine(settings.database_url)
         try:
             sessions = make_session_factory(engine)
+            # The pages show the stored language from the first page on. The holder keeps a language that is already
+            # in place, for example its English at the first start.
+            stored_language = await asyncio.to_thread(read_language, sessions)
+            if stored_language != language():
+                set_language(stored_language)
             spec = await asyncio.to_thread(load_schedule, sessions, settings.tz)
             # No run is active after this, so the events of the runs start with no poll.
             await asyncio.to_thread(mark_interrupted_runs, sessions)

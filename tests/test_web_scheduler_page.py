@@ -22,6 +22,7 @@ from ui_support import (
 
 from youtube_automanager import i18n
 from youtube_automanager.db.models import NotificationTarget, Run, RunStatus, RunTrigger, Schedule, ScheduleKind
+from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.scheduler import MAX_INTERVAL_S, MIN_INTERVAL_S, ScheduleSpec
 from youtube_automanager.web.ui import scheduler_page
 from youtube_automanager.web.ui.common import TIME_FORMAT
@@ -483,6 +484,9 @@ async def test_each_text_of_the_scheduler_page_goes_through_the_translation(
     untranslated = [
         text
         for text in texts
-        if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not TIME.fullmatch(text)
+        if not (text.startswith("<<") and text.endswith(">>"))
+        and text not in data
+        and text not in NAMES.values()
+        and not TIME.fullmatch(text)
     ]
     assert untranslated == []

@@ -39,6 +39,7 @@ from youtube_automanager.db.models import (
     ScheduleKind,
 )
 from youtube_automanager.engine.rules import MATCH_ALL
+from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.web.ui import layout, rule_editor
 from youtube_automanager.web.ui.dates import today_in
@@ -1320,7 +1321,10 @@ async def test_each_text_of_the_rules_page_goes_through_the_translation(
     untranslated = [
         text
         for text in texts
-        if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not time_text.fullmatch(text)
+        if not (text.startswith("<<") and text.endswith(">>"))
+        and text not in data
+        and text not in NAMES.values()
+        and not time_text.fullmatch(text)
     ]
     assert untranslated == []
 
