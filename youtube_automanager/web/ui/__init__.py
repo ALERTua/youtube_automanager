@@ -34,12 +34,16 @@ from youtube_automanager.web.ui.theme import read_theme
 SHELL_ROUTE = "/{path:path}"
 
 
-def _with_end_signal(build: SubRouteBuilder, built: asyncio.Event) -> SubRouteBuilder:
+def _with_end_signal(build: SubRouteBuilder, built: asyncio.Event, known: Callable[[str], bool]) -> SubRouteBuilder:
     # ui.sub_pages gives a builder its arguments by the names of its parameters, and wraps keeps them visible.
     @functools.wraps(build)
     async def run(*args: Any, **kwargs: Any) -> None:
         try:
-            await build(*args, **kwargs)
+            # An unknown path matches "/" or the path of a page as a prefix, so ui.sub_pages starts the builder of that
+            # page. Its 404 text does not stop the task, and the page would grow under the text, so the builder
+            # starts only for a path that a page owns.
+            if known(ui.context.client.sub_pages_router.current_path):
+                await build(*args, **kwargs)
         finally:
             built.set()
 
@@ -49,13 +53,16 @@ def _with_end_signal(build: SubRouteBuilder, built: asyncio.Event) -> SubRouteBu
 def _shell(app: FastAPI) -> Callable[[], Awaitable[None]]:
     pages_now = pages()
 
+    def known(path: str) -> bool:
+        return any(page.owns(path) for page in pages_now)
+
     async def show_shell() -> None:
         # A page request reaches the NiceGUI application, not ``app``, so the services come from ``app`` itself.
         services: Services = app.state.services
         theme = await asyncio.to_thread(read_theme, services.sessions)
         built = asyncio.Event()
         routes = {
-            path: _with_end_signal(build, built)
+            path: _with_end_signal(build, built, known)
             for page in pages_now
             for path, build in ((page.path, page.build), *page.routes)
         }
@@ -63,11 +70,11 @@ def _shell(app: FastAPI) -> Callable[[], Awaitable[None]]:
             ui.sub_pages(routes, data={"services": services})
         # ui.sub_pages runs an async builder as a task. The first HTML waits for it, so the browser gets the page with
         # its data, as before the shell. A later change of the address builds the content in the open page.
-        # An unknown path matches "/" as a prefix, so ui.sub_pages builds the dashboard once, and NiceGUI replaces it
-        # with the 404 text before the answer. The shell does not wait for that build. The check uses the same pages as
-        # the routes, so a wait always has a builder that ends it.
-        path = ui.context.client.sub_pages_router.current_path
-        if any(page.owns(path) for page in pages_now):
+        # The wait ends when the wrapper of the matched route ends. ui.sub_pages starts that wrapper only after it
+        # converted the path parameters (PageArguments.build_kwargs), and a failed conversion would leave the wait to
+        # the response_timeout of NiceGUI. So register_page refuses a path parameter of another type than str. An
+        # unknown path gets no wait: the wrapper builds nothing, and NiceGUI shows the 404 text.
+        if known(ui.context.client.sub_pages_router.current_path):
             await built.wait()
 
     return show_shell

@@ -1,11 +1,20 @@
 """The shell of the pages: one route answers each page, and a click in the drawer changes only the content."""
 
 import asyncio
+import re
 
 import pytest
+from nicegui import Client, ui
 from nicegui import __version__ as nicegui_version
-from nicegui import ui
-from ui_support import element_of, elements_of, eventually, running_service, service_with_pages, text_of
+from ui_support import (
+    client_of,
+    element_of,
+    elements_of,
+    eventually,
+    running_service,
+    service_with_pages,
+    text_of,
+)
 
 from youtube_automanager.db.models import RunTrigger
 from youtube_automanager.i18n import N_
@@ -58,8 +67,8 @@ async def test_the_active_drawer_item_and_the_title_follow_a_navigation(user):
 async def test_each_path_of_a_page_marks_its_drawer_item(nicegui_globals, settings, fake_starter, monkeypatch):
     monkeypatch.setattr(layout, "_PAGES", dict(layout._PAGES))
 
-    async def show_item(services, item_id: int):
-        ui.label(f"item {item_id} in {services.settings.tz}").mark("item")
+    async def show_item(services, item_id: str):
+        ui.label(f"item {int(item_id)} in {services.settings.tz}").mark("item")
 
     @layout.register_page("/items", label=N_("Items"), icon="list", routes=[("/items/{item_id}", show_item)])
     async def items_page(services):
@@ -76,6 +85,38 @@ async def test_each_path_of_a_page_marks_its_drawer_item(nicegui_globals, settin
 
         await user.should_see(marker="items")
         await user.should_not_see(marker="item")
+
+
+@pytest.mark.parametrize("annotation", [int, float, int | None, "int"])
+def test_a_sub_route_refuses_a_path_parameter_of_another_type_than_str(monkeypatch, annotation):
+    monkeypatch.setattr(layout, "_PAGES", dict(layout._PAGES))
+
+    async def show_item(services, item_id):
+        pass
+
+    show_item.__annotations__["item_id"] = annotation
+
+    with pytest.raises(ValueError, match="path parameter item_id"):
+        layout.register_page("/items", label=N_("Items"), icon="list", routes=[("/items/{item_id}", show_item)])
+    assert "/items" not in layout._PAGES
+
+
+def test_a_sub_route_takes_a_path_parameter_without_a_type_or_as_str(monkeypatch):
+    monkeypatch.setattr(layout, "_PAGES", dict(layout._PAGES))
+
+    async def plain(services, item_id):
+        pass
+
+    async def text(services, item_id: str, sort: int = 0):
+        pass
+
+    @layout.register_page(
+        "/items", label=N_("Items"), icon="list", routes=[("/items/{item_id}", plain), ("/items/{item_id}/x", text)]
+    )
+    async def items_page(services):
+        pass
+
+    assert [path for path, _build in layout._PAGES["/items"].routes] == ["/items/{item_id}", "/items/{item_id}/x"]
 
 
 def test_a_page_owns_its_path_and_its_sub_routes():
@@ -98,6 +139,46 @@ async def test_an_unknown_path_gets_the_shell_with_the_404_text(user):
     assert "404: sub page /no-such-page not found" in answer.text
     assert "Skip to the content" in answer.text
     assert "<title>YouTube AutoManager</title>" in answer.text
+
+
+def marked(client, marker) -> list[ui.element]:
+    return [element for element in client.elements.values() if marker in element._markers]
+
+
+@pytest.mark.parametrize(("path", "marker"), [("/no-such-page", "ytdlp-version"), ("/rules/xyz", "new-rule")])
+async def test_a_full_load_of_an_unknown_path_shows_only_the_404_text(
+    nicegui_globals, settings, fake_starter, path, marker
+):
+    async with running_service(settings, fake_starter) as user:
+        # User.open expects HTTP 200, so the test finds the client of the answer by its id.
+        answer = await user.http_client.get(path)
+        assert answer.status_code == 404
+        match = re.search(r"'client_id': '([0-9a-f-]+)'", answer.text)
+        assert match is not None
+        client = Client.instances[match.group(1)]
+        # The builder of the page whose path is a prefix of the address would add its elements within this pause.
+        await asyncio.sleep(0.5)
+        found = marked(client, marker)
+
+    assert found == []
+
+
+@pytest.mark.parametrize(
+    ("start", "path", "marker"), [("/rules", "/no-such-page", "ytdlp-version"), ("/", "/rules/xyz", "new-rule")]
+)
+async def test_a_navigation_to_an_unknown_path_shows_only_the_404_text(
+    nicegui_globals, settings, fake_starter, start, path, marker
+):
+    async with running_service(settings, fake_starter) as user:
+        await user.open(start)
+
+        user.navigate.to(path)
+
+        await user.should_see(f"404: sub page {path} not found")
+        await asyncio.sleep(0.5)
+        found = marked(client_of(user), marker)
+
+    assert found == []
 
 
 async def test_a_navigation_to_an_unknown_path_shows_the_404_text_in_the_shell(user):

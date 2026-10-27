@@ -7,6 +7,8 @@ of the frame.
 """
 
 import asyncio
+import inspect
+import re
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -58,6 +60,17 @@ def _matches(pattern: str, segments: list[str]) -> bool:
     )
 
 
+def _check_path_parameters(pattern: str, build: SubRouteBuilder) -> None:
+    parameters = inspect.signature(build).parameters
+    for name in re.findall(r"\{(\w+)\}", pattern):
+        parameter = parameters.get(name)
+        if parameter is not None and parameter.annotation not in (inspect.Parameter.empty, str):
+            raise ValueError(
+                f"The builder of the route {pattern} annotates its path parameter {name} as {parameter.annotation!r}. "
+                "A path parameter is a str, and the builder converts it itself."
+            )
+
+
 _PAGES: dict[str, Page] = {}
 
 
@@ -69,7 +82,14 @@ def register_page(
     The function gets the services of the running application and fills the content frame of the page. ``routes``
     gives the page more paths, each with its own builder, and the drawer marks the page as the current one on each of
     them. A second page with the same path replaces the first one.
+
+    A builder of ``routes`` gets each path parameter, a part "{name}" of its path, as the text of the address, and
+    converts it itself. So such a parameter has no annotation or the annotation ``str``, and another annotation raises
+    ValueError here. ``ui.sub_pages`` would convert it before the builder starts, and a text such as "abc" for an
+    ``int`` would fail there, and the first answer of the page would wait for the end of a build that never starts.
     """
+    for pattern, route_build in routes:
+        _check_path_parameters(pattern, route_build)
 
     def decorator(build: PageBuilder) -> PageBuilder:
         _PAGES[path] = Page(path=path, label=label, icon=icon, build=build, routes=tuple(routes))
