@@ -60,10 +60,14 @@ def _shell(app: FastAPI) -> Callable[[], Awaitable[None]]:
             for path, build in ((page.path, page.build), *page.routes)
         }
         with frame(services, theme):
-            content = ui.sub_pages(routes, data={"services": services})
+            ui.sub_pages(routes, data={"services": services})
         # ui.sub_pages runs an async builder as a task. The first HTML waits for it, so the browser gets the page with
         # its data, as before the shell. A later change of the address builds the content in the open page.
-        if not content.has_404:
+        # An unknown path matches "/" as a prefix, so ui.sub_pages builds the dashboard once, and NiceGUI replaces it
+        # with the 404 text before the answer. The shell does not wait for that build. The check uses the same pages as
+        # the routes, so a wait always has a builder that ends it.
+        path = ui.context.client.sub_pages_router.current_path
+        if any(page.owns(path) for page in pages_now):
             await built.wait()
 
     return show_shell

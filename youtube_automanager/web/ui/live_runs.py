@@ -64,7 +64,8 @@ class RunFollower(ui.element):
                 return None
             return None if handler is None else handler(*args)
 
-        event.subscribe(call, expect_args=True)
+        # The follower ends the subscription itself, see ``_handle_delete``. See ``Subscriptions.subscribe``.
+        event.subscribe(call, expect_args=True, unsubscribe_on_delete=False)
         self._subscriptions.append((event, call))
 
     def _note_start(self, run_id: int, *_args: Any) -> bool:
@@ -118,7 +119,11 @@ class Subscriptions(ui.element):
         self._subscriptions: list[tuple[Event[...], Handler]] = []
 
     def subscribe(self, event: Event[...], handler: Handler) -> None:
-        event.subscribe(handler)
+        # By default, NiceGUI also adds a delete handler to the client for each subscription, and nothing removes it when
+        # the element goes. Then each click in the drawer adds handlers to the client and keeps the old page in memory.
+        # The element ends the subscription itself: a delete of the client removes each element, and that calls
+        # ``_handle_delete`` of the element.
+        event.subscribe(handler, unsubscribe_on_delete=False)
         self._subscriptions.append((event, handler))
 
     def _handle_delete(self) -> None:

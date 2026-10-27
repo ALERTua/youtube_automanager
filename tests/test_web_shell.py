@@ -180,6 +180,37 @@ async def test_the_rules_page_ends_its_subscriptions_when_the_drawer_leaves_it(n
             assert services.applies.changed.callbacks == []
 
 
+async def test_a_navigation_adds_no_delete_handler_to_the_client(nicegui_globals, settings, fake_starter):
+    async with running_service(settings, fake_starter) as user:
+        client = await user.open("/")
+        await user.should_see(marker="ytdlp-version")
+        first = len(client.delete_handlers)
+
+        for _round in range(3):
+            for path, marker in [("/rules", "new-rule"), ("/history", "refresh"), ("/", "ytdlp-version")]:
+                user.find(marker=f"nav:{path}").click()
+                await user.should_see(marker=marker)
+
+        assert len(client.delete_handlers) == first
+
+
+async def test_the_first_html_holds_the_content_that_an_async_builder_shows_after_an_await(
+    nicegui_globals, settings, fake_starter, monkeypatch
+):
+    monkeypatch.setattr(layout, "_PAGES", dict(layout._PAGES))
+
+    @layout.register_page("/slow", label=N_("Slow"), icon="hourglass_empty")
+    async def slow_page(services):
+        await asyncio.sleep(0.05)
+        ui.label("read after the wait").mark("slow")
+
+    async with running_service(settings, fake_starter) as user:
+        answer = await user.http_client.get("/slow")
+
+    assert answer.status_code == 200
+    assert "read after the wait" in answer.text
+
+
 def elements_of_kind(user, kind) -> list[ui.element]:
     return [element for element in user.client.elements.values() if isinstance(element, kind)]
 
