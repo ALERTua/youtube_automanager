@@ -22,6 +22,7 @@ from youtube_automanager.web.ui.common import (
     RUN_STATUSES,
     RUN_TRIGGERS,
     SESSION_STATES,
+    focus_key,
     format_time,
     run_now_button,
     stored_timezone,
@@ -41,6 +42,11 @@ SCHEDULER_STATES = {
 # The paths that the cards link to. Each is a page of the shell, so a click changes only the content.
 SETTINGS_PATH = "/settings"
 HISTORY_PATH = "/history"
+# The keys that keep the keyboard focus on a control when a refresh of the cards draws it again. See ``focus_key``.
+RUN_NOW_FOCUS_KEY = "dashboard-run-now"
+LAST_RUN_FOCUS_KEY = "dashboard-last-run"
+YTDLP_FOCUS_KEY = "dashboard-ytdlp"
+COOKIES_FOCUS_KEY = "dashboard-cookies"
 # The states in which the cookies need a new upload.
 NEEDS_NEW_COOKIES = frozenset({SessionState.DEAD, SessionState.EXPIRING})
 YTDLP_SOURCES: dict[Source, str] = {
@@ -166,7 +172,7 @@ def _session_card(session: CookieSession | None, zone: ZoneInfo) -> None:
                 expiry = session.earliest_cookie_expiry
                 _value(format_time(expiry, zone) if expiry else _("No expiry date"), "session-expiry")
         if session.state in NEEDS_NEW_COOKIES:
-            ui.link(_("Upload new cookies"), SETTINGS_PATH).mark("cookies-link")
+            focus_key(ui.link(_("Upload new cookies"), SETTINGS_PATH), COOKIES_FOCUS_KEY).mark("cookies-link")
 
 
 def _scheduler_card(services: Services, state: SchedulerState, next_run_at: datetime | None, zone: ZoneInfo) -> None:
@@ -179,7 +185,7 @@ def _scheduler_card(services: Services, state: SchedulerState, next_run_at: date
                 _value(format_time(next_run_at, zone) if next_run_at else _("No run is planned"), "next-run")
             with _field(_("Time zone")):
                 _value(zone.key, "timezone")
-        run_now_button(services, "dashboard-run-now")
+        focus_key(run_now_button(services, "dashboard-run-now"), RUN_NOW_FOCUS_KEY)
 
 
 def _last_run_card(last_run: LastRun | None, zone: ZoneInfo) -> None:
@@ -189,7 +195,8 @@ def _last_run_card(last_run: LastRun | None, zone: ZoneInfo) -> None:
             ui.label(_("No run yet.")).mark("no-run")
             return
         # The title opens the run in History.
-        ui.link(_("Last run"), f"{HISTORY_PATH}?run={last_run.id}").classes("text-h6").mark("last-run-link")
+        link = ui.link(_("Last run"), f"{HISTORY_PATH}?run={last_run.id}").classes("text-h6").mark("last-run-link")
+        focus_key(link, LAST_RUN_FOCUS_KEY)
         with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-center"):
             with _field(_("Started")):
                 _value(format_time(last_run.started_at, zone), "run-started")
@@ -211,7 +218,7 @@ def _last_run_card(last_run: LastRun | None, zone: ZoneInfo) -> None:
 def _ytdlp_card(version: str | None, source: Source) -> None:
     with ui.card().classes("flex-1 min-w-72").mark("ytdlp-card"):
         # The title opens the Settings page, where the block of yt-dlp updates it.
-        ui.link(_("yt-dlp"), SETTINGS_PATH).classes("text-h6").mark("ytdlp-link")
+        focus_key(ui.link(_("yt-dlp"), SETTINGS_PATH).classes("text-h6").mark("ytdlp-link"), YTDLP_FOCUS_KEY)
         with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-center"):
             with _field(_("Version")):
                 _value(version or _("Unknown"), "ytdlp-version")

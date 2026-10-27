@@ -23,6 +23,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.i18n import N_
 from youtube_automanager.web.ui import common, dashboard, layout
+from youtube_automanager.web.ui.common import FOCUS_KEY_ATTRIBUTE
 from youtube_automanager.web.ui.theme import THEME_KEY, Theme, first_paint_style, read_theme
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
@@ -298,6 +299,51 @@ async def test_the_ytdlp_title_links_to_the_settings(user):
 
     link = element_of(user, "ytdlp-link")
     assert (link.text, link.props["href"]) == ("yt-dlp", "/settings")
+
+
+FOCUS_KEYS = {
+    "dashboard-run-now": "dashboard-run-now",
+    "last-run-link": "dashboard-last-run",
+    "ytdlp-link": "dashboard-ytdlp",
+    "cookies-link": "dashboard-cookies",
+}
+
+
+async def test_each_control_of_a_redrawn_card_keeps_its_focus_key(user, sessions, monkeypatch):
+    """The head script gives the focus back to the control with the same key after a redraw. The cards are drawn
+    again at the start and at the end of a run and at each read, so each new control has its key."""
+    monkeypatch.setattr(dashboard, "REFRESH_SECONDS", 0.1)
+    store(
+        sessions,
+        Account(cookies=b"encrypted", session_state=SessionState.EXPIRING),
+        Run(status=RunStatus.SUCCEEDED, trigger=RunTrigger.SCHEDULE, started_at=datetime(2026, 10, 1, tzinfo=UTC)),
+    )
+    await user.open("/")
+    before = {marker: element_of(user, marker) for marker in FOCUS_KEYS}
+    assert {marker: element.props[FOCUS_KEY_ATTRIBUTE] for marker, element in before.items()} == FOCUS_KEYS
+
+    # Each read draws the cards again, so the controls are new elements.
+    await eventually(lambda: all(element.is_deleted for element in before.values()), "The redraw of the cards")
+
+    after = {marker: element_of(user, marker) for marker in FOCUS_KEYS}
+    assert all(after[marker] is not before[marker] for marker in FOCUS_KEYS)
+    assert {marker: element.props[FOCUS_KEY_ATTRIBUTE] for marker, element in after.items()} == FOCUS_KEYS
+    # Each key is unique on the page, so the script finds the one control.
+    assert len(set(FOCUS_KEYS.values())) == len(FOCUS_KEYS)
+
+
+async def test_the_dashboard_button_has_its_focus_key_after_the_start_of_a_run_draws_the_cards_again(
+    user, sessions, fake_starter
+):
+    fake_starter.plan.append({"blocking": True})
+    await user.open("/")
+    button = element_of(user, "dashboard-run-now")
+
+    user.find(marker="dashboard-run-now").click()
+
+    await eventually(lambda: button.is_deleted, "The redraw at the start of the run")
+    assert element_of(user, "dashboard-run-now").props[FOCUS_KEY_ATTRIBUTE] == "dashboard-run-now"
+    fake_starter.children[0].finish(0)
 
 
 async def test_shell_shows_the_service_name_and_each_registered_page(
