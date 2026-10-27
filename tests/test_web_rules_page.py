@@ -40,7 +40,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.engine.rules import MATCH_ALL
 from youtube_automanager.runner import sync_lock_held
-from youtube_automanager.web.ui import rule_editor
+from youtube_automanager.web.ui import layout, rule_editor
 from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.web.ui.rule_form import LIVE_STATUSES
 
@@ -1529,3 +1529,126 @@ async def test_a_refresh_of_the_lists_drops_a_playlist_filter_that_no_rule_targe
     assert "PLhome" not in options(user, "filter-playlist")
     assert address(user) == "/rules"
     assert '"/rules"' in replaces[-1]
+
+
+# The leave of an editor with changes.
+
+
+@pytest.fixture
+def warnings(monkeypatch):
+    """Record each change of the warning of the browser before a reload or a close of the tab."""
+    written: list[str] = []
+    monkeypatch.setattr(
+        Client, "run_javascript", recording_run_javascript(written.append, markers=("__warnBeforeUnload",))
+    )
+    return written
+
+
+def warning_flags(written: list[str]) -> list[bool]:
+    return [code.strip() == "window.__warnBeforeUnload = true;" for code in written]
+
+
+async def test_a_click_in_the_drawer_with_changes_asks_and_keep_editing_stays(user, three_rules):
+    await user.open("/rules/1")
+    set_value(user, "rule-name", "Changed")
+
+    user.find(marker="nav:/history").click()
+
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of the drawer")
+    assert text_of(user, "discard-question") == "Discard the changes?"
+    assert text_of(user, "discard-cancel") == "Keep editing"
+    user.find(marker="discard-cancel").click()
+    await eventually(lambda: not elements_of(user, "discard-dialog"), "The close of the question")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert element_of(user, "rule-name").value == "Changed"
+    assert address(user) == "/rules/1"
+    await user.should_not_see(marker="refresh")
+
+
+async def test_a_click_in_the_drawer_with_changes_and_discard_goes_to_the_clicked_page(user, sessions, three_rules):
+    await user.open("/rules/1")
+    set_value(user, "rule-name", "Changed")
+
+    user.find(marker="nav:/history").click()
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of the drawer")
+    user.find(marker="discard-confirm").click()
+
+    await user.should_see(marker="refresh")
+    assert address(user) == "/history"
+    assert not elements_of(user, "editor")
+    assert stored_rule(sessions, 1).name == "Levels of Epicurious"
+
+
+@pytest.mark.parametrize("path", ["/rules/1", "/rules/new"])
+async def test_a_click_in_the_drawer_without_changes_leaves_at_once(user, three_rules, path):
+    await user.open(path)
+
+    user.find(marker="nav:/history").click()
+
+    await user.should_see(marker="refresh")
+    assert not elements_of(user, "discard-dialog")
+
+
+async def test_the_question_of_cancel_offers_keep_editing_and_a_delete_keeps_its_cancel(user, three_rules):
+    await user.open("/rules/1")
+    set_value(user, "rule-name", "Changed")
+
+    user.find(marker="editor-cancel").click()
+    await eventually(lambda: elements_of(user, "discard-dialog"), "The question of Cancel")
+    assert text_of(user, "discard-cancel") == "Keep editing"
+    user.find(marker="discard-cancel").click()
+    await eventually(lambda: not elements_of(user, "discard-dialog"), "The close of the question")
+
+    user.find(marker="editor-delete").click()
+    await eventually(lambda: elements_of(user, "delete-dialog"), "The question of Delete")
+    assert text_of(user, "delete-cancel") == "Cancel"
+
+
+async def test_the_browser_warns_before_a_reload_only_while_the_editor_has_changes(user, three_rules, warnings):
+    await user.open("/rules/1")
+    assert warnings == []
+
+    set_value(user, "rule-name", "Changed")
+    assert warning_flags(warnings) == [True]
+    set_value(user, "rule-name", "Levels of Epicurious")
+    assert warning_flags(warnings) == [True, False]
+    set_value(user, "rule-name", "Changed again")
+    assert warning_flags(warnings) == [True, False, True]
+
+
+@pytest.mark.parametrize("leave", ["save", "cancel", "drawer", "delete", "back"])
+async def test_the_warning_before_a_reload_ends_with_the_editor(user, three_rules, warnings, leave):
+    await user.open("/rules")
+    await open_editor(user, 3)
+    set_value(user, "rule-name", "Changed")
+    assert warning_flags(warnings) == [True]
+
+    match leave:
+        case "save":
+            await save(user)
+        case "cancel":
+            user.find(marker="editor-cancel").click()
+            await discard(user)
+        case "drawer":
+            user.find(marker="nav:/history").click()
+            await eventually(lambda: elements_of(user, "discard-dialog"), "The question of the drawer")
+            user.find(marker="discard-confirm").click()
+            await user.should_see(marker="refresh")
+        case "delete":
+            user.find(marker="editor-delete").click()
+            await eventually(lambda: elements_of(user, "delete-confirm"), "The question")
+            user.find(marker="delete-confirm").click()
+            await user.should_see(marker="new-rule")
+        case "back":
+            user.navigate.back()
+            await user.should_see(marker="new-rule")
+
+    await eventually(lambda: warning_flags(warnings) == [True, False], "The end of the warning")
+    assert not elements_of(user, "editor")
+
+
+async def test_the_head_holds_the_warning_script_once(user):
+    client = await user.open("/rules/new")
+
+    assert client.head_html.count(layout.unload_warning_script()) == 1
+    assert "addEventListener('beforeunload'" in layout.unload_warning_script()

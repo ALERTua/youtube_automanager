@@ -126,18 +126,27 @@ def with_query(path: str, query: Mapping[str, str | None]) -> str:
     return f"{path}?{urlencode(items)}" if items else path
 
 
-def replace_address(client: Client, address: str) -> None:
+def replace_address(client: Client, address: str, *, only_from: str | None = None) -> None:
     """Show ``address`` in the address bar of the tab of ``client``, in place of the current entry of the history of
     the browser. The content of the page stays as it is.
 
     A page calls this when the user changes its view, for example a filter, so a reload and a shared link show the same
     view. The entry is replaced, so the Back button does not go through each typed letter of a filter. The router of
     the tab takes the address too, and a later navigation compares with it.
+
+    With ``only_from``, the browser replaces the entry only while it still shows that address, without its fragment. A
+    page that corrects its address when it builds gives it: the script runs after the connection of the tab, and a quick
+    Back can come first. A replace after it would give the old entry the address of this page.
     """
     client.sub_pages_router.current_path = address
     text = json.dumps(address)
     # NiceGUI keeps the address of an entry in its state as "page", and Back opens the address of that state.
-    client.run_javascript(f"history.replaceState({{page: {text}}}, '', (window.path_prefix || '') + {text});")
+    replace = f"history.replaceState({{page: {text}}}, '', (window.path_prefix || '') + {text});"
+    if only_from is not None:
+        parts = urlsplit(only_from)
+        old = json.dumps(parts.path + (f"?{parts.query}" if parts.query else ""))
+        replace = f"if (location.pathname + location.search === (window.path_prefix || '') + {old}) {replace}"
+    client.run_javascript(replace)
 
 
 def _tell_followers(followers: list[AddressFollower], address: str) -> None:
@@ -189,6 +198,74 @@ class AddressFollower(ui.element):
 # router of a client gets one handler, which gives each new address to the followers that exist at that moment.
 _FOLLOWERS: WeakKeyDictionary[Client, list[AddressFollower]] = WeakKeyDictionary()
 
+# The name of the flag in the browser that makes the browser warn before a reload or a close of the tab.
+UNLOAD_WARNING_FLAG = "__warnBeforeUnload"
+
+
+def unload_warning_script() -> str:
+    """Return the ``<script>`` that makes the browser ask before a reload or a close of the tab, while the flag
+    ``UNLOAD_WARNING_FLAG`` is true. The browser shows its own text."""
+    return f"""<script>
+addEventListener('beforeunload', (event) => {{
+  if (!window.{UNLOAD_WARNING_FLAG}) return;
+  event.preventDefault();
+  event.returnValue = '';
+}});
+</script>"""
+
+
+class LeaveCheck(ui.element):
+    """An invisible element that decides, while it exists, whether a click in the drawer may leave the content.
+
+    ``may_leave`` runs at each click in the drawer, and the drawer goes to the clicked page only when it returns True,
+    for example after a question. ``warn_on_unload`` makes the browser warn before a reload or a close of the tab, for
+    example while a form has changes that are not saved. The element ends the warning when it is deleted with the
+    content, so the next page never warns.
+
+    The Back and the Forward button of the browser leave without a check: ``ui.sub_pages`` gets the new address after
+    the browser changed it (a ``popstate``), and NiceGUI cannot cancel that.
+    """
+
+    def __init__(self, may_leave: Callable[[], Awaitable[bool]]) -> None:
+        super().__init__()
+        self.set_visibility(False)
+        self.may_leave = may_leave
+        self.warning = False
+        client = self.client
+        checks = _LEAVE_CHECKS.get(client)
+        if checks is None:
+            checks = _LEAVE_CHECKS[client] = []
+        checks.append(self)
+        self._checks = checks
+
+    def warn_on_unload(self, warning: bool) -> None:
+        """Turn the warning of the browser before a reload or a close of the tab on or off."""
+        if warning != self.warning:
+            self.warning = warning
+            self.client.run_javascript(f"window.{UNLOAD_WARNING_FLAG} = {json.dumps(warning)};")
+
+    def _handle_delete(self) -> None:
+        if self in self._checks:
+            self._checks.remove(self)
+        self.warn_on_unload(False)
+        super()._handle_delete()
+
+
+# The leave checks of the content of each client.
+_LEAVE_CHECKS: WeakKeyDictionary[Client, list[LeaveCheck]] = WeakKeyDictionary()
+
+
+async def may_leave(client: Client) -> bool:
+    """Ask each leave check of the content of ``client``, and return True when each of them lets the user leave."""
+    for check in list(_LEAVE_CHECKS.get(client, ())):
+        if check.is_deleted or check.parent_slot is None:
+            continue
+        # A question of the check, for example a dialog, belongs to the content and not to the drawer.
+        with check.parent_slot:
+            if not await check.may_leave():
+                return False
+    return True
+
 
 def pages() -> list[Page]:
     """Return the registered pages in the order of the navigation drawer."""
@@ -221,6 +298,7 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
     if style := first_paint_style(theme):
         ui.add_head_html(style)
     ui.add_head_html(accessibility_script())
+    ui.add_head_html(unload_warning_script())
     dark = ui.dark_mode(DARK_MODE[theme]).mark("dark-mode")
     chosen = [theme]
 
@@ -234,10 +312,17 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
         await asyncio.to_thread(save_theme, services.sessions, theme)
 
     items: dict[str, ui.item] = {}
+
+    async def leave_to(path: str) -> None:
+        # The content can ask first, for example a form with changes that are not saved.
+        if await may_leave(client):
+            with client:
+                ui.navigate.to(path)
+
     with ui.left_drawer(bordered=True).mark("navigation") as drawer, ui.list().classes("w-full"):
         for page in pages():
             # The layout holds a ui.sub_pages, so ui.navigate.to changes only the content and loads no new page.
-            with ui.item(on_click=lambda path=page.path: ui.navigate.to(path)).mark(f"nav:{page.path}") as item:
+            with ui.item(on_click=lambda path=page.path: leave_to(path)).mark(f"nav:{page.path}") as item:
                 with ui.item_section().props("avatar"):
                     ui.icon(page.icon)
                 with ui.item_section():

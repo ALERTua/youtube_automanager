@@ -65,6 +65,11 @@ from youtube_automanager.web.ui.layout import (
 from youtube_automanager.web.ui.live_runs import RunFollower
 
 HISTORY_PATH = "/history"
+# The fragment of the address of an open run. ui.sub_pages scrolls the window to the top at each new address with the
+# same path and no fragment (``_handle_scrolling`` of nicegui/elements/sub_pages.py), and the card of the run is under the
+# table. With a fragment, it scrolls to the element with that id instead. No element has this id, so the window stays,
+# and the focus of the card brings it into view.
+RUN_FRAGMENT = "run-actions"
 PAGE_SIZE = 50
 # The scope of the row buttons of the runs, so a focus move that ends after a navigation finds no button of another page.
 RUNS_SCOPE = "runs"
@@ -168,7 +173,7 @@ class View:
 
     def address(self) -> str:
         filters = self.filters
-        return with_query(
+        address = with_query(
             HISTORY_PATH,
             {
                 "status": None if filters.status == ANY else filters.status,
@@ -179,6 +184,7 @@ class View:
                 "run": None if self.run_id is None else str(self.run_id),
             },
         )
+        return address if self.run_id is None else f"{address}#{RUN_FRAGMENT}"
 
 
 def view_of(query: dict[str, str]) -> View:
@@ -410,6 +416,8 @@ async def history_page(services: Services) -> None:
     state = PageState()
     # The client of the page. A handler can run after the element that started it is gone, so it needs the client itself.
     client = context.client
+    # The address that the page builds for. A correction of the address replaces only this entry.
+    built_from = client.sub_pages_router.current_path
     shown = view_of(address_query(client))
     state.filters, state.page = shown.filters, shown.page
 
@@ -770,5 +778,12 @@ async def history_page(services: Services) -> None:
                 time=f"{CLEANUP_HOUR:02d}:{CLEANUP_MINUTE:02d}", zone=first_page.timezone
             )
         ).classes("text-grey-7").mark("retention-hint")
+    if shown.run_id is not None:
+        # The address of the run gets the fragment, so Back to it later keeps the window in place. A link opens the
+        # run with no click on the page, and its card is under the table, so the card takes the focus and comes into
+        # view. The wait lets the scroll of ui.sub_pages to the top of a new page come first.
+        replace_address(client, View(state.filters, state.page, state.run_id).address(), only_from=built_from)
+        if state.detail is not None:
+            focus_when_drawn(client, DETAILS_SELECTOR, delay_ms=FOCUS_DELAY_MS)
     if follower.start():
         await refresh()

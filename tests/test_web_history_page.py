@@ -955,8 +955,8 @@ async def test_an_open_run_is_a_new_entry_and_back_closes_it(user, sessions):
 
     await open_run(user, 2)
 
-    assert address(user) == "/history?status=failed&run=2"
-    assert user.back_history[-1] == "/history?status=failed&run=2"
+    assert address(user) == "/history?status=failed&run=2#run-actions"
+    assert user.back_history[-1] == "/history?status=failed&run=2#run-actions"
     user.navigate.back()
     await eventually(lambda: not elements_of(user, "details"), "The close of the run")
     assert address(user) == "/history?status=failed"
@@ -983,7 +983,7 @@ async def test_a_change_of_the_page_writes_the_address_and_keeps_the_open_run(us
     set_value(user, "runs-pagination", 2)
 
     await runs_are(user, list(range(5, 0, -1)))
-    assert address(user) == "/history?page=2&run=55"
+    assert address(user) == "/history?page=2&run=55#run-actions"
     assert text_of(user, "details-title") == "Actions of run 55"
 
 
@@ -1011,4 +1011,42 @@ async def test_a_click_on_the_open_run_moves_the_focus_to_its_card_and_adds_no_e
     await eventually(lambda: scripts, "The move of the focus")
     assert 'document.querySelector("[data-run-details]")' in scripts[-1]
     assert user.back_history == history
-    assert address(user) == "/history?run=1"
+    assert address(user) == "/history?run=1#run-actions"
+
+
+async def test_a_link_to_a_run_gives_the_focus_to_its_card_and_the_fragment_to_the_address(
+    user, sessions, scripts, replaces
+):
+    store(sessions, run(1), run(2))
+
+    await user.open("/history?run=1")
+
+    await eventually(lambda: scripts, "The move of the focus")
+    # The card is under the table, so the focus brings it into view, after the scroll of a new page to the top.
+    assert 'document.querySelector("[data-run-details]")' in scripts[-1]
+    assert "}, 200);" in scripts[-1]
+    # A later Back to this entry must not scroll the window to the top, so the address gets the fragment.
+    assert address(user) == "/history?run=1#run-actions"
+    assert '"/history?run=1#run-actions"' in replaces[-1]
+    # A Back that comes before the script keeps its entry: the browser replaces only the entry of the link.
+    assert replaces[-1].startswith(
+        """if (location.pathname + location.search === (window.path_prefix || '') + "/history?run=1") """
+    )
+
+
+async def test_an_open_of_a_run_and_back_to_it_do_not_scroll_the_window_to_the_top(user, sessions, monkeypatch):
+    tops: list[str] = []
+    monkeypatch.setattr(Client, "run_javascript", recording_run_javascript(tops.append, markers=("window.scrollTo",)))
+    store(sessions, run(1), run(2))
+    await user.open("/history")
+
+    await open_run(user, 2)
+    assert tops == []
+    user.find(marker="details-close").click()
+    await eventually(lambda: not elements_of(user, "details"), "The close of the run")
+    # The close goes to an address without a run, and ui.sub_pages scrolls to the top as before.
+    assert len(tops) == 1
+    user.navigate.back()
+
+    await eventually(lambda: elements_of(user, "details"), "The run again")
+    assert len(tops) == 1

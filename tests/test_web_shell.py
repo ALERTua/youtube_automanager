@@ -1,7 +1,9 @@
 """The shell of the pages: one route answers each page, and a click in the drawer changes only the content."""
 
 import asyncio
+import json
 import re
+from unittest.mock import Mock
 
 import pytest
 from nicegui import Client, ui
@@ -364,3 +366,31 @@ async def test_the_shell_route_answers_no_path_of_another_route(user, path, kind
 
     assert answer.headers["content-type"].startswith(kind)
     assert "X-Nicegui-Content" not in answer.headers
+
+
+def test_a_write_of_the_address_in_place_gives_the_entry_the_new_address_as_its_state():
+    sent: list[str] = []
+    client = Mock(run_javascript=sent.append)
+    address = '/rules?q="x"&state=disabled'
+
+    layout.replace_address(client, address)
+
+    assert client.sub_pages_router.current_path == address
+    # Back opens the address of the state of the entry, so a state of the old address would open the old rules.
+    text = json.dumps(address)
+    assert sent == [f"history.replaceState({{page: {text}}}, '', (window.path_prefix || '') + {text});"]
+
+
+def test_a_write_of_the_address_from_an_old_address_replaces_only_while_the_browser_shows_it():
+    sent: list[str] = []
+    client = Mock(run_javascript=sent.append)
+
+    layout.replace_address(client, "/history?run=3#run-actions", only_from="/history?run=3#old")
+
+    (code,) = sent
+    assert code.startswith(
+        """if (location.pathname + location.search === (window.path_prefix || '') + "/history?run=3") """
+    )
+    assert code.endswith(
+        """history.replaceState({page: "/history?run=3#run-actions"}, '', (window.path_prefix || '') + "/history?run=3#run-actions");"""
+    )

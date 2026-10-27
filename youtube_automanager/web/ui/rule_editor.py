@@ -52,6 +52,7 @@ from youtube_automanager.web.ui.common import (
     whole_number,
 )
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day, today_button, today_in
+from youtube_automanager.web.ui.layout import LeaveCheck
 from youtube_automanager.web.ui.live_runs import Subscriptions
 from youtube_automanager.web.ui.rule_form import (
     FIELDS,
@@ -369,7 +370,8 @@ class RuleEditor:
     """The form that creates or changes one rule.
 
     ``leave`` goes back to the rules after a save, a delete or a cancel. ``open_apply`` opens the apply dialog of a
-    saved rule, and it gets whether the form has changes that are not saved.
+    saved rule, and it gets whether the form has changes that are not saved. ``changed`` gets the same after each change
+    of a field.
     """
 
     def __init__(
@@ -379,12 +381,16 @@ class RuleEditor:
         rule: RuleRecord | None,
         leave: Callable[[], None],
         open_apply: Callable[[RuleRecord, bool], None] | None = None,
+        changed: Callable[[bool], None] | None = None,
     ) -> None:
         self.services = services
         self.stored = stored
         self.rule = rule
         self.leave = leave
         self.open_apply = open_apply
+        self.changed = changed
+        # The values of the fields when the form opened. A new rule has changes when its fields differ from them.
+        self.initial: tuple | None = None
         # None when the visual editor cannot show the condition. The form then shows the condition as JSON text.
         self.root: Group | None = from_tree(rule.condition) if rule else Group()
         self.saving = False
@@ -398,7 +404,9 @@ class RuleEditor:
         rule = self.rule
         ui.label(_("Change the rule") if rule else _("New rule")).classes("text-h6").mark("editor-title")
         self.name_input = (
-            ui.input(_("Name"), value=rule.name if rule else "").props("outlined dense").classes("w-full")
+            ui.input(_("Name"), value=rule.name if rule else "", on_change=self._form_changed)
+            .props("outlined dense")
+            .classes("w-full")
         ).mark("rule-name")
         self._sources()
         ui.label(_("Condition")).classes("text-subtitle1")
@@ -496,6 +504,12 @@ class RuleEditor:
         self.changes += 1
         if not self.previewing:
             self.preview_view.clear()
+        self._form_changed()
+
+    def _form_changed(self) -> None:
+        """Tell ``changed`` whether the form has changes that are not saved, after a change of a field."""
+        if self.changed is not None and self.initial is not None:
+            self.changed(self.has_changes())
 
     def _sources(self) -> None:
         """Add the channels that the rule reads and its target playlist."""
@@ -817,7 +831,7 @@ class RuleEditor:
         """
         rule = self.rule
         if rule is None:
-            return self._form() != self.initial
+            return self.initial is not None and self._form() != self.initial
         try:
             draft = self.read_draft()
         except ValueError:
@@ -911,13 +925,22 @@ class RuleEditor:
         if not self.save_button.is_deleted:
             self.leave()
 
+    async def may_leave(self) -> bool:
+        """Return True when the user may leave the editor: the form has no changes, or the user discards them."""
+        if not self.has_changes():
+            return True
+        return await confirm(
+            _("Discard the changes?"),
+            _("Discard"),
+            marker="discard",
+            color="negative",
+            cancel_label=_("Keep editing"),
+        )
+
     async def cancel(self) -> None:
         """Go back to the rules without a save. A form with changes asks first."""
-        if self.has_changes() and not await confirm(
-            _("Discard the changes?"), _("Discard"), marker="discard", color="negative"
-        ):
-            return
-        self._leave_once()
+        if await self.may_leave():
+            self._leave_once()
 
     async def ask_delete(self) -> None:
         rule = self.rule
@@ -1256,7 +1279,10 @@ async def editor_page(services: Services, rule_id: str | None) -> None:
         apply_dialog.open(stored, saved, unsaved=unsaved)
 
     await ApplyBanner(services, rule_name).load()
-    editor = RuleEditor(services, stored, rule, leave, open_apply)
+    # A click in the drawer asks before it leaves a form with changes, and the browser warns before a reload or a close of
+    # the tab. The Back button of the browser leaves without a question, see LeaveCheck.
+    leave_check = LeaveCheck(lambda: editor.may_leave())
+    editor = RuleEditor(services, stored, rule, leave, open_apply, leave_check.warn_on_unload)
     with ui.card().classes("w-full gap-2").mark("editor"):
         editor.build()
     apply_dialog = ApplyDialog(services)

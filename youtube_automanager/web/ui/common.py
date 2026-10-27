@@ -263,12 +263,14 @@ async def confirm(
     detail: str | None = None,
     color: str = "primary",
     classes: str = "",
+    cancel_label: str | None = None,
 ) -> bool:
     """Ask ``question`` in a dialog and return True only when the user presses the ``action`` button.
 
     The dialog, the question and the two buttons get the markers ``{marker}-dialog``, ``{marker}-question``,
     ``{marker}-confirm`` and ``{marker}-cancel``. ``detail`` is a second line under the question, ``color`` is the color
-    of the ``action`` button, and ``classes`` go to the card. A close of the dialog without a button returns False.
+    of the ``action`` button, and ``classes`` go to the card. ``cancel_label`` is the text of the second button, "Cancel"
+    when it is not given. A close of the dialog without a button returns False.
     """
     with ui.dialog() as dialog, ui.card().classes(classes).mark(f"{marker}-dialog"):
         ui.label(question).mark(f"{marker}-question")
@@ -276,7 +278,9 @@ async def confirm(
             ui.label(detail).classes("text-grey-7")
         with ui.row().classes("gap-2"):
             ui.button(action, color=color, on_click=lambda: dialog.submit(True)).mark(f"{marker}-confirm")
-            ui.button(_("Cancel"), on_click=lambda: dialog.submit(False)).props("flat").mark(f"{marker}-cancel")
+            ui.button(cancel_label or _("Cancel"), on_click=lambda: dialog.submit(False)).props("flat").mark(
+                f"{marker}-cancel"
+            )
     confirmed = await dialog
     if not dialog.is_deleted:
         dialog.delete()
