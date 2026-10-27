@@ -5,7 +5,9 @@ in the order of the navigation drawer.
 """
 
 import asyncio
+import functools
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import FastAPI
 from nicegui import app as nicegui_app
@@ -25,19 +27,46 @@ from youtube_automanager.web.ui import settings_page  # noqa: F401
 
 # isort: on
 from youtube_automanager.web.ui.errors import notify_failure
-from youtube_automanager.web.ui.layout import Page, frame, pages
+from youtube_automanager.web.ui.layout import SubRouteBuilder, frame, pages
 from youtube_automanager.web.ui.theme import read_theme
 
+# The path of the shell route that answers each path that no other route answers.
+SHELL_ROUTE = "/{path:path}"
 
-def _page_function(page: Page, app: FastAPI) -> Callable[[], Awaitable[None]]:
-    async def show_page() -> None:
+
+def _with_end_signal(build: SubRouteBuilder, built: asyncio.Event) -> SubRouteBuilder:
+    # ui.sub_pages gives a builder its arguments by the names of its parameters, and wraps keeps them visible.
+    @functools.wraps(build)
+    async def run(*args: Any, **kwargs: Any) -> None:
+        try:
+            await build(*args, **kwargs)
+        finally:
+            built.set()
+
+    return run
+
+
+def _shell(app: FastAPI) -> Callable[[], Awaitable[None]]:
+    pages_now = pages()
+
+    async def show_shell() -> None:
         # A page request reaches the NiceGUI application, not ``app``, so the services come from ``app`` itself.
         services: Services = app.state.services
         theme = await asyncio.to_thread(read_theme, services.sessions)
-        with frame(page, services, theme):
-            await page.build(services)
+        built = asyncio.Event()
+        routes = {
+            path: _with_end_signal(build, built)
+            for page in pages_now
+            for path, build in ((page.path, page.build), *page.routes)
+        }
+        with frame(services, theme):
+            content = ui.sub_pages(routes, data={"services": services})
+        # ui.sub_pages runs an async builder as a task. The first HTML waits for it, so the browser gets the page with
+        # its data, as before the shell. A later change of the address builds the content in the open page.
+        if not content.has_404:
+            await built.wait()
 
-    return show_page
+    return show_shell
 
 
 def mount_ui(app: FastAPI) -> None:
@@ -46,9 +75,15 @@ def mount_ui(app: FastAPI) -> None:
     NiceGUI keeps one global application, which this function mounts at the root of ``app``. The routes of ``app``
     stay first, and NiceGUI answers each other path. NiceGUI starts before the lifespan of ``app`` and stops after
     it. A second call in the same process needs a reset of NiceGUI first, which only tests do.
+
+    One shell route answers each page: the browser loads the frame once, and ``ui.sub_pages`` in the frame changes the
+    content when the address changes. An unknown path gets the frame with the 404 text of ``ui.sub_pages``.
     """
-    for page in pages():
-        ui.page(page.path)(_page_function(page, app))
+    shell = _shell(app)
+    ui.page("/")(shell)
+    # NiceGUI adds the route /favicon.ico when it starts, and a route that comes after the shell route never answers.
+    # The handlers of the start run after that, so the shell route comes last.
+    nicegui_app.on_startup(lambda: ui.page(SHELL_ROUTE)(shell))
     # NiceGUI logs the exception of a page handler with its trace, and this handler tells the user of the page. The reset
     # of NiceGUI between two tests removes each added handler, so the handlers do not pile up.
     nicegui_app.on_exception(notify_failure)

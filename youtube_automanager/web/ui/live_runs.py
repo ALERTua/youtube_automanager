@@ -101,3 +101,28 @@ class RunFollower(ui.element):
             event.unsubscribe(call)
         self._subscriptions.clear()
         super()._handle_delete()
+
+
+class Subscriptions(ui.element):
+    """An invisible element that keeps the subscriptions of a part of a page to events, while the element exists.
+
+    NiceGUI ends a subscription when the client of the page is deleted. A click in the drawer deletes only the content
+    of the old page and keeps the client, so a part of a page subscribes through this element, which ends each
+    subscription with the content. A handler must not be subscribed to the same event by another part of the page,
+    because NiceGUI matches an unsubscribe by the function.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_visibility(False)
+        self._subscriptions: list[tuple[Event[...], Handler]] = []
+
+    def subscribe(self, event: Event[...], handler: Handler) -> None:
+        event.subscribe(handler)
+        self._subscriptions.append((event, handler))
+
+    def _handle_delete(self) -> None:
+        for event, handler in self._subscriptions:
+            event.unsubscribe(handler)
+        self._subscriptions.clear()
+        super()._handle_delete()

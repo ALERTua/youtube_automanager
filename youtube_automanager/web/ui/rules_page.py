@@ -60,6 +60,7 @@ from youtube_automanager.web.ui.common import (
 )
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day, today_button, today_in
 from youtube_automanager.web.ui.layout import register_page
+from youtube_automanager.web.ui.live_runs import Subscriptions
 from youtube_automanager.web.ui.rule_form import (
     FIELDS,
     GROUP_KINDS,
@@ -1014,11 +1015,11 @@ class ApplyDialog:
         self.ended = False
         with ui.dialog().mark("apply-dialog") as self.dialog:
             self.card = ui.card().classes("gap-2").style("width: min(56rem, 95vw); max-width: 95vw")
-        # The page subscribes here, so NiceGUI ends each subscription when the client of the page is deleted. The type
-        # checker ty reads the callback of `Event.subscribe` as `() -> Any` only, and refuses a handler with arguments.
-        services.run_events.progress.subscribe(self._on_progress)  # ty: ignore[invalid-argument-type]
-        services.run_events.finished.subscribe(self._on_finished)  # ty: ignore[invalid-argument-type]
-        services.applies.changed.subscribe(self._on_changed)
+        # The subscriptions end with the content of the page: at a click in the drawer, and when the tab closes.
+        subscriptions = Subscriptions()
+        subscriptions.subscribe(services.run_events.progress, self._on_progress)
+        subscriptions.subscribe(services.run_events.finished, self._on_finished)
+        subscriptions.subscribe(services.applies.changed, self._on_changed)
 
     def open(self, stored: Stored, rule: RuleRecord, *, unsaved: bool) -> None:
         """Show the dialog for ``rule``. While an apply runs, the dialog shows that apply."""
@@ -1212,9 +1213,10 @@ class ApplyBanner:
             ui.spinner(size="sm")
             self.label = ui.label().mark("apply-banner-text")
         self.row.set_visibility(False)
-        services.run_events.progress.subscribe(self._on_progress)  # ty: ignore[invalid-argument-type]
-        services.run_events.finished.subscribe(self._on_finished)  # ty: ignore[invalid-argument-type]
-        services.applies.changed.subscribe(self.show)
+        subscriptions = Subscriptions()
+        subscriptions.subscribe(services.run_events.progress, self._on_progress)
+        subscriptions.subscribe(services.run_events.finished, self._on_finished)
+        subscriptions.subscribe(services.applies.changed, self.show)
 
     async def load(self) -> None:
         """Read the added count of the active apply, so a new load of the page shows it before the next progress."""
