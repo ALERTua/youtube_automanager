@@ -3,11 +3,16 @@
 The table of the runs reads one page of ``PAGE_SIZE`` runs from the database at a time, newest first. A click on a
 run opens its actions below the table. The page reads and writes the database in a thread, never on the event loop.
 Each date shows in the time zone of the schedule, and a date filter counts whole days of that time zone.
+
+The page follows each run with no click. At the start and at the end of a run, it reads its page of runs again with its
+filters, so a new run shows at the top only when the filters and the page let it through. While a run runs, its row
+shows the new counts, and its open actions get the new actions.
 """
 
 import asyncio
 import math
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -24,6 +29,7 @@ from youtube_automanager.retention import (
     runs_lost_by_retention,
     set_retention_days,
 )
+from youtube_automanager.run_events import ActionItem, action_item
 from youtube_automanager.scheduler import CLEANUP_HOUR, CLEANUP_MINUTE
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.common import (
@@ -35,6 +41,7 @@ from youtube_automanager.web.ui.common import (
     busy,
     column,
     confirm,
+    focus_key,
     focus_when_drawn,
     format_time,
     icon_button,
@@ -43,6 +50,7 @@ from youtube_automanager.web.ui.common import (
 )
 from youtube_automanager.web.ui.dates import today_button
 from youtube_automanager.web.ui.layout import register_page
+from youtube_automanager.web.ui.live_runs import RunFollower
 
 PAGE_SIZE = 50
 # The card of the actions of a run takes the focus when a run opens. This attribute marks it for the browser.
@@ -51,6 +59,10 @@ DETAILS_SELECTOR = f"[{DETAILS_ATTRIBUTE}]"
 # The select of the kind of action in that card. Quasar puts the attribute on the field, and the focus goes to its input.
 ACTION_FILTER_ATTRIBUTE = "data-action-filter"
 ACTION_FILTER_SELECTOR = f"[{ACTION_FILTER_ATTRIBUTE}] input"
+# The keys of the controls of that card that keep the focus when a progress or the end of the run draws the card again.
+DETAILS_FOCUS_KEY = "run-details"
+CLOSE_FOCUS_KEY = "run-details-close"
+ACTION_FILTER_FOCUS_KEY = "run-action-filter"
 # The value of a filter that lets each run through.
 ANY = "any"
 WATCH_URL = "https://www.youtube.com/watch?v="
@@ -124,18 +136,6 @@ class RunRecord:
 
 
 @dataclass(frozen=True)
-class ActionRecord:
-    id: int
-    at: datetime
-    action: RunActionKind
-    video_id: str | None
-    channel_id: str | None
-    rule_id: int | None
-    playlist_id: str | None
-    detail: str | None
-
-
-@dataclass(frozen=True)
 class RunList:
     """One page of the runs that match a filter."""
 
@@ -153,7 +153,7 @@ class RunList:
 @dataclass(frozen=True)
 class RunDetail:
     run: RunRecord
-    actions: list[ActionRecord]
+    actions: list[ActionItem]
     kind: RunActionKind | None
     timezone: str
 
@@ -166,6 +166,26 @@ class PageState:
     # The number of the newest read. A read that finishes after a newer one started drops its result.
     runs_read: int = 0
     detail_read: int = 0
+    # What the page shows: the open run, the table of the runs and the table of the open actions. A progress of a run
+    # changes them in place.
+    detail: RunDetail | None = None
+    runs_table: ui.table | None = None
+    actions_table: ui.table | None = None
+    # The actions that the progress events of the open run bring while a read of its actions runs, or None when no such
+    # read runs. The read can end before their commit, and the poll gives each action only once.
+    arrived: list[ActionItem] | None = None
+
+
+def add_actions(detail: RunDetail, actions: Iterable[ActionItem]) -> tuple[RunDetail, list[ActionItem]]:
+    """Return ``detail`` with the ``actions`` that it does not hold yet and that its action kind lets through, and these
+    new actions."""
+    known = {action.id for action in detail.actions}
+    new = []
+    for action in actions:
+        if action.id not in known and (detail.kind is None or action.action is detail.kind):
+            known.add(action.id)
+            new.append(action)
+    return replace(detail, actions=[*detail.actions, *new]), new
 
 
 def parse_day(text: str | None) -> date | None:
@@ -235,19 +255,7 @@ def read_run_detail(
         query = select(RunAction).where(RunAction.run_id == run_id).order_by(RunAction.at, RunAction.id)
         if kind is not None:
             query = query.where(RunAction.action == kind)
-        actions = [
-            ActionRecord(
-                action.id,
-                action.at,
-                action.action,
-                action.video_id,
-                action.channel_id,
-                action.rule_id,
-                action.playlist_id,
-                action.detail,
-            )
-            for action in session.scalars(query)
-        ]
+        actions = [action_item(action) for action in session.scalars(query)]
         return RunDetail(_run_record(run), actions, kind, stored_timezone(session, default_timezone))
 
 
@@ -266,7 +274,7 @@ def run_row(run: RunRecord, zone: ZoneInfo) -> dict:
     }
 
 
-def action_row(action: ActionRecord, zone: ZoneInfo) -> dict:
+def action_row(action: ActionItem, zone: ZoneInfo) -> dict:
     return {
         "id": action.id,
         "at": format_time(action.at, zone),
@@ -340,7 +348,7 @@ async def history_page(services: Services) -> None:
         if read != state.runs_read:
             return
         state.page = result.page
-        runs_view.refresh(result)
+        await runs_view.refresh(result)
 
     async def show_run(run_id: int | None, kind: RunActionKind | None = None) -> None:
         state.run_id = run_id
@@ -348,19 +356,68 @@ async def history_page(services: Services) -> None:
         state.detail_read += 1
         read = state.detail_read
         detail = None
+        state.arrived = None if run_id is None else []
         if run_id is not None:
             detail = await asyncio.to_thread(read_run_detail, services.sessions, run_id, kind, services.settings.tz)
         if read != state.detail_read:
             return
+        arrived, state.arrived = state.arrived or [], None
         if detail is None:
             # The run is gone, for example after a cleanup of the history.
             state.run_id = None
-        details.refresh(detail)
+        else:
+            detail, _new = add_actions(detail, arrived)
+        state.detail = detail
+        # Awaited, so the panel shows this read before the handler of the next progress runs.
+        await details.refresh()
 
     async def refresh() -> None:
         await load_runs()
         if state.run_id is not None:
             await show_run(state.run_id, state.action_kind)
+
+    async def reload_for_run(run_id: int, *_trigger_or_status: object) -> None:
+        # The read again with the filters and the page decides whether the run shows, and the row of the database holds
+        # the status that the run really has.
+        await load_runs()
+        if state.run_id == run_id:
+            await show_run(run_id, state.action_kind)
+
+    async def show_progress(run_id: int, added: int, seen: int, actions: tuple[ActionItem, ...]) -> None:
+        # Each change comes before the first await, so no read of the end of the run can come between. See RunFollower.
+        table = state.runs_table
+        if table is not None and not table.is_deleted:
+            for index, row in enumerate(table.rows):
+                if row["id"] == run_id:
+                    # The rows are observed props of NiceGUI, so the new row goes to the browser. An event that is older
+                    # than the read of the row does not lower its counts. NiceGUI draws each cell of a slot again at an
+                    # update of the table, also the button of each row, so a row whose counts stay sends nothing.
+                    counts = {"added": max(row["added"], added), "seen": max(row["seen"], seen)}
+                    if counts != {"added": row["added"], "seen": row["seen"]}:
+                        table.rows[index] = {**row, **counts}
+                    break
+        if state.arrived is not None and state.run_id == run_id:
+            state.arrived.extend(actions)
+        detail = state.detail
+        if detail is None or detail.run.id != run_id:
+            return
+        # A read of the actions that ended after the poll can hold some of these actions already.
+        state.detail, new = add_actions(detail, actions)
+        if not new:
+            return
+        actions_table = state.actions_table
+        if actions_table is not None and not actions_table.is_deleted:
+            actions_table.add_rows([action_row(action, ZoneInfo(detail.timezone)) for action in new])
+        else:
+            # The panel said that the run has no actions, so it needs its table now.
+            await details.refresh()
+
+    def live(run: RunRecord) -> RunRecord:
+        """Return ``run`` with the counts of its last progress, when it runs and its read is older."""
+        if run.status is not RunStatus.RUNNING:
+            return run
+        added, seen = follower.counts(run.id, run.added_count, run.seen_count)
+        return replace(run, added_count=added, seen_count=seen)
 
     async def filters_changed() -> None:
         await load_runs(page=1)
@@ -422,6 +479,7 @@ async def history_page(services: Services) -> None:
     @ui.refreshable
     def runs_view(result: RunList) -> None:
         zone = ZoneInfo(result.timezone)
+        state.runs_table = None
         if not result.runs:
             ui.label(_("No run matches the filters.") if result.filtered else _("No run yet.")).mark("no-runs")
             return
@@ -431,11 +489,12 @@ async def history_page(services: Services) -> None:
             "runs-summary"
         )
         table = (
-            ui.table(columns=run_columns(), rows=[run_row(run, zone) for run in result.runs], row_key="id")
+            ui.table(columns=run_columns(), rows=[run_row(live(run), zone) for run in result.runs], row_key="id")
             .props("flat bordered dense")
             .classes("w-full cursor-pointer")
             .mark("runs-table")
         )
+        state.runs_table = table
         table.add_slot("body-cell-status", STATUS_CELL)
         table.add_slot("body-cell-error", ERROR_CELL)
         # The run id is the only part of the click that the page needs.
@@ -451,16 +510,19 @@ async def history_page(services: Services) -> None:
             ).props("max-pages=7 boundary-numbers").mark("runs-pagination")
 
     @ui.refreshable
-    def details(detail: RunDetail | None) -> None:
+    def details() -> None:
+        state.actions_table = None
+        detail = state.detail
         if detail is None:
             return
         zone = ZoneInfo(detail.timezone)
         run = detail.run
         status_label, status_color = RUN_STATUSES[run.status]
-        with ui.card().props(f"tabindex=-1 {DETAILS_ATTRIBUTE}").classes("w-full outline-none").mark("details"):
+        card = ui.card().props(f"tabindex=-1 {DETAILS_ATTRIBUTE}").classes("w-full outline-none").mark("details")
+        with focus_key(card, DETAILS_FOCUS_KEY):
             with ui.row().classes("w-full items-center justify-between"):
                 ui.label(_("Actions of run {id}").format(id=run.id)).classes("text-h6").mark("details-title")
-                icon_button("close", _("Close"), close_run).mark("details-close")
+                focus_key(icon_button("close", _("Close"), close_run), CLOSE_FOCUS_KEY).mark("details-close")
             with ui.row().classes("items-center gap-2"):
                 ui.label(format_time(run.started_at, zone)).mark("details-started")
                 ui.badge(_(status_label), color=status_color).mark("details-status")
@@ -469,11 +531,14 @@ async def history_page(services: Services) -> None:
                 ui.label(run.error_text).classes("whitespace-pre-wrap break-words font-mono text-negative").mark(
                     "run-error"
                 )
-            ui.select(
-                _filter_options(ACTION_KINDS),
-                label=_("Action"),
-                value=ANY if detail.kind is None else detail.kind.value,
-                on_change=lambda event: change_action_kind(run.id, event.value),
+            focus_key(
+                ui.select(
+                    _filter_options(ACTION_KINDS),
+                    label=_("Action"),
+                    value=ANY if detail.kind is None else detail.kind.value,
+                    on_change=lambda event: change_action_kind(run.id, event.value),
+                ),
+                ACTION_FILTER_FOCUS_KEY,
             ).props(f"outlined dense {ACTION_FILTER_ATTRIBUTE}").classes("w-48").mark("filter-action")
             if not detail.actions:
                 ui.label(_("This run has no actions.")).mark("no-actions")
@@ -491,7 +556,10 @@ async def history_page(services: Services) -> None:
             )
             table.add_slot("body-cell-video", VIDEO_CELL)
             table.add_slot("body-cell-detail", DETAIL_CELL)
+            state.actions_table = table
 
+    # The follower comes before the first read, so a run that starts during the read is not missed.
+    follower = RunFollower(services.run_events, started=reload_for_run, progress=show_progress, finished=reload_for_run)
     retention_days = await asyncio.to_thread(get_retention_days, services.sessions)
     first_page = await asyncio.to_thread(read_runs, services.sessions, RunFilter(), 1, services.settings.tz)
 
@@ -527,7 +595,7 @@ async def history_page(services: Services) -> None:
         today_button(last_input, first_page.timezone).mark("filter-to-today")
         refresh_button = ui.button(_("Refresh"), icon="refresh", on_click=refresh).mark("refresh")
     runs_view(first_page)
-    details(None)
+    details()
 
     with ui.card().classes("w-full"):
         ui.label(_("Retention")).classes("text-h6")
@@ -552,3 +620,5 @@ async def history_page(services: Services) -> None:
                 time=f"{CLEANUP_HOUR:02d}:{CLEANUP_MINUTE:02d}", zone=first_page.timezone
             )
         ).classes("text-grey-7").mark("retention-hint")
+    if follower.start():
+        await refresh()

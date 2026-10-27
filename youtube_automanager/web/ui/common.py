@@ -29,6 +29,8 @@ ROW_BUTTON_EVENT = "rowButton"
 # The attribute of a table that tells a page with more than one table of rows which table is which.
 ROW_SCOPE_ATTRIBUTE = "data-row-scope"
 ROW_BUTTON_JS_HANDLER = "(id) => emit(id)"
+# The attribute of a control that keeps the focus when a redraw replaces it. See ``focus_key``.
+FOCUS_KEY_ATTRIBUTE = "data-focus-key"
 # The wait before the focus moves back to a button, so a dialog that is closing does not take the focus again.
 FOCUS_DELAY_MS = 200
 
@@ -107,6 +109,19 @@ def row_button_selector(row_id: int | str, scope: str | None = None) -> str:
     return selector if scope is None else f"[{ROW_SCOPE_ATTRIBUTE}={json.dumps(scope)}] {selector}"
 
 
+def focus_key[T: ui.element](element: T, key: str) -> T:
+    """Give ``element`` the key ``key``, so it keeps the focus when a redraw replaces it.
+
+    A refresh of a card can come from the server at any time, for example at a progress of a run, and the focus then
+    falls to the page body. The head script remembers the control with a key that has the focus. When a redraw removes
+    it and the focus is on the body, the script focuses the new control with the same key. A focus on an ``input``
+    inside the control goes back to the ``input`` of the new control, and any other focus inside it goes to the control.
+    Each key is unique on its page.
+    """
+    element.props[FOCUS_KEY_ATTRIBUTE] = key
+    return element
+
+
 def remember_focus(client: Client) -> None:
     """Let the browser keep the element that has the focus now, as the start of the next ``focus_when_drawn``.
 
@@ -177,6 +192,7 @@ def accessibility_script() -> str:
     Second, it keeps the focus on a row button. A server update that touches a table makes Vue replace the cells of its
     rows, and the focus falls to the page body. The script remembers the row button that has the focus. When a redraw
     removes it and the focus is on the body, the script focuses the new button with the same row id in the same table.
+    In the same way, it keeps the focus on a control with a key of ``focus_key`` that a refresh of its card replaces.
     A user who moved the focus, or who clicked on the page, keeps what they chose.
     """
     buttons = {
@@ -190,11 +206,22 @@ def accessibility_script() -> str:
 (() => {{
   const names = {safe_json(buttons)};
   let row = null;
+  let keyed = null;
   document.addEventListener('focusin', (event) => {{
     const button = event.target.closest?.('[data-row-button]');
     row = button && {{node: button, id: button.getAttribute('data-row-button'), scope: button.closest('[data-row-scope]')?.getAttribute('data-row-scope')}};
+    const control = !button && event.target.closest?.('[{FOCUS_KEY_ATTRIBUTE}]');
+    keyed = control ? {{node: event.target, key: control.getAttribute('{FOCUS_KEY_ATTRIBUTE}'), inner: event.target !== control && event.target.matches('input') ? 'input' : null}} : null;
   }});
-  document.addEventListener('pointerdown', () => {{ row = null; }});
+  document.addEventListener('pointerdown', () => {{ row = null; keyed = null; }});
+  const keepKeyFocus = () => {{
+    if (!keyed || keyed.node.isConnected || document.activeElement !== document.body) return;
+    const control = document.querySelector(`[{FOCUS_KEY_ATTRIBUTE}="${{CSS.escape(keyed.key)}}"]`);
+    const again = control && (keyed.inner ? control.querySelector(keyed.inner) : control);
+    if (!again) return;
+    keyed.node = again;
+    again.focus();
+  }};
   const keepRowFocus = () => {{
     if (!row || row.node.isConnected || document.activeElement !== document.body) return;
     const prefix = row.scope ? `[data-row-scope="${{CSS.escape(row.scope)}}"] ` : '';
@@ -214,7 +241,7 @@ def accessibility_script() -> str:
       if (label && !button.getAttribute('aria-label')) button.setAttribute('aria-label', label);
     }});
   }};
-  new MutationObserver(() => {{ name(); keepRowFocus(); }}).observe(document.documentElement, {{childList: true, subtree: true}});
+  new MutationObserver(() => {{ name(); keepRowFocus(); keepKeyFocus(); }}).observe(document.documentElement, {{childList: true, subtree: true}});
 }})();
 </script>"""
 

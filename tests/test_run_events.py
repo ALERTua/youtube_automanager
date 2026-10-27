@@ -1,20 +1,16 @@
 import asyncio
 import logging
 import threading
-from contextlib import asynccontextmanager
 
-import httpx
 import pytest
 from nicegui import ui
 from sqlalchemy import update
-from ui_support import PatientUser, client_of, eventually, store
+from ui_support import client_of, eventually, service_with_pages, store
 
 from youtube_automanager import run_events as run_events_module
 from youtube_automanager.db.models import Run, RunAction, RunActionKind, RunStatus, RunTrigger
 from youtube_automanager.run_events import ActionItem, RunEvents, read_progress
 from youtube_automanager.runner import SyncRunner
-from youtube_automanager.web.app import create_app
-from youtube_automanager.web.ui import mount_ui
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -337,18 +333,6 @@ async def test_a_call_after_the_loop_closed_does_not_raise(sessions):
 
 async def test_read_progress_of_a_missing_run_is_none(sessions):
     assert read_progress(sessions, 1, 0) is None
-
-
-@asynccontextmanager
-async def service_with_pages(settings, start):
-    """Run the whole service with its pages, and give a simulated browser on it and the services."""
-    app = create_app(settings, start=start)
-    mount_ui(app)
-    async with (
-        app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client,
-    ):
-        yield PatientUser(client), app.state.services
 
 
 async def test_the_service_tells_the_start_and_the_end_of_a_run_now(nicegui_globals, settings, fake_starter):

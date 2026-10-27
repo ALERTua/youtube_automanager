@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 from nicegui import ElementFilter, ui
@@ -42,11 +43,12 @@ def client_of(user: User) -> Client:
 
 
 @asynccontextmanager
-async def running_service(settings, start) -> AsyncGenerator[User]:
-    """Run the whole service, its lifespan, its routes and its pages, and give a simulated browser on it.
+async def service_with_pages(settings, start) -> AsyncGenerator[tuple[User, Any]]:
+    """Run the whole service, its lifespan, its routes and its pages, and give a simulated browser on it and the
+    services.
 
     The ``user`` fixture of NiceGUI runs only the lifespan of NiceGUI and sends each request to NiceGUI directly, so
-    its pages would get no services.
+    its pages would get no services. A second ``PatientUser`` on ``user.http_client`` is a second browser tab.
     """
     app = create_app(settings, start=start)
     mount_ui(app)
@@ -54,7 +56,14 @@ async def running_service(settings, start) -> AsyncGenerator[User]:
         app.router.lifespan_context(app),
         httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client,
     ):
-        yield PatientUser(client)
+        yield PatientUser(client), app.state.services
+
+
+@asynccontextmanager
+async def running_service(settings, start) -> AsyncGenerator[User]:
+    """Run the whole service with its pages, and give a simulated browser on it."""
+    async with service_with_pages(settings, start) as (user, _services):
+        yield user
 
 
 def elements_of(user: User, marker: str) -> list[ui.element]:

@@ -655,7 +655,7 @@ def test_the_script_that_names_the_parts_of_quasar_has_the_selectors_and_the_opt
     assert "if (label && !button.getAttribute('aria-label')) button.setAttribute('aria-label', label);" in script
     # The observer sees the controls that Vue draws later, at any depth.
     assert (
-        "new MutationObserver(() => { name(); keepRowFocus(); }).observe(document.documentElement, {childList: true, subtree: true});"
+        "new MutationObserver(() => { name(); keepRowFocus(); keepKeyFocus(); }).observe(document.documentElement, {childList: true, subtree: true});"
         in script
     )
 
@@ -683,7 +683,7 @@ def test_the_script_keeps_the_focus_on_a_row_button_that_a_redraw_replaces():
     assert "document.addEventListener('focusin', (event) => {" in script
     assert "const button = event.target.closest?.('[data-row-button]');" in script
     assert "scope: button.closest('[data-row-scope]')?.getAttribute('data-row-scope')" in script
-    assert "document.addEventListener('pointerdown', () => { row = null; });" in script
+    assert "document.addEventListener('pointerdown', () => { row = null; keyed = null; });" in script
     # It acts only when the old button left the page and the focus fell to the body, so a user who moved on keeps it.
     assert "if (!row || row.node.isConnected || document.activeElement !== document.body) return;" in script
     # It looks in the table with the same scope, for the button of the same row, and it focuses that button.
@@ -694,3 +694,22 @@ def test_the_script_keeps_the_focus_on_a_row_button_that_a_redraw_replaces():
     assert "row.node = again;" in script
     # The browser runs it after each change of the page.
     assert "name(); keepRowFocus();" in script
+
+
+def test_the_script_keeps_the_focus_on_a_control_with_a_key_that_a_redraw_replaces():
+    script = accessibility_script()
+
+    # It remembers the control with a key that holds the focus, and an input inside it, but not a row button, and it
+    # forgets it when the user focuses an element without a key or clicks on the page.
+    assert "const control = !button && event.target.closest?.('[data-focus-key]');" in script
+    assert "key: control.getAttribute('data-focus-key')" in script
+    assert "inner: event.target !== control && event.target.matches('input') ? 'input' : null" in script
+    assert "keyed = control ? {" in script
+    # It acts only when the old control left the page and the focus fell to the body, so a user who moved on keeps it.
+    assert "if (!keyed || keyed.node.isConnected || document.activeElement !== document.body) return;" in script
+    # It focuses the new control with the same key, or the input inside it.
+    assert 'document.querySelector(`[data-focus-key="${CSS.escape(keyed.key)}"]`)' in script
+    assert "const again = control && (keyed.inner ? control.querySelector(keyed.inner) : control);" in script
+    assert "keyed.node = again;" in script
+    # The browser runs it after each change of the page.
+    assert "keepRowFocus(); keepKeyFocus();" in script
