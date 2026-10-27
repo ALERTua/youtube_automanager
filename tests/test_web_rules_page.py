@@ -1783,6 +1783,7 @@ async def test_each_column_but_the_actions_sorts_in_the_browser(user, three_rule
         "playlist",
         "no_shorts",
         "condition",
+        "added",
         "updated",
     ]
     assert [column["name"] for column in columns if not column.get("sortable")] == ["actions"]

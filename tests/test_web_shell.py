@@ -280,8 +280,8 @@ async def test_the_rules_page_ends_its_subscriptions_when_the_drawer_leaves_it(n
         for _visit in range(2):
             user.find(marker="nav:/rules").click()
             await user.should_see(marker="new-rule")
-            # The apply banner of the rules page.
-            assert subscribers(services) == [0, 1, 1]
+            # The apply banner of the rules page, and the follower of the runs that reads the column Added again.
+            assert subscribers(services) == [1, 2, 2]
             assert len(services.applies.changed.callbacks) == 1
             # The editor has the apply banner and the apply dialog, and the rules page ends its banner.
             user.find(marker="new-rule").click()
