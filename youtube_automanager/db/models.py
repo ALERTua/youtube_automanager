@@ -193,7 +193,11 @@ class Playlist(Base):
 
 
 class Rule(Base):
+    """A rule. An id never comes back, also on SQLite after the rule with the highest id went, because the history keeps
+    the id of a deleted rule, and a new rule with that id would show its actions."""
+
     __tablename__ = "rule"
+    __table_args__ = ({"sqlite_autoincrement": True},)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]

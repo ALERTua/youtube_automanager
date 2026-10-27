@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -11,8 +12,9 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import DataError, IntegrityError
 
-from youtube_automanager.db import alembic_config, upgrade_to_head
+from youtube_automanager.db import alembic_config, make_engine, make_session_factory, upgrade_to_head
 from youtube_automanager.db.models import Base
+from youtube_automanager.rules_store import AddedCounts, read_added_counts
 
 ROOT = Path(__file__).parent.parent
 
@@ -340,3 +342,127 @@ def test_command_line_without_a_url_uses_the_database_of_the_settings(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert table_names(f"sqlite:///{tmp_path / 'from_settings.sqlite'}") == TABLES | {"alembic_version"}
+
+
+# The rule ids on SQLite.
+
+BEFORE_RULE_AUTOINCREMENT = "3a7c5e9b2d14"
+INSERT_RULE = (
+    "INSERT INTO rule (id, name, enabled, position, condition, target_playlist_id, no_shorts, created_at, updated_at) "
+    "VALUES (:id, :name, true, 1, '{}', 'WL', false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+)
+
+
+def rule_table_sql(url) -> str:
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection:
+            return connection.execute(text("SELECT sql FROM sqlite_master WHERE name = 'rule'")).scalar_one()
+    finally:
+        engine.dispose()
+
+
+def seed_rules_before_the_autoincrement(url) -> None:
+    """Two rules, the channel and the added video of rule 2, and the history of rule 5, which went before."""
+    command.upgrade(alembic_config(url), BEFORE_RULE_AUTOINCREMENT)
+    engine = create_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("INSERT INTO playlist (playlist_id, title, is_own) VALUES ('WL', 'Later', true)"))
+            connection.execute(text("INSERT INTO channel (channel_id, title, is_subscribed) VALUES ('UCa', 'A', true)"))
+            for rule_id in (1, 2):
+                connection.execute(text(INSERT_RULE), {"id": rule_id, "name": f"rule {rule_id}"})
+            connection.execute(text("INSERT INTO rule_channel (rule_id, channel_id) VALUES (2, 'UCa')"))
+            connection.execute(
+                text(
+                    "INSERT INTO added_video (playlist_id, video_id, rule_id, added_at) "
+                    "VALUES ('WL', 'v2', 2, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    'INSERT INTO run (id, started_at, status, "trigger", added_count, seen_count) '
+                    "VALUES (1, CURRENT_TIMESTAMP, 'succeeded', 'manual', 2, 2)"
+                )
+            )
+            for rule_id in (2, 5):
+                connection.execute(
+                    text(
+                        "INSERT INTO run_action (run_id, at, action, video_id, rule_id) "
+                        "VALUES (1, CURRENT_TIMESTAMP, 'added', 'v', :rule_id)"
+                    ),
+                    {"rule_id": rule_id},
+                )
+    finally:
+        engine.dispose()
+
+
+def test_after_the_upgrade_a_new_rule_never_takes_the_id_of_a_deleted_rule(sqlite_url):
+    seed_rules_before_the_autoincrement(sqlite_url)
+
+    upgrade_to_head(sqlite_url)
+
+    assert "AUTOINCREMENT" in rule_table_sql(sqlite_url)
+    # The engine of the service turns the foreign keys of SQLite on.
+    engine = make_engine(sqlite_url)
+    try:
+        with engine.begin() as connection:
+            assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
+            connection.execute(text("DELETE FROM rule WHERE id = 2"))
+            # The foreign keys to the new table still act: the channel of the rule goes, its added video stays.
+            assert connection.execute(text("SELECT rule_id FROM rule_channel")).all() == []
+            assert connection.execute(text("SELECT video_id, rule_id FROM added_video")).all() == [("v2", None)]
+            connection.execute(text(INSERT_RULE.replace(":id", "NULL")), {"name": "new"})
+            # The history still holds rule 5, which went before the upgrade, so the new rule starts above it.
+            new_id = connection.execute(text("SELECT id FROM rule WHERE name = 'new'")).scalar_one()
+            assert new_id == 6
+            connection.execute(text("DELETE FROM rule WHERE id = 6"))
+            connection.execute(text(INSERT_RULE.replace(":id", "NULL")), {"name": "newer"})
+            assert connection.execute(text("SELECT id FROM rule WHERE name = 'newer'")).scalar_one() == 7
+        # The new rule has no videos of the deleted rules.
+        assert read_added_counts(make_session_factory(engine), datetime.now(UTC)) == {
+            2: AddedCounts(1, 1),
+            5: AddedCounts(1, 1),
+        }
+    finally:
+        engine.dispose()
+
+
+def test_the_first_rule_of_an_empty_database_gets_the_id_1(sqlite_url):
+    upgrade_to_head(sqlite_url)
+    engine = make_engine(sqlite_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("INSERT INTO playlist (playlist_id, title, is_own) VALUES ('WL', 'Later', true)"))
+            connection.execute(text(INSERT_RULE.replace(":id", "NULL")), {"name": "first"})
+            assert connection.execute(text("SELECT id FROM rule")).scalar_one() == 1
+    finally:
+        engine.dispose()
+
+
+def test_the_rule_autoincrement_keeps_the_rules_and_their_links_in_both_directions(sqlite_url):
+    seed_rules_before_the_autoincrement(sqlite_url)
+    config = alembic_config(sqlite_url)
+
+    upgrade_to_head(sqlite_url)
+    command.downgrade(config, BEFORE_RULE_AUTOINCREMENT)
+
+    assert "AUTOINCREMENT" not in rule_table_sql(sqlite_url)
+    engine = create_engine(sqlite_url)
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT id, name FROM rule ORDER BY id")).all() == [
+                (1, "rule 1"),
+                (2, "rule 2"),
+            ]
+            assert connection.execute(text("SELECT rule_id, channel_id FROM rule_channel")).all() == [(2, "UCa")]
+            assert connection.execute(text("SELECT rule_id FROM added_video")).all() == [(2,)]
+            assert connection.execute(text("SELECT name FROM sqlite_sequence WHERE name = 'rule'")).all() == []
+    finally:
+        engine.dispose()
+
+    upgrade_to_head(sqlite_url)
+
+    assert "AUTOINCREMENT" in rule_table_sql(sqlite_url)
+    assert current_revision(sqlite_url) == head_revision()
+    assert model_differences(sqlite_url) == []
