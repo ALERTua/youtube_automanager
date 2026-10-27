@@ -12,8 +12,9 @@ from typing import Any
 from fastapi import FastAPI
 from nicegui import app as nicegui_app
 from nicegui import ui
+from nicegui.language import Language
 
-from youtube_automanager.i18n import _
+from youtube_automanager.i18n import _, language
 from youtube_automanager.web.services import Services
 
 # The drawer lists the pages in the order of these imports, so the sorting of the imports stays off here.
@@ -32,6 +33,9 @@ from youtube_automanager.web.ui.theme import read_theme
 
 # The path of the shell route that answers each path that no other route answers.
 SHELL_ROUTE = "/{path:path}"
+# The language pack of Quasar for each language of the texts. NiceGUI loads the pack of its language with each full
+# load of a page, and it has a pack for each of these codes.
+QUASAR_LANGUAGES: dict[str, Language] = {"en": "en-US", "uk": "uk"}
 
 
 def _with_end_signal(build: SubRouteBuilder, built: asyncio.Event, known: Callable[[str], bool]) -> SubRouteBuilder:
@@ -59,6 +63,10 @@ def _shell(app: FastAPI) -> Callable[[], Awaitable[None]]:
     async def show_shell() -> None:
         # A page request reaches the NiceGUI application, not ``app``, so the services come from ``app`` itself.
         services: Services = app.state.services
+        # NiceGUI reads its language when it renders this page, after this function, so the Quasar components and the
+        # lang attribute of the page follow the language of the texts. NiceGUI has one language for the process, as the
+        # holder of the texts.
+        nicegui_app.config.language = QUASAR_LANGUAGES[language()]
         theme = await asyncio.to_thread(read_theme, services.sessions)
         built = asyncio.Event()
         routes = {

@@ -15,6 +15,7 @@ from ui_support import client_of, element_of, elements_of, eventually, running_s
 from youtube_automanager import i18n
 from youtube_automanager.account_cache import REFRESHED_AT_KEY
 from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, Schedule, ScheduleKind, Setting
+from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
 from youtube_automanager.web.ui.dates import today_in
@@ -909,6 +910,9 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
     untranslated = [
         text
         for text in texts
-        if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not TIME.fullmatch(text)
+        if not (text.startswith("<<") and text.endswith(">>"))
+        and text not in data
+        and text not in NAMES.values()
+        and not TIME.fullmatch(text)
     ]
     assert untranslated == []

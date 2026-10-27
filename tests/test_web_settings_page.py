@@ -40,6 +40,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.engine import account_session
 from youtube_automanager.engine.modes import ProcessingMode
+from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.notify import DEFAULT_EVENTS, EVENT_LEVELS, Event, Level
 from youtube_automanager.rotation import ROTATION_KEY
 from youtube_automanager.runner import SOURCE_ROOT, UNAVAILABLE_EXIT_CODE, sync_lock_held
@@ -1498,7 +1499,10 @@ async def test_each_text_of_the_settings_page_goes_through_the_translation(
     untranslated = [
         text
         for text in texts
-        if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not TIME.fullmatch(text)
+        if not (text.startswith("<<") and text.endswith(">>"))
+        and text not in data
+        and text not in NAMES.values()
+        and not TIME.fullmatch(text)
     ]
     assert untranslated == []
 

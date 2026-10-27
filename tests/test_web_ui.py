@@ -22,6 +22,7 @@ from youtube_automanager.db.models import (
     Setting,
 )
 from youtube_automanager.i18n import N_
+from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.web.ui import common, dashboard, layout
 from youtube_automanager.web.ui.common import FOCUS_KEY_ATTRIBUTE
 from youtube_automanager.web.ui.theme import THEME_KEY, Theme, first_paint_style, read_theme
@@ -400,7 +401,10 @@ async def test_each_text_of_the_dashboard_goes_through_the_translation(
     untranslated = [
         text
         for text in texts
-        if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not TIME.fullmatch(text)
+        if not (text.startswith("<<") and text.endswith(">>"))
+        and text not in data
+        and text not in NAMES.values()
+        and not TIME.fullmatch(text)
     ]
     assert untranslated == []
 
