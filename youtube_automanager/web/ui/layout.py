@@ -4,17 +4,26 @@ frame.
 A page module adds its page with the decorator ``register_page``. The navigation drawer shows each registered page,
 in the order of the registration. The browser loads the shell once, and a click in the drawer changes only the content
 of the frame.
+
+A page keeps the state of its view in the query of its address, for example the filters of a table. The page reads
+the query when it builds, writes a new query with ``replace_address``, and follows a later address with the same path,
+for example after the Back button of the browser, with an ``AddressFollower``.
 """
 
 import asyncio
+import functools
 import inspect
+import json
 import re
-from collections.abc import Awaitable, Callable, Generator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit
+from weakref import WeakKeyDictionary
 
-from nicegui import ui
+from nicegui import background_tasks, helpers, ui
+from nicegui.client import Client
 
 from youtube_automanager.i18n import _
 from youtube_automanager.web.services import Services
@@ -60,15 +69,16 @@ def _matches(pattern: str, segments: list[str]) -> bool:
     )
 
 
-def _check_path_parameters(pattern: str, build: SubRouteBuilder) -> None:
-    parameters = inspect.signature(build).parameters
-    for name in re.findall(r"\{(\w+)\}", pattern):
-        parameter = parameters.get(name)
-        if parameter is not None and parameter.annotation not in (inspect.Parameter.empty, str):
-            raise ValueError(
-                f"The builder of the route {pattern} annotates its path parameter {name} as {parameter.annotation!r}. "
-                "A path parameter is a str, and the builder converts it itself."
-            )
+def _check_parameters(pattern: str, build: SubRouteBuilder) -> None:
+    path_parameters = set(re.findall(r"\{(\w+)\}", pattern))
+    for name, parameter in inspect.signature(build).parameters.items():
+        if name == "services" or parameter.annotation in (inspect.Parameter.empty, str):
+            continue
+        kind = "path parameter" if name in path_parameters else "query parameter"
+        raise ValueError(
+            f"The builder of the route {pattern} annotates its {kind} {name} as {parameter.annotation!r}. "
+            f"A {kind} is a str, and the builder converts it itself."
+        )
 
 
 _PAGES: dict[str, Page] = {}
@@ -83,19 +93,101 @@ def register_page(
     gives the page more paths, each with its own builder, and the drawer marks the page as the current one on each of
     them. A second page with the same path replaces the first one.
 
-    A builder of ``routes`` gets each path parameter, a part "{name}" of its path, as the text of the address, and
-    converts it itself. So such a parameter has no annotation or the annotation ``str``, and another annotation raises
-    ValueError here. ``ui.sub_pages`` would convert it before the builder starts, and a text such as "abc" for an
-    ``int`` would fail there, and the first answer of the page would wait for the end of a build that never starts.
+    A builder gets each path parameter, a part "{name}" of its path, and each query parameter with the name of one of
+    its parameters, as the text of the address, and converts it itself. So each parameter of a builder other than
+    ``services`` has no annotation or the annotation ``str``, and another annotation raises ValueError here.
+    ``ui.sub_pages`` would convert it before the builder starts, and a text such as "abc" for an ``int`` would fail
+    there, and the first answer of the page would wait for the end of a build that never starts.
+
+    ``ui.sub_pages`` also builds the page again at each change of a query parameter that the builder has as a parameter.
+    A page that writes its view into the query, such as its filters, therefore reads the query with ``address_query``
+    and does not have these parameters.
     """
     for pattern, route_build in routes:
-        _check_path_parameters(pattern, route_build)
+        _check_parameters(pattern, route_build)
 
     def decorator(build: PageBuilder) -> PageBuilder:
+        _check_parameters(path, build)
         _PAGES[path] = Page(path=path, label=label, icon=icon, build=build, routes=tuple(routes))
         return build
 
     return decorator
+
+
+def address_query(client: Client) -> dict[str, str]:
+    """Return the query parameters of the current address of the tab of ``client``. A name that comes twice has its
+    last value."""
+    return dict(parse_qsl(urlsplit(client.sub_pages_router.current_path).query))
+
+
+def with_query(path: str, query: Mapping[str, str | None]) -> str:
+    """Return ``path`` with the query parameters of ``query`` that have a value, in the order of ``query``."""
+    items = [(name, value) for name, value in query.items() if value]
+    return f"{path}?{urlencode(items)}" if items else path
+
+
+def replace_address(client: Client, address: str) -> None:
+    """Show ``address`` in the address bar of the tab of ``client``, in place of the current entry of the history of
+    the browser. The content of the page stays as it is.
+
+    A page calls this when the user changes its view, for example a filter, so a reload and a shared link show the same
+    view. The entry is replaced, so the Back button does not go through each typed letter of a filter. The router of
+    the tab takes the address too, and a later navigation compares with it.
+    """
+    client.sub_pages_router.current_path = address
+    text = json.dumps(address)
+    # NiceGUI keeps the address of an entry in its state as "page", and Back opens the address of that state.
+    client.run_javascript(f"history.replaceState({{page: {text}}}, '', (window.path_prefix || '') + {text});")
+
+
+def _tell_followers(followers: list[AddressFollower], address: str) -> None:
+    parts = urlsplit(address)
+    path = parts.path.rstrip("/") or "/"
+    query = dict(parse_qsl(parts.query))
+    for follower in list(followers):
+        if follower.path == path and not follower.is_deleted:
+            follower.tell(query)
+
+
+class AddressFollower(ui.element):
+    """An invisible element that gives each new address of the tab with the path ``path`` to ``handler``, while the
+    element exists.
+
+    ``ui.sub_pages`` builds a page again only when the path changes, or a query parameter that the builder has as a
+    parameter. Another address with the same path keeps the content: a click in the drawer on the page that shows, a
+    navigation of the page itself, or the Back button of the browser to an entry with another query. The page then
+    shows the query of the new address with ``handler``, which gets the query parameters. An async handler runs as a
+    task in the content of the page. The router calls the handler before it changes the content, and an address with
+    another path calls nothing.
+    """
+
+    def __init__(self, path: str, handler: Callable[[dict[str, str]], Any]) -> None:
+        super().__init__()
+        self.set_visibility(False)
+        self.path = path
+        self.handler = handler
+        client = self.client
+        followers = _FOLLOWERS.get(client)
+        if followers is None:
+            followers = _FOLLOWERS[client] = []
+            client.sub_pages_router.on_path_changed(functools.partial(_tell_followers, followers))
+        followers.append(self)
+        self._followers = followers
+
+    def tell(self, query: dict[str, str]) -> None:
+        result = self.handler(query)
+        if helpers.should_await(result):
+            background_tasks.create(result, name=f"follow the address of {self.path}", context=self.parent_slot)
+
+    def _handle_delete(self) -> None:
+        if self in self._followers:
+            self._followers.remove(self)
+        super()._handle_delete()
+
+
+# The followers of the addresses of each client. NiceGUI has no way to remove a handler of ``on_path_changed``, so the
+# router of a client gets one handler, which gives each new address to the followers that exist at that moment.
+_FOLLOWERS: WeakKeyDictionary[Client, list[AddressFollower]] = WeakKeyDictionary()
 
 
 def pages() -> list[Page]:

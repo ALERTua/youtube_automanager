@@ -4,11 +4,13 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from nicegui import ui
+from conftest import recording_run_javascript
+from nicegui import Client, ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
 from sqlalchemy import delete, select
 from ui_support import (
+    client_of,
     element_of,
     elements_of,
     eventually,
@@ -870,3 +872,143 @@ async def test_each_text_of_the_history_page_goes_through_the_translation(
         if not (text.startswith("<<") and text.endswith(">>")) and text not in data and not TIME.fullmatch(text)
     ]
     assert untranslated == []
+
+
+# The view in the address.
+
+
+def address(user) -> str:
+    return client_of(user).sub_pages_router.current_path
+
+
+@pytest.fixture
+def replaces(monkeypatch):
+    """Record each write of the address in place, and send it nowhere."""
+    written: list[str] = []
+    monkeypatch.setattr(Client, "run_javascript", recording_run_javascript(written.append, markers=("replaceState",)))
+    return written
+
+
+async def test_a_link_to_a_run_opens_its_actions(user, sessions):
+    store(sessions, run(1), run(2), run(3))
+    store(sessions, action(3, 1, video_id="vid3"))
+
+    await user.open("/history?run=3")
+
+    assert text_of(user, "details-title") == "Actions of run 3"
+    assert [row["video"] for row in rows_of(user, "actions-table")] == ["vid3"]
+    assert run_ids(user) == [3, 2, 1]
+
+
+@pytest.mark.parametrize("query", ["run=999", "run=abc", "run=-1", "run=" + "9" * 30])
+async def test_a_link_to_a_run_that_does_not_exist_opens_no_actions(user, sessions, query):
+    store(sessions, run(1))
+
+    await user.open(f"/history?{query}")
+
+    await user.should_not_see(marker="details")
+    assert run_ids(user) == [1]
+
+
+async def test_a_link_with_filters_and_a_page_shows_them(user, sessions):
+    store(sessions, *[run(number, status=RunStatus.FAILED) for number in range(1, 56)], run(56))
+
+    await user.open("/history?status=failed&trigger=schedule&page=2")
+
+    assert (element_of(user, "filter-status").value, element_of(user, "filter-trigger").value) == ("failed", "schedule")
+    assert run_ids(user) == list(range(5, 0, -1))
+    assert element_of(user, "runs-pagination").value == 2
+
+
+async def test_a_link_with_values_that_no_field_has_shows_each_run(user, sessions):
+    store(sessions, run(1), run(2))
+
+    await user.open("/history?status=lost&trigger=x&page=abc&from=not-a-date")
+
+    assert (element_of(user, "filter-status").value, element_of(user, "filter-trigger").value) == ("any", "any")
+    assert run_ids(user) == [2, 1]
+    assert element_of(user, "filter-from").error == "This is not a date, so the filter does not use it."
+
+
+async def test_a_change_of_a_filter_writes_the_address_in_place_and_keeps_the_page(user, sessions, replaces):
+    store(sessions, run(1), run(2, status=RunStatus.FAILED))
+    client = await user.open("/history")
+    refresh_button = element_of(user, "refresh")
+    history = list(user.back_history)
+
+    set_value(user, "filter-status", "failed")
+
+    await runs_are(user, [2])
+    assert address(user) == "/history?status=failed"
+    assert replaces and '"/history?status=failed"' in replaces[-1]
+    # The page was not built again: the same Refresh button, and no new entry of the history of the browser.
+    assert element_of(user, "refresh") is refresh_button
+    assert not refresh_button.is_deleted
+    assert user.back_history == history
+    assert user.client is client
+
+
+async def test_an_open_run_is_a_new_entry_and_back_closes_it(user, sessions):
+    store(sessions, run(1), run(2, status=RunStatus.FAILED))
+    await user.open("/history?status=failed")
+    refresh_button = element_of(user, "refresh")
+
+    await open_run(user, 2)
+
+    assert address(user) == "/history?status=failed&run=2"
+    assert user.back_history[-1] == "/history?status=failed&run=2"
+    user.navigate.back()
+    await eventually(lambda: not elements_of(user, "details"), "The close of the run")
+    assert address(user) == "/history?status=failed"
+    assert element_of(user, "refresh") is refresh_button
+    user.navigate.forward()
+    await eventually(lambda: elements_of(user, "details"), "The run again")
+    assert text_of(user, "details-title") == "Actions of run 2"
+
+
+async def test_the_close_of_a_run_removes_it_from_the_address(user, sessions):
+    store(sessions, run(1))
+    await user.open("/history?run=1")
+
+    user.find(marker="details-close").click()
+
+    await eventually(lambda: not elements_of(user, "details"), "The close of the run")
+    assert address(user) == "/history"
+
+
+async def test_a_change_of_the_page_writes_the_address_and_keeps_the_open_run(user, sessions, replaces):
+    store(sessions, *[run(number) for number in range(1, 56)])
+    await user.open("/history?run=55")
+
+    set_value(user, "runs-pagination", 2)
+
+    await runs_are(user, list(range(5, 0, -1)))
+    assert address(user) == "/history?page=2&run=55"
+    assert text_of(user, "details-title") == "Actions of run 55"
+
+
+async def test_back_to_an_address_with_other_filters_shows_them(user, sessions):
+    store(sessions, run(1), run(2, status=RunStatus.FAILED))
+    await user.open("/history")
+    user.navigate.to("/history?status=failed")
+    await runs_are(user, [2])
+    assert element_of(user, "filter-status").value == "failed"
+
+    user.navigate.back()
+
+    await runs_are(user, [2, 1])
+    assert element_of(user, "filter-status").value == "any"
+    assert address(user) == "/history"
+
+
+async def test_a_click_on_the_open_run_moves_the_focus_to_its_card_and_adds_no_entry(user, sessions, scripts):
+    store(sessions, run(1))
+    await user.open("/history?run=1")
+    history = list(user.back_history)
+
+    user.find(marker="runs-table").trigger("rowButton", args=1)
+
+    await eventually(lambda: scripts, "The move of the focus")
+    assert 'document.querySelector("[data-run-details]")' in scripts[-1]
+    assert user.back_history == history
+    assert address(user) == "/history?run=1"

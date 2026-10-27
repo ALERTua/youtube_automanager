@@ -71,8 +71,8 @@ def _shell(app: FastAPI) -> Callable[[], Awaitable[None]]:
         # ui.sub_pages runs an async builder as a task. The first HTML waits for it, so the browser gets the page with
         # its data, as before the shell. A later change of the address builds the content in the open page.
         # The wait ends when the wrapper of the matched route ends. ui.sub_pages starts that wrapper only after it
-        # converted the path parameters (PageArguments.build_kwargs), and a failed conversion would leave the wait to
-        # the response_timeout of NiceGUI. So register_page refuses a path parameter of another type than str. An
+        # converted the path and query parameters (PageArguments.build_kwargs), and a failed conversion would leave the
+        # wait to the response_timeout of NiceGUI. So register_page refuses a parameter of another type than str. An
         # unknown path gets no wait: the wrapper builds nothing, and NiceGUI shows the 404 text.
         if known(ui.context.client.sub_pages_router.current_path):
             await built.wait()

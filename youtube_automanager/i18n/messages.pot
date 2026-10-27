@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-27 12:21+0200\n"
+"POT-Creation-Date: 2026-10-27 13:47+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -32,21 +32,21 @@ msgstr ""
 msgid "A run is already active, so no new run started."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "A setting of the service changed how far a run reads the channels. So the"
 " next run adds no video that is already on the channels. After that run, "
 "the rule adds the videos that come later."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "A setting of the service changed how far a run reads the channels. So the"
 " next run adds only the videos from the day in Also add videos from. "
 "After that run, the rule adds the videos that come later."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "A sync run or another task with YouTube is active now. Delete the rule "
 "when it ends."
@@ -74,11 +74,11 @@ msgstr ""
 msgid "Actions of run {id}"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Add 1 video"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Add a condition"
 msgstr ""
 
@@ -86,7 +86,7 @@ msgstr ""
 msgid "Add a file"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Add a group"
 msgstr ""
 
@@ -102,7 +102,7 @@ msgstr ""
 msgid "Add to rule…"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "Add {count} videos"
 msgstr ""
@@ -125,20 +125,20 @@ msgstr ""
 msgid "All playlists"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Already in the playlist"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Also add videos from"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "Also add videos from: {reason}"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "An apply of the rule \"{name}\" runs. Videos added: {count}."
 msgstr ""
@@ -158,12 +158,12 @@ msgstr ""
 msgid "Any of these conditions"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "Apply the rule \"{name}\" to videos from a date"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Apply to videos from a date"
 msgstr ""
 
@@ -181,14 +181,18 @@ msgstr ""
 msgid "Back"
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Back to the rules"
+msgstr ""
+
 #: youtube_automanager/web/ui/common.py
 #: youtube_automanager/web/ui/notifications_section.py
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/settings_page.py
 msgid "Cancel"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Case-sensitive"
 msgstr ""
 
@@ -204,7 +208,7 @@ msgstr ""
 msgid "Change the processing mode?"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Change the rule"
 msgstr ""
 
@@ -217,8 +221,8 @@ msgid "Changed"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rule_form.py
-#: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Channel"
 msgstr ""
@@ -227,6 +231,7 @@ msgstr ""
 msgid "Channel error"
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Channels"
 msgstr ""
@@ -239,12 +244,12 @@ msgstr ""
 msgid "Choose a channel."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "Choose a day at most {days} days back."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Choose a day that is not in the future."
 msgstr ""
 
@@ -264,7 +269,7 @@ msgstr ""
 msgid "Choose at least one channel."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Choose the first day of the videos."
 msgstr ""
 
@@ -273,7 +278,7 @@ msgid "Choose whether the video is a Short."
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Close"
 msgstr ""
@@ -291,11 +296,12 @@ msgid ""
 "within about 20 minutes."
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Condition"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Condition as JsonLogic"
 msgstr ""
 
@@ -343,7 +349,7 @@ msgstr ""
 msgid "Data folder"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Date"
 msgstr ""
 
@@ -360,11 +366,11 @@ msgid "Deferred"
 msgstr ""
 
 #: youtube_automanager/web/ui/notifications_section.py
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Delete"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "Delete the rule \"{name}\"?"
 msgstr ""
@@ -386,8 +392,13 @@ msgstr ""
 msgid "Disabled"
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/settings_draft.py
 msgid "Discard"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Discard the changes?"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
@@ -398,7 +409,7 @@ msgstr ""
 msgid "Each rule already reads this channel."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "Each run adds the new videos that the rule matches. The videos that are "
 "already on the channels come only from the day in Also add videos from. A"
@@ -445,6 +456,7 @@ msgid "Edit"
 msgstr ""
 
 #: youtube_automanager/web/ui/notifications_section.py
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rules_page.py
 #: youtube_automanager/web/ui/scheduler_page.py
 msgid "Enabled"
@@ -515,7 +527,7 @@ msgstr ""
 msgid "Failure"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Field"
 msgstr ""
 
@@ -567,7 +579,7 @@ msgstr ""
 msgid "Go back to the previous version"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Group type"
 msgstr ""
 
@@ -650,8 +662,8 @@ msgstr ""
 msgid "Lists refreshed: {time}"
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rule_form.py
-#: youtube_automanager/web/ui/rules_page.py
 msgid "Live status"
 msgstr ""
 
@@ -669,11 +681,11 @@ msgstr ""
 msgid "Manual"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Matches"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Matches now"
 msgstr ""
 
@@ -681,11 +693,12 @@ msgstr ""
 msgid "Menu"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Minutes"
 msgstr ""
 
 #: youtube_automanager/web/ui/notifications_section.py
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Name"
 msgstr ""
@@ -704,6 +717,7 @@ msgstr ""
 msgid "Never"
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rules_page.py
 msgid "New rule"
 msgstr ""
@@ -737,6 +751,7 @@ msgstr ""
 msgid "No"
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rules_page.py
 msgid "No Shorts"
 msgstr ""
@@ -754,7 +769,7 @@ msgstr ""
 msgid "No cookies are stored yet."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "No date"
 msgstr ""
 
@@ -767,7 +782,7 @@ msgstr ""
 msgid "No handle"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "No longer matches"
 msgstr ""
 
@@ -775,7 +790,7 @@ msgstr ""
 msgid "No notification target yet. The button Add a target creates one."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "No playlist is stored yet. Close the editor and refresh the lists with "
 "the button Refresh lists at the top of the page."
@@ -783,6 +798,11 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "No rule exists yet. Create a rule first."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "No rule has the id {id}. Another tab can have deleted it."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -839,7 +859,7 @@ msgstr ""
 msgid "OK"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "One apply adds the {limit} oldest of the {count} videos. Apply again to "
@@ -860,7 +880,7 @@ msgstr ""
 msgid "Open on YouTube"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Operator"
 msgstr ""
 
@@ -868,7 +888,7 @@ msgstr ""
 msgid "Or paste the text of the cookie file"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Pattern"
 msgstr ""
 
@@ -885,11 +905,11 @@ msgstr ""
 msgid "Playlist"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Preview"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Preview of the next run"
 msgstr ""
 
@@ -917,7 +937,7 @@ msgstr ""
 msgid "Remove all files"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Remove the condition"
 msgstr ""
 
@@ -925,11 +945,11 @@ msgstr ""
 msgid "Remove the file"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Remove the group"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Result"
 msgstr ""
@@ -1007,7 +1027,7 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/notifications_section.py
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/scheduler_page.py
 #: youtube_automanager/web/ui/settings_draft.py
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -1033,7 +1053,7 @@ msgstr ""
 msgid "Search"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Seconds"
 msgstr ""
 
@@ -1045,7 +1065,7 @@ msgstr ""
 msgid "Settings"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Short"
 msgstr ""
 
@@ -1162,11 +1182,11 @@ msgstr ""
 msgid "Success"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Target playlist"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Text"
 msgstr ""
 
@@ -1176,7 +1196,7 @@ msgid ""
 "tgram://bottoken/ChatID for Telegram."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "The YouTube account is not available now, so the matching videos wait for"
 " it. Upload new YouTube cookies on the Settings page."
@@ -1189,7 +1209,7 @@ msgstr ""
 msgid "The YouTube account is not available: {cause}"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "The apply adds each video of the rule sources since the day that the rule"
@@ -1199,43 +1219,43 @@ msgid ""
 "the rule cannot decide yet."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "The apply did not start. {reason}"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "The apply ended, but its run {run} is not in the database any more."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "The apply failed: {error} The History page shows it as run {run}."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "The apply is done with errors. Videos added: {count}. Errors: {errors}. "
 "The History page shows them in run {run}."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "The apply is done. Videos added: {count}. The History page shows it as "
 "run {run}."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "The apply runs. Each add takes {seconds} s or more, so the apply takes "
 "{minutes} min or more. The History page shows the apply as a run."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "The apply runs. Videos added: {added} of {count}. The History page shows "
@@ -1266,7 +1286,7 @@ msgstr ""
 msgid "The cookies work and are stored."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "The editor has changes that are not saved. The apply uses the saved "
 "version of the rule."
@@ -1280,11 +1300,11 @@ msgstr ""
 msgid "The file is no text in UTF-8, so it is no cookie file."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The form changed while the preview ran. Press Preview again."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The history keeps the actions of the rule."
 msgstr ""
 
@@ -1318,7 +1338,7 @@ msgid ""
 "and upload them."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The next run adds no video for this rule."
 msgstr ""
 
@@ -1331,24 +1351,24 @@ msgid ""
 "from."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "The next run adds the {limit} oldest of the {count} videos from the day "
 "in Also add videos from. The runs after it add the rest."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "The next run also adds the videos from this day that the rule matches, "
 "the oldest first. Leave the field empty to add only new videos."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The next run also checks each new video that comes before the run starts."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "The next run does not add the videos that are already on these channels: "
@@ -1366,19 +1386,19 @@ msgstr ""
 msgid "The pattern does not compile: {error}"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "The preview failed. {reason}"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "The preview shows what the next run does with the rule as the form shows "
 "it now: the videos that it will add, and the matching videos that wait. "
 "The preview adds nothing."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid ""
 "The read stops after {limit} videos of a channel, so the older videos of "
@@ -1397,29 +1417,25 @@ msgid ""
 " A saved change acts at the next turn of the rotation, without a restart."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The rule does not exist any more, so the page did not save it."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
-msgid "The rule does not exist any more."
-msgstr ""
-
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The rule is deleted."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "The rule is off, so no run uses it. The preview shows what the next run "
 "does with the rule on."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The rule is saved."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The rule matches no video of its sources since this day."
 msgstr ""
 
@@ -1504,7 +1520,7 @@ msgid ""
 "cookie value."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The service reads the videos on YouTube. This takes up to a few minutes."
 msgstr ""
 
@@ -1551,7 +1567,7 @@ msgid ""
 "that a rule reads. Click a channel to see its actions."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "The table shows the newest {shown} of the {total} videos."
 msgstr ""
@@ -1612,7 +1628,7 @@ msgstr ""
 msgid "The update failed: {cause}"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "The visual editor cannot show this condition. Edit it as JsonLogic."
 msgstr ""
 
@@ -1661,8 +1677,8 @@ msgstr ""
 msgid "Time zone"
 msgstr ""
 
+#: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/rule_form.py
-#: youtube_automanager/web/ui/rules_page.py
 msgid "Title"
 msgstr ""
 
@@ -1679,7 +1695,7 @@ msgstr ""
 msgid "Trigger"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Undecided"
 msgstr ""
 
@@ -1770,7 +1786,7 @@ msgstr ""
 msgid "Videos added"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Videos from"
 msgstr ""
 
@@ -1779,15 +1795,15 @@ msgstr ""
 msgid "Videos seen"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Waits for the YouTube account"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Waits: no value yet for a field of the rule"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Waits: the video is upcoming or live"
 msgstr ""
 
@@ -1795,7 +1811,7 @@ msgstr ""
 msgid "Warning"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Will be added"
 msgstr ""
 
@@ -1807,13 +1823,13 @@ msgstr ""
 msgid "With rules"
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "Without channels, the rule reads the subscriptions feed. The feed needs "
 "the YouTube account."
 msgstr ""
 
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 msgid "Without conditions, the rule takes each video of its channels."
 msgstr ""
 
@@ -2004,7 +2020,7 @@ msgstr ""
 
 #. Translators: a channel that left the subscriptions. A rule can still read it
 #. by its id.
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "{channel}, not subscribed"
 msgstr ""
@@ -2066,7 +2082,7 @@ msgstr ""
 
 #. Translators: {result} is the result of a preview for a video, for example
 #. "Will be added".
-#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "{result}: {count}"
 msgstr ""

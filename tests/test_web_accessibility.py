@@ -257,11 +257,26 @@ async def test_the_focus_goes_back_to_the_edit_button_of_the_rule_when_the_edito
 
     await eventually(lambda: scripts, "The move of the focus")
     (code,) = scripts
-    assert selector_in(code, '[data-row-button="1"]')
-    # The rule can be gone, for example after a delete, so the New rule button is the second choice.
+    # The scope of the table keeps the move from a row button of another page, when the user leaves the rules quickly.
+    assert selector_in(code, '[data-row-scope="rules"] [data-row-button="1"]')
+    # The button can be missing in the browser, so the New rule button of the new page is the second choice.
     assert json.dumps(f"#{element_of(user, 'new-rule').html_id}") in code
-    # The dialog is still closing, so the browser waits a moment before the first try.
-    assert "}, 200);" in code
+    # No dialog closes, so the browser tries at once.
+    assert "}, 0);" in code
+
+
+async def test_the_focus_goes_to_new_rule_when_the_filters_hide_the_rule_of_the_editor(user, stored_data, scripts):
+    await user.open("/rules?q=nothing-matches")
+    user.find(marker="new-rule").click()
+    await eventually(lambda: elements_of(user, "editor"), "The editor")
+    scripts.clear()
+
+    user.find(marker="editor-cancel").click()
+
+    await eventually(lambda: scripts, "The move of the focus")
+    (code,) = scripts
+    assert selector_in(code, f"#{element_of(user, 'new-rule').html_id}")
+    assert element_of(user, "filter-text").value == "nothing-matches"
 
 
 async def test_the_focus_goes_to_new_rule_when_the_editor_of_a_new_rule_closes(user, stored_data, scripts):
@@ -298,7 +313,7 @@ async def test_the_focus_goes_to_the_card_when_a_run_opens_and_back_to_its_butto
 
     await eventually(lambda: scripts, "The move of the focus")
     (code,) = scripts
-    assert selector_in(code, '[data-row-button="1"]')
+    assert selector_in(code, '[data-row-scope="runs"] [data-row-button="1"]')
 
 
 @pytest.mark.parametrize("event", ["rowButton", "rowClick"])
@@ -528,8 +543,9 @@ async def test_the_focus_moves_after_the_table_has_its_new_rows_when_a_rule_is_s
     user.find(marker="editor-save").click()
 
     await eventually(lambda: "focus" in events, "The move of the focus")
-    assert events == ["remember", "read", "focus"]
-    assert selector_in(events.codes[-1], '[data-row-button="1"]')
+    # The rules page reads the rules when it builds, and moves the focus only after that.
+    assert events == ["read", "focus"]
+    assert selector_in(events.codes[-1], '[data-row-scope="rules"] [data-row-button="1"]')
 
 
 async def test_the_focus_goes_to_new_rule_after_a_delete_and_waits_for_the_new_table(user, stored_data, events):
@@ -543,7 +559,7 @@ async def test_the_focus_goes_to_new_rule_after_a_delete_and_waits_for_the_new_t
     user.find(marker="delete-confirm").click()
 
     await eventually(lambda: "focus" in events, "The move of the focus")
-    assert events == ["remember", "read", "focus"]
+    assert events == ["read", "focus"]
     # The server knows that the rule is gone, so the focus does not wait for a button of the rule.
     assert selector_in(events.codes[-1], f"#{element_of(user, 'new-rule').html_id}")
     assert "[data-row-button=" not in events.codes[-1]

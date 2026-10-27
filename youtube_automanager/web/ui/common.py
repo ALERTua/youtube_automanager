@@ -32,6 +32,8 @@ ROW_SCOPE_ATTRIBUTE = "data-row-scope"
 ROW_BUTTON_JS_HANDLER = "(id) => emit(id)"
 # The attribute of a control that keeps the focus when a redraw replaces it. See ``focus_key``.
 FOCUS_KEY_ATTRIBUTE = "data-focus-key"
+# The most digits of a whole number in an address. Each number of 18 digits fits into the 64 bits of a database id.
+MAX_NUMBER_DIGITS = 18
 # The wait before the focus moves back to a button, so a dialog that is closing does not take the focus again.
 FOCUS_DELAY_MS = 200
 
@@ -360,3 +362,14 @@ class ResultLabel(ui.label):
 
 def format_time(value: datetime, zone: ZoneInfo) -> str:
     return value.astimezone(zone).strftime(TIME_FORMAT)
+
+
+def whole_number(text: str | None) -> int | None:
+    """Return the whole number of ``text``, a part of an address, or None when the text is not one, for example "abc".
+
+    Only the ASCII digits count, so a text such as "1e3" or "-1" is not a number here. A number of more than
+    ``MAX_NUMBER_DIGITS`` digits is not one either: a database id has 64 bits, and SQLite refuses a larger Python int.
+    """
+    if not text or len(text) > MAX_NUMBER_DIGITS or not (text.isascii() and text.isdigit()):
+        return None
+    return int(text)
