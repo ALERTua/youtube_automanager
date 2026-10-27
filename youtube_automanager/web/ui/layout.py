@@ -201,6 +201,12 @@ _FOLLOWERS: WeakKeyDictionary[Client, list[AddressFollower]] = WeakKeyDictionary
 
 # The name of the flag in the browser that makes the browser warn before a reload or a close of the tab.
 UNLOAD_WARNING_FLAG = "__warnBeforeUnload"
+# The script that loads the page of the tab again, with its path and its query. After the user chose to stay on the page
+# in the warning before a reload, Firefox refuses each later reload of that page by a script, ``location.reload()`` and
+# ``history.go(0)`` of ``ui.navigate.reload``, also 20 s later. ``location.replace`` of another address still loads it.
+# An address that differs only in its fragment would only scroll, so the address leaves the fragment out. A page that
+# opens a part by its fragment, such as a History run, writes the fragment again when it builds.
+RELOAD_SCRIPT = "location.replace(location.pathname + location.search);"
 
 
 def unload_warning_script() -> str:
@@ -294,8 +300,9 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
     paints its background for the moment before the scripts of the page run. The theme button of the header goes to the
     next theme at once, and it stores it.
 
-    The language button stores the next language, and it loads the page again at the same address, so the frame, the
-    content and the texts of Quasar show the new language. The content can ask first, as for a click in the drawer.
+    The language button names the language that a click gives. A click stores that language, and loads the page again
+    at the same path and query, so the frame, the content and the texts of Quasar show the new language. The content
+    can ask first, as for a click in the drawer.
     """
     client = ui.context.client
     # The head gets each part once, at the full load: NiceGUI adds a later part to the head and never removes one.
@@ -329,9 +336,7 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
         # The user agreed to leave, so the browser does not ask a second time before the new load.
         for check in list(_LEAVE_CHECKS.get(client, ())):
             check.warn_on_unload(False)
-        with client:
-            # The browser loads the address that it shows, with its query and its fragment.
-            ui.navigate.reload()
+        client.run_javascript(RELOAD_SCRIPT)
 
     items: dict[str, ui.item] = {}
 
@@ -368,9 +373,9 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
         icon_button("menu", _("Menu"), drawer.toggle, props="flat round color=white").mark("menu")
         ui.label(_("YouTube AutoManager")).classes("text-h6")
         ui.space()
-        # The name of the shown language is in that language, so it names the button in each language.
-        language_name = NAMES[shown_language]
-        icon_button("translate", language_name, switch_language, props="flat round color=white").mark("language")
+        # The button names the language of the click in that language, so a reader of each language finds it.
+        target_name = NAMES[NEXT_LANGUAGE[shown_language]]
+        icon_button("translate", target_name, switch_language, props="flat round color=white").mark("language")
         with (
             ui.button(icon=ICONS[theme], on_click=switch_theme)
             .props("flat round color=white")

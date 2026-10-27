@@ -1,8 +1,10 @@
 """The language of the pages: one stored setting of the service, with the language button of the header."""
 
 import asyncio
+from urllib.parse import urlsplit
 
 import pytest
+from conftest import recording_run_javascript
 from nicegui import Client, app, ui
 from ui_support import (
     client_of,
@@ -15,9 +17,10 @@ from ui_support import (
     text_of,
 )
 
-from youtube_automanager.db.models import Setting
+from youtube_automanager.db.models import Run, RunStatus, RunTrigger, Setting
 from youtube_automanager.i18n import language
 from youtube_automanager.i18n.setting import LANGUAGE_KEY, read_language
+from youtube_automanager.web.ui.layout import RELOAD_SCRIPT, UNLOAD_WARNING_FLAG
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -45,28 +48,52 @@ def label_of(user, path: str) -> str:
     return label.text
 
 
-async def switch_language(user) -> Client:
-    """Click the language button, and wait for the new load of the page. Return the client of the new load."""
-    old = user.client
+@pytest.fixture
+def browser(monkeypatch) -> list[str]:
+    """Record the scripts of the switch that the user simulation does not run: the new load of the page and the
+    warning flag before a reload."""
+    scripts: list[str] = []
+    markers = (RELOAD_SCRIPT, UNLOAD_WARNING_FLAG)
+    monkeypatch.setattr(Client, "run_javascript", recording_run_javascript(scripts.append, markers=markers))
+    return scripts
+
+
+def browser_address(client: Client) -> str:
+    """Return the address that ``RELOAD_SCRIPT`` loads in the tab of ``client``: its path and its query."""
+    parts = urlsplit(client.sub_pages_router.current_path)
+    return parts.path + (f"?{parts.query}" if parts.query else "")
+
+
+async def switch_language(user, browser: list[str]) -> Client:
+    """Click the language button, wait for the script of the new load, and load the address of the tab as the browser
+    does. Return the client of the new load."""
+    reloads = browser.count(RELOAD_SCRIPT)
     user.find(marker="language").click()
-    return await eventually(lambda: user.client if user.client is not old else None, "The new load of the page")
+    await eventually(lambda: browser.count(RELOAD_SCRIPT) > reloads, "The script of the new load")
+    return await user.open(browser_address(client_of(user)))
 
 
-async def test_the_language_button_names_the_shown_language(user):
+def test_the_new_load_keeps_the_path_and_the_query_and_works_after_a_refused_reload():
+    # Firefox refuses location.reload() and history.go(0) after the user stayed on the page in the warning before a
+    # reload. location.replace of an address that only differs in the fragment would only scroll.
+    assert RELOAD_SCRIPT == "location.replace(location.pathname + location.search);"
+
+
+async def test_the_language_button_names_the_language_of_its_click(user):
     await user.open("/")
 
     button = element_of(user, "language")
     assert button.props["icon"] == "translate"
-    assert button.props["aria-label"] == "English"
-    assert tooltip_of(user, button) == "English"
+    assert button.props["aria-label"] == "Українська"
+    assert tooltip_of(user, button) == "Українська"
     assert app.config.language == "en-US"
 
 
-async def test_the_switch_stores_the_language_and_the_new_load_shows_the_catalog(user, sessions, uk_catalog):
+async def test_the_switch_stores_the_language_and_the_new_load_shows_the_catalog(user, sessions, uk_catalog, browser):
     await user.open(HISTORY_VIEW)
     assert label_of(user, "/history") == "History"
 
-    client = await switch_language(user)
+    client = await switch_language(user, browser)
 
     assert read_language(sessions) == "uk"
     assert language() == "uk"
@@ -79,17 +106,30 @@ async def test_the_switch_stores_the_language_and_the_new_load_shows_the_catalog
     assert label_of(user, "/scheduler") == "Scheduler"
     assert client.title == "Історія — YouTube AutoManager"
     button = element_of(user, "language")
-    assert button.props["aria-label"] == "Українська"
-    assert tooltip_of(user, button) == "Українська"
+    assert button.props["aria-label"] == "English"
+    assert tooltip_of(user, button) == "English"
 
 
-async def test_the_new_load_gets_the_language_pack_of_quasar(user, uk_catalog):
+async def test_the_new_load_of_an_open_history_run_shows_the_run_again(user, sessions, uk_catalog, browser):
+    store(sessions, Run(status=RunStatus.FAILED, trigger=RunTrigger.MANUAL, error_text="boom"))
+    await user.open("/history?run=1")
+    await eventually(lambda: client_of(user).sub_pages_router.current_path.endswith("#run-actions"), "The fragment")
+
+    client = await switch_language(user, browser)
+
+    # The new load leaves the fragment out, and the page writes it again when it builds.
+    assert user.back_history[-1] == "/history?run=1"
+    await eventually(lambda: client.sub_pages_router.current_path == "/history?run=1#run-actions", "The fragment")
+    await user.should_see("boom")
+
+
+async def test_the_new_load_gets_the_language_pack_of_quasar(user, uk_catalog, browser):
     await user.open("/")
     page = (await user.http_client.get("/")).text
     assert '<html lang="en-US">' in page
     assert "/static/lang/en-US.umd.prod.js" in page
 
-    await switch_language(user)
+    await switch_language(user, browser)
 
     assert app.config.language == "uk"
     page = (await user.http_client.get("/")).text
@@ -97,17 +137,17 @@ async def test_the_new_load_gets_the_language_pack_of_quasar(user, uk_catalog):
     assert "/static/lang/uk.umd.prod.js" in page
 
 
-async def test_a_second_switch_goes_back_to_english(user, sessions, uk_catalog):
+async def test_a_second_switch_goes_back_to_english(user, sessions, uk_catalog, browser):
     await user.open("/")
-    await switch_language(user)
+    await switch_language(user, browser)
     await user.should_see(marker="language")
 
-    await switch_language(user)
+    await switch_language(user, browser)
 
     assert read_language(sessions) == "en"
     await user.should_see(marker="language")
     assert label_of(user, "/") == "Dashboard"
-    assert element_of(user, "language").props["aria-label"] == "English"
+    assert element_of(user, "language").props["aria-label"] == "Українська"
     assert app.config.language == "en-US"
 
 
@@ -118,7 +158,7 @@ async def test_the_stored_language_applies_at_the_start(nicegui_globals, setting
         assert language() == "uk"
         await user.open("/")
         assert label_of(user, "/") == "Панель"
-        assert element_of(user, "language").props["aria-label"] == "Українська"
+        assert element_of(user, "language").props["aria-label"] == "English"
         assert app.config.language == "uk"
 
 
@@ -130,7 +170,7 @@ async def test_a_service_without_a_stored_language_starts_in_english(user, sessi
     assert read_language(sessions) == "en"
 
 
-async def test_the_switch_with_changes_of_the_editor_asks_and_keep_editing_stays(user, sessions, uk_catalog):
+async def test_the_switch_with_changes_of_the_editor_asks_and_keep_editing_stays(user, sessions, uk_catalog, browser):
     client = await user.open("/rules/new")
     set_value(user, "rule-name", "Changed")
 
@@ -145,27 +185,23 @@ async def test_the_switch_with_changes_of_the_editor_asks_and_keep_editing_stays
     assert element_of(user, "rule-name").value == "Changed"
     assert read_language(sessions) == "en"
     assert language() == "en"
+    assert RELOAD_SCRIPT not in browser
 
 
-async def test_the_switch_with_changes_of_the_editor_and_discard_switches(user, sessions, uk_catalog, monkeypatch):
-    written: list[str] = []
-    real = Client.run_javascript
-
-    def run_javascript(self, code, **kwargs):
-        written.append(code)
-        return real(self, code, **kwargs)
-
-    monkeypatch.setattr(Client, "run_javascript", run_javascript)
+async def test_the_switch_with_changes_of_the_editor_and_discard_switches(user, sessions, uk_catalog, browser):
     await user.open("/rules/new")
     set_value(user, "rule-name", "Changed")
-    await eventually(lambda: "window.__warnBeforeUnload = true;" in written, "The warning before a reload")
+    await eventually(lambda: "window.__warnBeforeUnload = true;" in browser, "The warning before a reload")
 
     user.find(marker="language").click()
     await eventually(lambda: elements_of(user, "discard-dialog"), "The question of the switch")
     user.find(marker="discard-confirm").click()
 
-    await eventually(lambda: read_language(sessions) == "uk", "The stored language")
-    await eventually(lambda: user.back_history[-1] == "/rules/new" and elements_of(user, "rule-name"), "The new load")
+    await eventually(lambda: RELOAD_SCRIPT in browser, "The script of the new load")
+    assert read_language(sessions) == "uk"
     # The user agreed to leave, so the browser must not ask again before the new load.
-    assert "window.__warnBeforeUnload = false;" in written[written.index("window.__warnBeforeUnload = true;") :]
+    after_change = browser[browser.index("window.__warnBeforeUnload = true;") :]
+    assert after_change.index("window.__warnBeforeUnload = false;") < after_change.index(RELOAD_SCRIPT)
+    await user.open(browser_address(client_of(user)))
+    assert user.back_history[-1] == "/rules/new"
     assert label_of(user, "/") == "Панель"

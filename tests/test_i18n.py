@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import pytest
@@ -104,8 +105,9 @@ def test_each_test_starts_in_english():
     assert _("Dashboard") == "Dashboard"
 
 
-def test_without_a_stored_language_the_language_is_english(sessions):
+def test_without_a_stored_language_the_language_is_english(sessions, caplog):
     assert read_language(sessions) == "en"
+    assert not caplog.records
 
 
 def test_the_stored_language_comes_back(sessions):
@@ -118,10 +120,14 @@ def test_the_stored_language_comes_back(sessions):
 
 
 @pytest.mark.parametrize("value", ["xx", 5, None, ["uk"]])
-def test_a_stored_value_that_is_not_a_language_gives_english(sessions, value):
+def test_a_stored_value_that_is_not_a_language_gives_english_and_a_warning(sessions, value, caplog):
     store(sessions, Setting(key=LANGUAGE_KEY, value=value))
 
     assert read_language(sessions) == "en"
+
+    (record,) = caplog.records
+    assert record.levelno == logging.WARNING
+    assert record.getMessage() == f"The stored language {value!r} is not one of en, uk, so the pages are in English"
 
 
 def test_a_save_refuses_an_unknown_language(sessions):
