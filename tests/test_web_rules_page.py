@@ -53,6 +53,7 @@ from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.rules_store import validate_name
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.web.ui import layout, rule_editor, rules_page
+from youtube_automanager.web.ui.common import keyboard_sort_template
 from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.web.ui.rule_form import LIVE_STATUSES
 
@@ -1958,3 +1959,14 @@ async def test_the_column_added_follows_the_end_of_a_run(nicegui_globals, settin
 
         await eventually(lambda: table_rows(user)[0]["added"] == "1 / 2", "The new counts")
         assert element_of(user, "rules-table") is table
+
+
+async def test_each_sortable_header_of_the_rules_table_sorts_with_the_keyboard_too(user, three_rules):
+    await user.open("/rules")
+    table = element_of(user, "rules-table")
+
+    template = table.slots["header-cell"].template or ""
+
+    assert template == keyboard_sort_template("rules")
+    # The header keeps the label of its column.
+    assert "{{ props.col.label }}" in template

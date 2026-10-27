@@ -1,6 +1,6 @@
-"""The helpers that two or more pages share: the table columns, the button of a table row, the icon button, the confirm
-dialog, the busy button, the button "Run now", the result label, the time zone of the schedule, the format of a time,
-and the labels of the run statuses, the session states and the run triggers.
+"""The helpers that two or more pages share: the table columns, the button of a table row, the keyboard sort of a table,
+the icon button, the confirm dialog, the busy button, the button "Run now", the result label, the time zone of the
+schedule, the format of a time, and the labels of the run statuses, the session states and the run triggers.
 """
 
 import html
@@ -103,6 +103,32 @@ def row_button_template(icon: str, label: str) -> str:
     <q-tooltip>{text}</q-tooltip>
   </q-btn>
 </q-td>
+"""
+
+
+def add_keyboard_sort(table: ui.table, key: str) -> None:
+    """Give each sortable column header of ``table`` a keyboard path and tell its sort to a screen reader.
+
+    A click on the header of a column with ``sortable`` sorts the rows, but Quasar makes the header no stop of the Tab
+    key. So the header takes the focus, and Enter and Space sort as a click does. ``aria-sort`` tells the current sort:
+    ``ascending``, ``descending`` or ``none``. Quasar marks the sorted column with the classes ``sorted`` and
+    ``sort-desc`` of ``__thClass``, which it computes from the current sort. The sort draws the header again, so a key
+    of ``focus_key`` keeps the focus on the header of the same column. ``key`` is unique on the page.
+    """
+    table.add_slot("header-cell", keyboard_sort_template(key))
+
+
+def keyboard_sort_template(key: str) -> str:
+    """Return the Vue template of a header cell of ``add_keyboard_sort``. ``key`` holds only letters, digits and ``-``."""
+    if not key.replace("-", "").isalnum():
+        raise ValueError(f"The key of a table must hold only letters, digits and '-': {key!r}")
+    return f"""
+<q-th :props="props" :tabindex="props.col.sortable ? 0 : null" \
+:aria-sort="props.col.sortable ? (props.col.__thClass.includes(' sorted') ? \
+(props.col.__thClass.includes('sort-desc') ? 'descending' : 'ascending') : 'none') : null" \
+:{FOCUS_KEY_ATTRIBUTE}="props.col.sortable ? '{key}-sort-' + props.col.name : null" \
+@keydown.enter.prevent="props.col.sortable && props.sort(props.col)" \
+@keydown.space.prevent="props.col.sortable && props.sort(props.col)">{{{{ props.col.label }}}}</q-th>
 """
 
 

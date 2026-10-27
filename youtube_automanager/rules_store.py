@@ -172,7 +172,8 @@ def read_added_counts(sessions: sessionmaker[Session], now: datetime) -> dict[in
 
     One grouped query counts the actions ``added`` of the history by their rule. The time of an action is the time of
     its add, so a long run counts each video on its own day. A rule that added nothing in the 30 days has no entry.
-    The history keeps the actions of a deleted rule, so the result can hold the id of a rule that is gone.
+    The history keeps the actions of a deleted rule, so the result can hold the id of a rule that is gone. ``now`` must
+    be in UTC: a day back from a time in another zone is not 24 hours across a change of the clock.
     """
     week_start = now - timedelta(days=ADDED_WEEK_DAYS)
     month_start = now - timedelta(days=ADDED_MONTH_DAYS)

@@ -20,6 +20,7 @@ from youtube_automanager.web.ui.common import (
     focus_when_drawn,
     format_time,
     icon_button,
+    keyboard_sort_template,
     named,
     read_timezone,
     row_button_selector,
@@ -370,3 +371,27 @@ async def test_named_gives_a_field_its_name_for_a_screen_reader(helper_pages, us
         field = named(ui.input(), "Condition")
 
     assert field.props["aria-label"] == "Condition"
+
+
+def test_the_header_of_a_sortable_column_has_a_keyboard_path_and_tells_its_sort():
+    # The user simulation never draws a slot, so these literals are the only check of the header that the browser runs.
+    template = keyboard_sort_template("rules")
+
+    assert '<q-th :props="props"' in template
+    # Only a sortable header is a stop of the Tab key, and Enter and Space sort as a click does.
+    assert ':tabindex="props.col.sortable ? 0 : null"' in template
+    assert '@keydown.enter.prevent="props.col.sortable && props.sort(props.col)"' in template
+    assert '@keydown.space.prevent="props.col.sortable && props.sort(props.col)"' in template
+    # Quasar marks the sorted column in __thClass with " sorted" and "sort-desc".
+    assert (
+        ":aria-sort=\"props.col.sortable ? (props.col.__thClass.includes(' sorted') ? "
+        "(props.col.__thClass.includes('sort-desc') ? 'descending' : 'ascending') : 'none') : null\""
+    ) in template
+    assert ":data-focus-key=\"props.col.sortable ? 'rules-sort-' + props.col.name : null\"" in template
+    assert ">{{ props.col.label }}</q-th>" in template
+
+
+@pytest.mark.parametrize("key", ["", "a b", "x'+alert(1)+'", "{{ 1 }}"])
+def test_the_key_of_a_keyboard_sort_holds_only_letters_digits_and_dashes(key):
+    with pytest.raises(ValueError, match="The key of a table must hold only letters, digits and '-'"):
+        keyboard_sort_template(key)

@@ -10,8 +10,9 @@ The address keeps the filters in its query: ``q`` is the text of the search, ``p
 so a reload and a shared link show the same rules.
 
 The switch Enabled of a row turns its rule on and off at once. The row keeps its place until the next read of the
-table, also when the filter of the state would hide it now. A click on a column header sorts the rows in the browser, and
-the page keeps that order when it builds the table again, for example after a change of a filter.
+table, also when the filter of the state would hide it now. A click on a column header, or Enter and Space on it, sorts
+the rows in the browser, and the page keeps that order when it builds the table again, for example after a change of a
+filter.
 
 The column Added counts the videos that each rule added in the last 7 and in the last 30 days, from the history. The
 page reads the counts with the rules, and again after the end of each run.
@@ -41,6 +42,7 @@ from youtube_automanager.web.ui.account_lists import account_lists
 from youtube_automanager.web.ui.common import (
     FOCUS_KEY_ATTRIBUTE,
     actions_column,
+    add_keyboard_sort,
     add_row_button,
     column,
     focus_when_drawn,
@@ -346,6 +348,7 @@ async def rules_page(services: Services) -> None:
         if state.pagination is not None:
             table.pagination = state.pagination
         table.on_pagination_change(keep_sort)
+        add_keyboard_sort(table, RULES_SCOPE)
         table.add_slot("body-cell-enabled", ENABLED_CELL)
         table.on(TOGGLE_EVENT, toggle_rule, js_handler=TOGGLE_JS_HANDLER)
         table.add_slot("body-cell-channels", LONG_CELL)
