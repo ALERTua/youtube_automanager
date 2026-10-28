@@ -127,6 +127,17 @@ def test_subscribe_and_unsubscribe_run_the_subscription_body_and_give_its_exit_c
     assert logging_setups == [True]
 
 
+def test_change_subscriptions_gives_the_standard_input_to_the_batch_body(settings, logging_setups, monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "change_subscriptions_once", lambda given, text: calls.append((given, text)) or 6)
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"subscribe": false, "channels": []}\n'))
+
+    assert cli.main(["change-subscriptions"]) == 6
+
+    assert calls == [(settings, '{"subscribe": false, "channels": []}\n')]
+    assert logging_setups == [True]
+
+
 DRAFT = DraftRule({"regex": [{"var": "title"}, "-x", "i"]}, ("UCx",), True)
 
 
@@ -201,6 +212,7 @@ def test_serve_starts_uvicorn_with_the_app_and_the_address_of_the_settings(
         ["subscribe"],
         ["unsubscribe", "--title=x"],
         ["unsubscribe", "--channel-id=UCx", "--title=x"],
+        ["change-subscriptions", "--channel-id=UCx"],
         ["preview-rule", "--since=2026-10-05"],
         ["preview-rule"],
         ["preview-rule", "--since=yesterday", "--rule-id=3"],

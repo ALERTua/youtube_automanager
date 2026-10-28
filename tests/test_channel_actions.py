@@ -4,6 +4,7 @@ No test reads or changes YouTube: fakes stand in for the yt-dlp readers, the acc
 """
 
 import datetime
+import io
 import json
 import os
 import subprocess
@@ -13,16 +14,27 @@ import threading
 import pytest
 from sqlalchemy import select
 from yt_dlp import YoutubeDL
+from yt_dlp.networking.common import Response
 
 from youtube_automanager import channel_actions
 from youtube_automanager.channel_actions import (
+    RETRY_WAITS_SECONDS,
     SEARCH_LIMIT,
     SEARCH_TIMEOUT_SECONDS,
     SUBSCRIPTION_TIMEOUT_SECONDS,
     AddOutcome,
+    BatchChannel,
+    ChannelOutcome,
     FoundChannel,
+    OutcomeKind,
+    SubscriptionBatchResult,
     add_channel_to_rule,
+    batch_request,
+    batch_timeout_seconds,
     change_subscription_once,
+    change_subscriptions_command,
+    change_subscriptions_in_child,
+    change_subscriptions_once,
     find_channels_command,
     find_channels_in_child,
     find_channels_once,
@@ -44,7 +56,7 @@ from youtube_automanager.db.models import (
     SessionState,
 )
 from youtube_automanager.engine import account_session
-from youtube_automanager.pacing import RequestBudget
+from youtube_automanager.pacing import BUCKET_SIZE, REFILL_S, RequestBudget, minimum_seconds
 from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import BUSY_TEXT, SCHEDULED_WAIT_S, SOURCE_ROOT, SyncRunner
 from youtube_automanager.settings import Settings
@@ -62,12 +74,19 @@ from youtube_automanager.short_child import (
     ChildYouTubeError,
 )
 from youtube_automanager.youtube import public
-from youtube_automanager.youtube.account import AccountError, NotLoggedInError, RequestsPausedError, WriteRejectedError
+from youtube_automanager.youtube.account import (
+    AccountError,
+    NetworkOrServerError,
+    NotLoggedInError,
+    RequestsPausedError,
+    WriteRejectedError,
+)
 from youtube_automanager.youtube.public import ChannelInfo, PublicSourceError
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
 A = "UCaaaaaaaaaaaaaaaaaaaaaa"
 B = "UCbbbbbbbbbbbbbbbbbbbbbb"
+C = "UCcccccccccccccccccccccc"
 WAIT_SECONDS = 10
 COOKIE_VALUE = "fake-sapisid"
 COOKIES = (
@@ -191,18 +210,31 @@ def test_a_failed_search_ends_with_the_youtube_error_code_and_the_cause_on_one_l
 
 @pytest.fixture
 def fake_client(monkeypatch):
-    """Replaces the account client of the account session. A test sets ``check_error`` or ``change_error``."""
+    """Replaces the account client of the account session.
+
+    A test sets ``check_error``, ``config_error`` or ``change_error``. ``errors`` maps a channel id to the outcomes of
+    its next changes in order: an error to raise, or None for a confirmed change. Each change records the page config
+    that it got.
+    """
 
     class FakeClient:
         check_error = None
+        config_error = None
         change_error = None
 
         def __init__(self, text, *, budget):
             self.text = text
 
         def check_session(self):
+            FakeClient.checks += 1
             if FakeClient.check_error is not None:
                 raise FakeClient.check_error
+
+        def home_config(self):
+            FakeClient.configs += 1
+            if FakeClient.config_error is not None:
+                raise FakeClient.config_error
+            return {"config": FakeClient.configs}
 
         def use_cookies(self, text):
             self.text = text
@@ -210,18 +242,27 @@ def fake_client(monkeypatch):
         def cookies_text(self):
             return self.text.replace("fake-sidcc-0", "fake-sidcc-1")
 
-        def subscribe(self, channel_id):
-            self._change("subscribe", channel_id)
+        def subscribe(self, channel_id, *, ytcfg=None):
+            self._change("subscribe", channel_id, ytcfg)
 
-        def unsubscribe(self, channel_id):
-            self._change("unsubscribe", channel_id)
+        def unsubscribe(self, channel_id, *, ytcfg=None):
+            self._change("unsubscribe", channel_id, ytcfg)
 
-        def _change(self, action, channel_id):
+        def _change(self, action, channel_id, ytcfg):
             FakeClient.changes.append((action, channel_id))
-            if FakeClient.change_error is not None:
+            FakeClient.ytcfgs.append(ytcfg)
+            planned = FakeClient.errors.get(channel_id)
+            if planned:
+                error = planned.pop(0)
+                if error is not None:
+                    raise error
+            elif FakeClient.change_error is not None:
                 raise FakeClient.change_error
 
     FakeClient.changes = []
+    FakeClient.ytcfgs = []
+    FakeClient.errors = {}
+    FakeClient.checks = FakeClient.configs = 0
     monkeypatch.setattr(account_session, "AccountClient", FakeClient)
     return FakeClient
 
@@ -413,6 +454,363 @@ def test_a_text_that_is_not_a_channel_id_fails_before_any_request(settings, db_s
     assert fake_client.changes == []
     with db_sessions() as session:
         assert session.scalars(select(Account)).one().session_state is SessionState.UNKNOWN
+
+
+# The body of the subscription batch child.
+
+PAUSE = RequestPause(BreakerReason.BOT_CHECK, datetime.datetime(2026, 10, 28, 18, 0, tzinfo=datetime.UTC), "UTC")
+
+
+def batch_text(subscribe, *channels):
+    """The batch line of ``channels``: an id, or a tuple of an id and a title."""
+    return batch_request(
+        subscribe,
+        [BatchChannel(*channel) if isinstance(channel, tuple) else BatchChannel(channel) for channel in channels],
+    )
+
+
+def stderr_lines(capsys) -> list[str]:
+    return capsys.readouterr().err.strip().splitlines()
+
+
+def outcome(channel_id, kind="confirmed", cause=None) -> dict:
+    return {"channel_id": channel_id, "outcome": kind, "cause": cause}
+
+
+def network_error(text="HTTP Error 503: Service Unavailable") -> NetworkOrServerError:
+    return NetworkOrServerError(f"yt-dlp failed to subscribe to channel x: {text}")
+
+
+def test_a_batch_checks_the_session_and_reads_the_page_config_once_and_gives_it_to_each_change(
+    settings, db_sessions, fake_client, capsys
+):
+    store_cookies(db_sessions, settings)
+    store(db_sessions, Channel(channel_id=A, title="Stored", handle="@stored", is_subscribed=False))
+    sleeps = []
+
+    code = change_subscriptions_once(
+        settings, batch_text(True, (A, "Another title"), (B, " Bravo "), C), sleep=sleeps.append
+    )
+
+    assert code == 0
+    assert (fake_client.checks, fake_client.configs) == (1, 1)
+    assert fake_client.changes == [("subscribe", A), ("subscribe", B), ("subscribe", C)]
+    assert fake_client.ytcfgs == [{"config": 1}] * 3
+    assert sleeps == []
+    assert json.loads(last_stderr_line(capsys)) == {
+        "subscribe": True,
+        "outcomes": [outcome(A), outcome(B), outcome(C)],
+        "stopped": None,
+    }
+    rows = [stored_channel(db_sessions, channel_id) for channel_id in (A, B, C)]
+    assert [(row.title, row.handle, row.is_subscribed) for row in rows] == [
+        ("Stored", "@stored", True),
+        ("Bravo", None, True),
+        (C, None, True),
+    ]
+
+
+def test_an_unsubscribe_batch_writes_the_flag_and_adds_no_row(settings, db_sessions, fake_client, capsys):
+    store_cookies(db_sessions, settings)
+    store(db_sessions, Channel(channel_id=A, title="Stored", is_subscribed=True))
+
+    assert change_subscriptions_once(settings, batch_text(False, A, B)) == 0
+
+    assert fake_client.changes == [("unsubscribe", A), ("unsubscribe", B)]
+    assert json.loads(last_stderr_line(capsys))["outcomes"] == [outcome(A), outcome(B)]
+    assert stored_channel(db_sessions, A).is_subscribed is False
+    assert stored_channel(db_sessions, B) is None
+
+
+def test_each_confirmed_change_is_stored_before_the_next_change(
+    settings, db_sessions, fake_client, monkeypatch, capsys
+):
+    store_cookies(db_sessions, settings)
+    store(
+        db_sessions,
+        Channel(channel_id=A, title="Alpha", is_subscribed=True),
+        Channel(channel_id=B, title="Bravo", is_subscribed=True),
+    )
+    seen = []
+    change = fake_client._change
+
+    def recording_change(self, action, channel_id, ytcfg):
+        seen.append(
+            (channel_id, stored_channel(db_sessions, A).is_subscribed, stored_channel(db_sessions, B).is_subscribed)
+        )
+        change(self, action, channel_id, ytcfg)
+
+    monkeypatch.setattr(fake_client, "_change", recording_change)
+
+    assert change_subscriptions_once(settings, batch_text(False, A, B)) == 0
+
+    assert seen == [(A, True, True), (B, False, True)]
+    assert stored_channel(db_sessions, B).is_subscribed is False
+
+
+def test_a_channel_in_the_target_state_already_is_a_success(settings, db_sessions, fake_client, capsys):
+    store_cookies(db_sessions, settings)
+    store(db_sessions, Channel(channel_id=A, title="Alpha", is_subscribed=True))
+
+    assert change_subscriptions_once(settings, batch_text(True, A)) == 0
+    assert change_subscriptions_once(settings, batch_text(True, A)) == 0
+
+    assert json.loads(last_stderr_line(capsys))["outcomes"] == [outcome(A)]
+    assert stored_channel(db_sessions, A).is_subscribed is True
+
+
+def test_each_channel_of_the_batch_goes_once(settings, db_sessions, fake_client, capsys):
+    store_cookies(db_sessions, settings)
+
+    assert change_subscriptions_once(settings, batch_text(True, (A, "First"), B, (A, "Second"))) == 0
+
+    assert fake_client.changes == [("subscribe", A), ("subscribe", B)]
+    assert json.loads(last_stderr_line(capsys))["outcomes"] == [outcome(A), outcome(B)]
+    assert stored_channel(db_sessions, A).title == "First"
+
+
+def test_a_change_that_youtube_does_not_confirm_is_skipped_and_the_batch_goes_on(
+    settings, db_sessions, fake_client, capsys, caplog
+):
+    store_cookies(db_sessions, settings)
+    store(
+        db_sessions,
+        Channel(channel_id=A, title="Alpha", is_subscribed=False),
+        Channel(channel_id=B, title="Bravo", is_subscribed=False),
+    )
+    cause = f"YouTube did not confirm that it could subscribe to channel {A}: subscribed states [False]"
+    fake_client.errors = {A: [WriteRejectedError(cause)]}
+    sleeps = []
+
+    assert change_subscriptions_once(settings, batch_text(True, A, B), sleep=sleeps.append) == 0
+
+    assert fake_client.changes == [("subscribe", A), ("subscribe", B)]
+    assert sleeps == []
+    assert json.loads(last_stderr_line(capsys)) == {
+        "subscribe": True,
+        "outcomes": [outcome(A, "rejected", cause), outcome(B)],
+        "stopped": None,
+    }
+    assert stored_channel(db_sessions, A).is_subscribed is False
+    assert stored_channel(db_sessions, B).is_subscribed is True
+    assert f"The subscription batch skips channel {A}: {cause}" in caplog.text
+
+
+def test_a_network_failure_waits_10_s_then_30_s_and_sends_the_same_change_again(
+    settings, db_sessions, fake_client, capsys, caplog
+):
+    store_cookies(db_sessions, settings)
+    first, second = network_error(), network_error("<urlopen error timed out>")
+    fake_client.errors = {A: [first, second, None]}
+    sleeps = []
+
+    assert change_subscriptions_once(settings, batch_text(True, A, B), sleep=sleeps.append) == 0
+
+    assert RETRY_WAITS_SECONDS == (10, 30)
+    assert sleeps == [10, 30]
+    assert fake_client.changes == [("subscribe", A)] * 3 + [("subscribe", B)]
+    assert fake_client.ytcfgs == [{"config": 1}] * 4
+    assert json.loads(last_stderr_line(capsys))["outcomes"] == [outcome(A), outcome(B)]
+    assert stored_channel(db_sessions, A).is_subscribed is True
+    assert f"The change of channel {A} failed, so it goes again in 10 s: {first}" in caplog.text
+    assert f"The change of channel {A} failed, so it goes again in 30 s: {second}" in caplog.text
+
+
+def test_the_third_network_failure_stops_the_batch_with_the_youtube_error_code(
+    settings, db_sessions, fake_client, capsys, caplog
+):
+    store_cookies(db_sessions, settings)
+    store(db_sessions, *(Channel(channel_id=channel_id, title="x", is_subscribed=False) for channel_id in (A, B, C)))
+    last = network_error("HTTP Error 500:\n Internal Server Error")
+    fake_client.errors = {B: [network_error(), network_error(), last]}
+    sleeps = []
+
+    code = change_subscriptions_once(settings, batch_text(True, A, B, C), sleep=sleeps.append)
+
+    assert code == EXIT_YOUTUBE_ERROR
+    assert sleeps == [10, 30]
+    assert fake_client.changes == [("subscribe", A)] + [("subscribe", B)] * 3
+    cause = " ".join(str(last).split())
+    *_, result_line, cause_line = stderr_lines(capsys)
+    assert cause_line == cause
+    assert json.loads(result_line) == {
+        "subscribe": True,
+        "outcomes": [outcome(A), outcome(B, "failed", cause)],
+        "stopped": {"reason": "network", "cause": cause},
+    }
+    assert [stored_channel(db_sessions, channel_id).is_subscribed for channel_id in (A, B, C)] == [True, False, False]
+    assert f"The subscription batch stopped after 2 of 3 channel(s), because of network: {cause}" in caplog.text
+
+
+def test_a_pause_stops_the_batch_at_once_and_keeps_the_confirmed_changes(settings, db_sessions, fake_client, capsys):
+    store_cookies(db_sessions, settings)
+    store(db_sessions, *(Channel(channel_id=channel_id, title="x", is_subscribed=True) for channel_id in (A, B, C)))
+    fake_client.errors = {B: [RequestsPausedError(PAUSE)]}
+    sleeps = []
+
+    code = change_subscriptions_once(settings, batch_text(False, A, B, C), sleep=sleeps.append)
+
+    assert code == EXIT_PAUSED
+    assert sleeps == []
+    assert fake_client.changes == [("unsubscribe", A), ("unsubscribe", B)]
+    *_, result_line, pause_line = stderr_lines(capsys)
+    assert RequestPause.from_line(pause_line) == PAUSE
+    assert json.loads(result_line) == {
+        "subscribe": False,
+        "outcomes": [outcome(A), outcome(B, "failed", str(PAUSE))],
+        "stopped": {"reason": "paused", "cause": str(PAUSE)},
+    }
+    assert [stored_channel(db_sessions, channel_id).is_subscribed for channel_id in (A, B, C)] == [False, True, True]
+    with db_sessions() as session:
+        assert session.scalars(select(Account)).one().session_state is SessionState.OK
+
+
+def test_a_logged_out_answer_stops_the_batch_kills_the_session_and_keeps_the_confirmed_changes(
+    settings, db_sessions, fake_client, capsys
+):
+    store_cookies(db_sessions, settings)
+    store(db_sessions, *(Channel(channel_id=channel_id, title="x", is_subscribed=False) for channel_id in (A, B, C)))
+    fake_client.errors = {B: [NotLoggedInError("YouTube refused the session with HTTP 401")]}
+
+    code = change_subscriptions_once(settings, batch_text(True, A, B, C))
+
+    assert code == EXIT_LOGGED_OUT
+    assert fake_client.changes == [("subscribe", A), ("subscribe", B)]
+    *_, result_line, cause_line = stderr_lines(capsys)
+    assert cause_line == "YouTube refused the session with HTTP 401"
+    assert json.loads(result_line)["stopped"] == {
+        "reason": "logged_out",
+        "cause": "YouTube refused the session with HTTP 401",
+    }
+    assert [stored_channel(db_sessions, channel_id).is_subscribed for channel_id in (A, B, C)] == [True, False, False]
+    with db_sessions() as session:
+        assert session.scalars(select(Account)).one().session_state is SessionState.DEAD
+
+
+def test_another_error_stops_the_batch_without_a_retry(settings, db_sessions, fake_client, capsys):
+    store_cookies(db_sessions, settings)
+    error = AccountError("yt-dlp 2026.10.26 does not fit the client: YoutubeTab._extract_response raised KeyError: 'x'")
+    fake_client.errors = {B: [error]}
+    sleeps = []
+
+    code = change_subscriptions_once(settings, batch_text(True, A, B, C), sleep=sleeps.append)
+
+    assert code == EXIT_YOUTUBE_ERROR
+    assert sleeps == []
+    assert fake_client.changes == [("subscribe", A), ("subscribe", B)]
+    *_, result_line, cause_line = stderr_lines(capsys)
+    assert cause_line == str(error)
+    assert json.loads(result_line) == {
+        "subscribe": True,
+        "outcomes": [outcome(A), outcome(B, "failed", str(error))],
+        "stopped": {"reason": "error", "cause": str(error)},
+    }
+    assert stored_channel(db_sessions, A).is_subscribed is True
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "reason"),
+    [(RequestsPausedError(PAUSE), EXIT_PAUSED, "paused"), (network_error(), EXIT_YOUTUBE_ERROR, "network")],
+    ids=["pause", "network"],
+)
+def test_a_failed_read_of_the_page_config_stops_the_batch_before_any_change(
+    settings, db_sessions, fake_client, capsys, error, code, reason
+):
+    store_cookies(db_sessions, settings)
+    fake_client.config_error = error
+    sleeps = []
+
+    assert change_subscriptions_once(settings, batch_text(True, A, B), sleep=sleeps.append) == code
+
+    assert fake_client.changes == []
+    assert sleeps == []
+    *_, result_line, _last_line = stderr_lines(capsys)
+    assert json.loads(result_line) == {
+        "subscribe": True,
+        "outcomes": [],
+        "stopped": {"reason": reason, "cause": str(error)},
+    }
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not JSON",
+        json.dumps([A]),
+        json.dumps({"subscribe": True}),
+        json.dumps({"subscribe": True, "channels": [{"channel_id": A}], "extra": 1}),
+        json.dumps({"subscribe": 1, "channels": [{"channel_id": A}]}),
+        json.dumps({"subscribe": "true", "channels": [{"channel_id": A}]}),
+        json.dumps({"subscribe": True, "channels": []}),
+        json.dumps({"subscribe": True, "channels": {"channel_id": A}}),
+        json.dumps({"subscribe": True, "channels": [{"channel_id": A}, {"channel_id": "@handle"}]}),
+        json.dumps({"subscribe": True, "channels": [{"channel_id": A}, {"channel_id": f"{B}x"}]}),
+        json.dumps({"subscribe": True, "channels": [{"channel_id": A}, B]}),
+        json.dumps({"subscribe": True, "channels": [{"title": "Alpha"}]}),
+        json.dumps({"subscribe": True, "channels": [{"channel_id": A, "title": 5}]}),
+        json.dumps({"subscribe": True, "channels": [{"channel_id": A, "handle": "@alpha"}]}),
+    ],
+)
+def test_a_batch_that_is_not_valid_fails_before_any_request(settings, db_sessions, fake_client, text):
+    store_cookies(db_sessions, settings)
+
+    with pytest.raises(ValueError, match="subscription batch|channel id|channel title"):
+        change_subscriptions_once(settings, text)
+
+    assert (fake_client.checks, fake_client.configs, fake_client.changes) == (0, 0, [])
+    with db_sessions() as session:
+        assert session.scalars(select(Account)).one().session_state is SessionState.UNKNOWN
+
+
+# A logged-in page config with only the keys that yt-dlp reads, and fake values.
+YTCFG = {
+    "LOGGED_IN": True,
+    "INNERTUBE_API_KEY": "fakeApiKey",
+    "INNERTUBE_CLIENT_NAME": "WEB",
+    "INNERTUBE_CLIENT_VERSION": "2.20261010.00.00",
+    "INNERTUBE_CONTEXT_CLIENT_NAME": 1,
+    "INNERTUBE_CONTEXT": {
+        "client": {"clientName": "WEB", "clientVersion": "2.20261010.00.00", "hl": "en", "visitorData": "fakeVisitor"}
+    },
+    "VISITOR_DATA": "fakeVisitor",
+    "DATASYNC_ID": "fakeUserSession||",
+    "SESSION_INDEX": "0",
+    "USER_SESSION_ID": "fakeUserSession",
+}
+
+
+def test_a_batch_through_yt_dlp_reads_the_home_page_twice_and_sends_one_change_for_each_channel(
+    settings, db_sessions, monkeypatch, capsys
+):
+    """The real account client and yt-dlp, with a fake transport: the check and the config read the home page."""
+    store_cookies(db_sessions, settings)
+    real_budget = account_session.RequestBudget
+    # The real budget waits between the requests, and this test needs no wait.
+    monkeypatch.setattr(
+        account_session,
+        "RequestBudget",
+        lambda *args, **kwargs: real_budget(*args, sleep=lambda seconds: None, **kwargs),
+    )
+    requests = []
+
+    def answer(ydl, request):
+        path = request.url.split("?")[0]
+        requests.append(path)
+        if path.endswith("/youtubei/v1/subscription/unsubscribe"):
+            channel_id = json.loads(request.data)["channelIds"][0]
+            action = {"updateSubscribeButtonAction": {"subscribed": False, "channelId": channel_id}}
+            body, content_type = json.dumps({"actions": [action]}), "application/json; charset=UTF-8"
+        else:
+            body, content_type = f"<html><script>ytcfg.set({json.dumps(YTCFG)});</script></html>", "text/html"
+        return Response(io.BytesIO(body.encode()), request.url, {"Content-Type": content_type})
+
+    monkeypatch.setattr(YoutubeDL, "urlopen", answer)
+
+    assert change_subscriptions_once(settings, batch_text(False, A, B, C)) == 0
+
+    unsubscribe = "https://www.youtube.com/youtubei/v1/subscription/unsubscribe"
+    assert requests == ["https://www.youtube.com"] * 2 + [unsubscribe] * 3
+    assert json.loads(last_stderr_line(capsys))["outcomes"] == [outcome(A), outcome(B), outcome(C)]
 
 
 # The parent.
@@ -669,6 +1067,158 @@ def test_a_child_that_does_not_end_in_time_is_killed(runner, fake_starter, monke
     assert not runner.is_active()
 
 
+def batch_line(subscribe, *outcomes, stopped=None) -> str:
+    return json.dumps({"subscribe": subscribe, "outcomes": list(outcomes), "stopped": stopped}) + "\n"
+
+
+def test_the_time_limit_of_a_batch_grows_with_its_channels():
+    assert batch_timeout_seconds(1) == SUBSCRIPTION_TIMEOUT_SECONDS + minimum_seconds(3) + 40
+    assert batch_timeout_seconds(100) == SUBSCRIPTION_TIMEOUT_SECONDS + (102 - BUCKET_SIZE) * REFILL_S + 100 * 40
+    assert sum(RETRY_WAITS_SECONDS) == 40
+
+
+def test_a_batch_gives_its_channels_to_the_child_on_the_standard_input_and_reads_the_outcomes(
+    db_sessions, db_url, tmp_path, fake_starter
+):
+    start, waits = recorded_waits(fake_starter)
+    inputs = []
+
+    def recording_start(command, env, input_text):
+        inputs.append(input_text)
+        return start(command, env, input_text)
+
+    runner = SyncRunner(
+        db_sessions,
+        ytdlp_dir=tmp_path / "yt-dlp",
+        database_url=db_url,
+        child_timeout_s=WAIT_SECONDS,
+        start=recording_start,
+        lock=threading.Lock(),
+    )
+    cause = "YouTube did not confirm that it could subscribe to channel B: subscribed states []"
+    fake_starter.plan.append(
+        {"stderr": "a warning\n" + batch_line(True, outcome(A), outcome(B, "rejected", cause), outcome(C))}
+    )
+
+    result = change_subscriptions_in_child(
+        runner, True, [BatchChannel(A, "Alpha"), BatchChannel(B), BatchChannel(A, "Again"), BatchChannel(C, "Чарлі")]
+    )
+
+    assert result == SubscriptionBatchResult(
+        True,
+        (
+            ChannelOutcome(A, OutcomeKind.CONFIRMED, None),
+            ChannelOutcome(B, OutcomeKind.REJECTED, cause),
+            ChannelOutcome(C, OutcomeKind.CONFIRMED, None),
+        ),
+    )
+    ((command, _env),) = fake_starter.calls
+    assert command == change_subscriptions_command()
+    assert [json.loads(text) for text in inputs] == [
+        {
+            "subscribe": True,
+            "channels": [
+                {"channel_id": A, "title": "Alpha"},
+                {"channel_id": B, "title": None},
+                {"channel_id": C, "title": "Чарлі"},
+            ],
+        }
+    ]
+    assert waits == [batch_timeout_seconds(3)]
+
+
+def test_a_batch_without_channels_starts_no_child(runner, fake_starter):
+    assert change_subscriptions_in_child(runner, False, []) == SubscriptionBatchResult(False, ())
+
+    assert fake_starter.calls == []
+
+
+def test_the_parent_reads_the_result_that_the_child_writes(
+    settings, db_sessions, fake_client, capsys, runner, fake_starter
+):
+    store_cookies(db_sessions, settings)
+    fake_client.errors = {B: [WriteRejectedError("YouTube did not confirm the change")]}
+    assert change_subscriptions_once(settings, batch_text(False, A, B)) == 0
+    fake_starter.plan.append({"stderr": last_stderr_line(capsys) + "\n"})
+
+    result = change_subscriptions_in_child(runner, False, [BatchChannel(A), BatchChannel(B)])
+
+    assert result.outcomes == (
+        ChannelOutcome(A, OutcomeKind.CONFIRMED, None),
+        ChannelOutcome(B, OutcomeKind.REJECTED, "YouTube did not confirm the change"),
+    )
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "",
+        "a warning only\n",
+        "[]\n",
+        batch_line(False, outcome(A), outcome(B)),
+        json.dumps({"subscribe": 1, "outcomes": [outcome(A), outcome(B)], "stopped": None}) + "\n",
+        json.dumps({"subscribe": True, "outcomes": [outcome(A), outcome(B)]}) + "\n",
+        json.dumps({"subscribe": True, "outcomes": {}, "stopped": None}) + "\n",
+        batch_line(True, outcome(A), outcome(B), stopped={"reason": "network", "cause": "x"}),
+        batch_line(True, outcome(A)),
+        batch_line(True, outcome(B), outcome(A)),
+        batch_line(True, outcome(A), outcome(B), outcome(C)),
+        batch_line(True, outcome(A), outcome(B, "failed", "x")),
+        batch_line(True, outcome(A), outcome(B, "skipped", "x")),
+        batch_line(True, outcome(A), outcome(B, "rejected", 5)),
+        batch_line(True, outcome(A), {**outcome(B), "extra": 1}),
+        batch_line(True, outcome(A), [B]),
+        batch_line(True, outcome(A), outcome(B)) + "a warning after the result\n",
+    ],
+)
+def test_an_exit_code_0_without_the_outcome_of_each_channel_is_a_process_error(runner, fake_starter, stderr):
+    fake_starter.plan.append({"stderr": stderr})
+
+    with pytest.raises(ChildFailed, match="ended without the outcome of each channel"):
+        change_subscriptions_in_child(runner, True, [BatchChannel(A), BatchChannel(B)])
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "error_class"),
+    [
+        (EXIT_UNAVAILABLE, ChildUnavailable),
+        (EXIT_LOGGED_OUT, ChildLoggedOut),
+        (EXIT_YOUTUBE_ERROR, ChildYouTubeError),
+    ],
+)
+def test_a_stopped_batch_gives_the_error_of_its_exit_code_with_the_last_stderr_line(
+    runner, fake_starter, exit_code, error_class
+):
+    result = batch_line(True, outcome(A, "failed", "the cause"), stopped={"reason": "error", "cause": "the cause"})
+    fake_starter.plan.append({"exit_code": exit_code, "stderr": f"{result}the cause\n"})
+
+    with pytest.raises(error_class) as raised:
+        change_subscriptions_in_child(runner, True, [BatchChannel(A)])
+
+    assert str(raised.value) == "the cause"
+
+
+def test_a_batch_that_stops_at_a_pause_gives_the_pause_to_the_parent(runner, fake_starter):
+    result = batch_line(True, outcome(A), outcome(B, "failed", str(PAUSE)), stopped={"reason": "paused", "cause": "x"})
+    fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": f"{result}{PAUSE.to_line()}\n"})
+
+    with pytest.raises(ChildPaused) as raised:
+        change_subscriptions_in_child(runner, True, [BatchChannel(A), BatchChannel(B)])
+
+    assert raised.value.pause == PAUSE
+
+
+def test_a_batch_while_a_run_is_active_starts_nothing_and_is_busy(runner, fake_starter):
+    run_id = runner.claim(RunTrigger.MANUAL)
+    try:
+        with pytest.raises(ChildBusy):
+            change_subscriptions_in_child(runner, True, [BatchChannel(A)])
+    finally:
+        runner.execute(run_id)
+
+    assert len(fake_starter.calls) == 1
+
+
 # A channel for a rule.
 
 
@@ -793,6 +1343,24 @@ def test_the_real_subscribe_child_without_a_cookie_key_is_unavailable_and_change
     assert "COOKIES_KEY is not set" in capfd.readouterr().err
 
 
+def test_the_real_batch_child_without_a_cookie_key_is_unavailable_and_changes_nothing(
+    db_sessions, db_url, tmp_path, monkeypatch, capfd
+):
+    """Starts the real `change-subscriptions` child: the batch reaches it on its standard input."""
+    monkeypatch.delenv("COOKIES_KEY", raising=False)
+    real_runner = SyncRunner(
+        db_sessions, ytdlp_dir=tmp_path / "yt-dlp", database_url=db_url, child_timeout_s=90, lock=threading.Lock()
+    )
+
+    with pytest.raises(ChildUnavailable, match="COOKIES_KEY is not set"):
+        change_subscriptions_in_child(real_runner, True, [BatchChannel(A, "Alpha"), BatchChannel(B)])
+
+    assert stored_channel(db_sessions, A) is None
+    out = capfd.readouterr().out
+    assert "The subscription batch of 2 channel(s) failed:" in out
+    assert "COOKIES_KEY is not set" in out
+
+
 def test_the_real_search_child_with_an_empty_query_finds_nothing_without_a_request(
     db_sessions, db_url, tmp_path, capfd
 ):
@@ -809,11 +1377,12 @@ def test_the_web_process_does_not_import_yt_dlp_for_a_search_or_a_subscription_c
     found_line = json.dumps([found_dict()])
     subscribed_line = json.dumps({"channel_id": A, "subscribed": True})
     unsubscribed_line = json.dumps({"channel_id": A, "subscribed": False})
+    batch_result_line = json.dumps({"subscribe": True, "outcomes": [outcome(A)], "stopped": None})
     code = (
         "import io, pathlib, sys, tempfile\n"
         "from fastapi.testclient import TestClient\n"
-        "from youtube_automanager.channel_actions import find_channels_in_child, subscribe_in_child, "
-        "unsubscribe_in_child\n"
+        "from youtube_automanager.channel_actions import BatchChannel, change_subscriptions_in_child, "
+        "find_channels_in_child, subscribe_in_child, unsubscribe_in_child\n"
         "from youtube_automanager.settings import Settings\n"
         "from youtube_automanager.web.app import create_app\n"
         "from youtube_automanager.web.ui import mount_ui\n"
@@ -822,6 +1391,7 @@ def test_the_web_process_does_not_import_yt_dlp_for_a_search_or_a_subscription_c
         f"    'find-channels': {found_line!r},\n"
         f"    'subscribe': {subscribed_line!r},\n"
         f"    'unsubscribe': {unsubscribed_line!r},\n"
+        f"    'change-subscriptions': {batch_result_line!r},\n"
         "}\n"
         "\n"
         "class Child:\n"
@@ -846,6 +1416,7 @@ def test_the_web_process_does_not_import_yt_dlp_for_a_search_or_a_subscription_c
         "    found = find_channels_in_child(runner, '@alpha')\n"
         f"    subscribe_in_child(runner, {A!r}, 'Alpha')\n"
         f"    unsubscribe_in_child(runner, {A!r})\n"
+        f"    change_subscriptions_in_child(runner, True, [BatchChannel({A!r})])\n"
         "assert page.status_code == 200, page.text\n"
         f"assert [channel.channel_id for channel in found] == [{A!r}], found\n"
         "assert 'yt_dlp' not in sys.modules, sorted(name for name in sys.modules if name.startswith('yt_dlp'))\n"

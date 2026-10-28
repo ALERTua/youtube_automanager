@@ -1,8 +1,9 @@
 """The command line of the service: ``serve`` starts the web service. ``run-once`` is one sync, ``check-session`` is one
 session check, ``check-upload`` is one check of a cookie upload, ``refresh-account`` is one refresh of the account
-data, ``find-channels`` is one channel search, and ``subscribe`` and ``unsubscribe`` change one subscription,
-``preview-rule`` is one preview of a rule, ``apply-rule`` is one apply of a rule, and ``check-ytdlp`` is one check of
-a new yt-dlp release. The service starts each command except ``serve`` in a child process.
+data, ``find-channels`` is one channel search, ``subscribe`` and ``unsubscribe`` change one subscription,
+``change-subscriptions`` changes the subscriptions of many channels, ``preview-rule`` is one preview of a rule,
+``apply-rule`` is one apply of a rule, and ``check-ytdlp`` is one check of a new yt-dlp release. The service starts each
+command except ``serve`` in a child process.
 """
 
 import argparse
@@ -12,7 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from youtube_automanager.account_refresh import refresh_once
-from youtube_automanager.channel_actions import change_subscription_once, find_channels_once
+from youtube_automanager.channel_actions import change_subscription_once, change_subscriptions_once, find_channels_once
 from youtube_automanager.cookie_upload_check import check_upload_once
 from youtube_automanager.engine.rule_preview import DraftRule
 from youtube_automanager.log_setup import setup_logging
@@ -65,6 +66,11 @@ def _parser() -> argparse.ArgumentParser:
         help="unsubscribe the account from a channel; the service starts this command in a child process",
     )
     unsubscribe_parser.add_argument("--channel-id", required=True, help="the UC... id of the channel")
+    commands.add_parser(
+        "change-subscriptions",
+        help="read a batch of channels and the target state as one JSON line from the standard input, and subscribe "
+        "or unsubscribe each channel; the service starts this command in a child process",
+    )
     preview_parser = commands.add_parser(
         "preview-rule",
         help="list the videos since a day that a rule matches, or the videos of the next run without a day, without "
@@ -156,6 +162,12 @@ def _change_subscription(channel_id: str, *, subscribe: bool, title: str | None 
     return change_subscription_once(settings, channel_id, subscribe=subscribe, title=title)
 
 
+def _change_subscriptions() -> int:
+    settings = get_settings()
+    setup_logging(settings.verbose)
+    return change_subscriptions_once(settings, sys.stdin.read())
+
+
 def _preview_rule(since: datetime.date | None, rule_id: int | None, draft: DraftRule | None) -> int:
     settings = get_settings()
     setup_logging(settings.verbose)
@@ -192,6 +204,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _change_subscription(args.channel_id, subscribe=True, title=args.title)
     if args.command == "unsubscribe":
         return _change_subscription(args.channel_id, subscribe=False)
+    if args.command == "change-subscriptions":
+        return _change_subscriptions()
     if args.command == "preview-rule":
         if args.rule_id is None and args.draft is None:
             _parser().error("preview-rule needs --rule-id, --draft or both")
