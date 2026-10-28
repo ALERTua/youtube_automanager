@@ -12,6 +12,7 @@ from youtube_automanager.i18n import N_
 from youtube_automanager.web.ui import layout
 from youtube_automanager.web.ui.common import (
     DAY_CELL_FORMAT,
+    DAY_CELL_SORT,
     TIME_CELL_FORMAT,
     TIME_CELL_SORT,
     ResultLabel,
@@ -178,6 +179,20 @@ def test_a_day_column_lets_the_browser_format_each_day_and_keeps_another_text():
         ":format": DAY_CELL_FORMAT,
     }
     assert DAY_CELL_FORMAT == "(value) => window.browserDates?.day(value) || value"
+
+
+def test_a_sortable_day_column_sorts_by_the_text_of_the_day_and_an_empty_field_comes_first():
+    assert day_column("date", "Date", sortable=True) == {
+        "name": "date",
+        "label": "Date",
+        "field": "date",
+        "align": "left",
+        "sortable": True,
+        ":format": DAY_CELL_FORMAT,
+        ":sort": DAY_CELL_SORT,
+    }
+    # ``YYYY-MM-DD`` sorts as the day does, with the comparison of the text and not of a date, so no time zone moves it.
+    assert DAY_CELL_SORT == "(a, b) => ((a || '') < (b || '') ? -1 : (a || '') > (b || '') ? 1 : 0)"
 
 
 def test_the_time_script_formats_each_moment_in_the_form_of_the_browser_and_in_the_zone_of_the_service():

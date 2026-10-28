@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 21:49+0200\n"
+"POT-Creation-Date: 2026-10-28 22:19+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -686,6 +686,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Last update"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Last video"
 msgstr ""
 
 #: youtube_automanager/web/ui/account_lists.py
@@ -1531,6 +1535,10 @@ msgstr ""
 msgid ""
 "The service deletes older runs with their actions at its start and each "
 "day at {time} ({zone})."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "The service does not read this channel"
 msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py

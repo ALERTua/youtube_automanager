@@ -39,6 +39,8 @@ ZONE_FIELD = "zone"
 TIME_CELL_FORMAT = "(value, row) => (value && window.browserDates?.moment(value, row.zone)) || value"
 TIME_CELL_SORT = "(a, b) => (Date.parse(a) || 0) - (Date.parse(b) || 0)"
 DAY_CELL_FORMAT = "(value) => window.browserDates?.day(value) || value"
+# The sort of a column of days. The text ``YYYY-MM-DD`` sorts as the day does, and an empty field comes first.
+DAY_CELL_SORT = "(a, b) => ((a || '') < (b || '') ? -1 : (a || '') > (b || '') ? 1 : 0)"
 # The name of the table column that holds the button of each row.
 ROW_BUTTON_COLUMN = "actions"
 # The event that the cell of a row button emits, and the code that the browser runs to send only the id of the row.
@@ -90,10 +92,16 @@ def time_column(name: str, label: str, *, sortable: bool = False) -> dict:
     return definition
 
 
-def day_column(name: str, label: str) -> dict:
+def day_column(name: str, label: str, *, sortable: bool = False) -> dict:
     """Return the definition of a column whose field holds a day as ``YYYY-MM-DD``. The browser shows the day in its own
-    form. Another text of the field, for example "No date", shows as it is."""
-    return {**column(name, label), ":format": DAY_CELL_FORMAT}
+    form. Another text of the field, for example "No date", shows as it is.
+
+    A sortable column sorts by the day, and a row with an empty field sorts as the oldest.
+    """
+    definition = {**column(name, label, sortable=sortable), ":format": DAY_CELL_FORMAT}
+    if sortable:
+        definition[":sort"] = DAY_CELL_SORT
+    return definition
 
 
 def actions_column() -> dict:

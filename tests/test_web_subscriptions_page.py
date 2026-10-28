@@ -5,7 +5,7 @@ import contextlib
 import io
 import json
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -13,7 +13,7 @@ from nicegui import ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import event, select
 from ui_support import (
     Held,
     collect_deleted_elements,
@@ -39,15 +39,19 @@ from youtube_automanager.db.models import (
     RuleChannel,
     Schedule,
     ScheduleKind,
+    SeenVideo,
+    SeenVideoState,
     Setting,
 )
+from youtube_automanager.engine.sync import FEED_SOURCE
+from youtube_automanager.i18n import set_language
 from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
 from youtube_automanager.web.ui import subscriptions_page
-from youtube_automanager.web.ui.common import format_time, iso_time, template_text
+from youtube_automanager.web.ui.common import DAY_CELL_FORMAT, DAY_CELL_SORT, format_time, iso_time, template_text
 from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -135,7 +139,7 @@ def row_of(user, channel_id: str, marker: str = "channels-table") -> dict:
 
 
 # The fields of a row that its cells show. The other fields serve the cell of the actions.
-SHOWN_FIELDS = ("id", "title", "url", "thumbnail", "handle", "subscribers", "subscribed", "rules")
+SHOWN_FIELDS = ("id", "title", "url", "thumbnail", "handle", "subscribers", "subscribed", "rules", "last_video")
 
 
 def shown(row: dict) -> dict:
@@ -233,7 +237,14 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
     await user.open("/subscriptions")
 
     table = element_of(user, "channels-table")
-    assert [column["label"] for column in table.columns] == ["Channel", "Handle", "Subscribed", "Rules", "Actions"]
+    assert [column["label"] for column in table.columns] == [
+        "Channel",
+        "Handle",
+        "Subscribed",
+        "Rules",
+        "Last video",
+        "Actions",
+    ]
     assert [shown(row) for row in table.rows] == [
         {
             "id": ALPHA,
@@ -243,6 +254,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
             "handle": "@AlphaNews",
             "subscribed": "Yes",
             "rules": "",
+            "last_video": "",
         },
         {
             "id": BRAVO,
@@ -252,6 +264,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
             "handle": "",
             "subscribed": "No",
             "rules": "Science, Cooking (off)",
+            "last_video": "",
         },
         {
             "id": CHARLIE,
@@ -261,6 +274,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
             "handle": "@charlie_tv",
             "subscribed": "Yes",
             "rules": "",
+            "last_video": "",
         },
         {
             "id": DELTA,
@@ -270,11 +284,195 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
             "handle": "@deltascience",
             "subscribed": "No",
             "rules": "Science",
+            "last_video": "",
         },
     ]
     assert text_of(user, "channels-summary") == "4 of 4 channels"
     await user.should_not_see(marker="no-channels")
     assert result_of(user) == ""
+
+
+# The column "Last video".
+
+NO_DATE_TEXT = "The service does not read this channel"
+
+
+def seen(channel_id: str, video_id: str, upload_date: date | None, state=SeenVideoState.SEEN) -> SeenVideo:
+    return SeenVideo(channel_id=channel_id, video_id=video_id, state=state, upload_date=upload_date)
+
+
+def last_videos(sessions) -> dict[str, date | None]:
+    return {channel.channel_id: channel.last_video for channel in subscriptions_page.read_lists(sessions).channels}
+
+
+def test_the_last_video_of_a_channel_is_the_newest_date_of_its_seen_videos(sessions):
+    store(sessions, channel(ALPHA, "Alpha"), channel(BRAVO, "Bravo"))
+    store(
+        sessions,
+        seen(ALPHA, "a1", date(2026, 3, 1)),
+        seen(ALPHA, "a2", date(2026, 10, 27)),
+        seen(ALPHA, "a3", date(2026, 5, 9), SeenVideoState.DEFERRED),
+        seen(BRAVO, "b1", date(2025, 12, 31)),
+    )
+
+    assert last_videos(sessions) == {ALPHA: date(2026, 10, 27), BRAVO: date(2025, 12, 31)}
+
+
+def test_a_seen_video_without_a_date_does_not_count(sessions):
+    store(sessions, channel(ALPHA, "Alpha"), channel(BRAVO, "Bravo"))
+    store(
+        sessions,
+        seen(ALPHA, "a1", None),
+        seen(ALPHA, "a2", date(2026, 2, 3)),
+        seen(ALPHA, "a3", None),
+        seen(BRAVO, "b1", None),
+    )
+
+    # A channel whose only rows have no date shows no date, as a channel without rows does.
+    assert last_videos(sessions) == {ALPHA: date(2026, 2, 3), BRAVO: None}
+
+
+def test_a_channel_without_seen_videos_has_no_last_video(sessions):
+    store(sessions, channel(ALPHA, "Alpha"))
+
+    assert last_videos(sessions) == {ALPHA: None}
+
+
+def test_the_feed_source_is_not_a_channel_and_gives_no_channel_a_date(sessions):
+    # The page keeps its own copy of the key, because it must not import the engine, which imports yt-dlp.
+    assert subscriptions_page.FEED_SOURCE == FEED_SOURCE
+    store(sessions, channel(ALPHA, "Alpha"), channel(BRAVO, "Bravo"))
+    store(
+        sessions,
+        seen(FEED_SOURCE, "f1", date(2026, 10, 28)),
+        seen(FEED_SOURCE, "a1", date(2026, 10, 20)),
+        seen(ALPHA, "a1", date(2026, 1, 2)),
+    )
+
+    # The newest feed video is not a date of Alpha, and the feed video with the id of an Alpha video changes nothing.
+    assert last_videos(sessions) == {ALPHA: date(2026, 1, 2), BRAVO: None}
+
+
+def test_the_dates_of_all_channels_come_from_one_query(sessions):
+    ids = [f"UC{number:022d}" for number in range(6)]
+    store(sessions, *(channel(channel_id, f"Channel {channel_id}") for channel_id in ids))
+    store(
+        sessions,
+        *(seen(channel_id, f"v{number}", date(2026, 1, number + 1)) for number, channel_id in enumerate(ids)),
+        *(seen(channel_id, f"w{number}", date(2026, 2, number + 1)) for number, channel_id in enumerate(ids)),
+    )
+    statements = []
+
+    def record(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = sessions.kw["bind"]
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        lists = subscriptions_page.read_lists(sessions)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert [channel.last_video for channel in lists.channels] == [date(2026, 2, number + 1) for number in range(6)]
+    # One query reads the seen videos of all six channels. The other three reads are the channels, the links of the rules
+    # and the rules, so no query runs for each channel.
+    assert len([statement for statement in statements if "seen_video" in statement]) == 1
+    assert len(statements) == 4
+
+
+async def test_the_page_gives_the_browser_the_day_as_plain_text_and_an_empty_text_without_a_date(user, sessions):
+    store(sessions, channel(ALPHA, "Alpha"), channel(BRAVO, "Bravo"), channel(CHARLIE, "Charlie"))
+    store(sessions, seen(ALPHA, "a1", date(2026, 3, 1)), seen(ALPHA, "a2", date(2026, 1, 15)), seen(BRAVO, "b1", None))
+    await user.open("/subscriptions")
+
+    # The text has no time and no time zone, so no browser moves the day: it formats the day itself, as a day.
+    assert {row["id"]: row["last_video"] for row in rows_of(user, "channels-table")} == {
+        ALPHA: "2026-03-01",
+        BRAVO: "",
+        CHARLIE: "",
+    }
+    column = next(column for column in element_of(user, "channels-table").columns if column["name"] == "last_video")
+    assert column["label"] == "Last video"
+    assert column[":format"] == DAY_CELL_FORMAT
+    assert "zone" not in column[":format"]
+
+
+async def test_the_last_video_cell_shows_the_day_or_a_dash_with_its_reason(user, sessions):
+    store(sessions, channel(ALPHA, "Alpha"))
+    await user.open("/subscriptions")
+
+    template = template_of(user, "channels-table", "body-cell-last_video")
+
+    assert '<span v-if="props.row.last_video">{{ props.value }}</span>' in template
+    dash = next(line for line in template.splitlines() if "v-else" in line)
+    # The dash has the reason as its tooltip and as its name for a screen reader.
+    assert f'aria-label="{NO_DATE_TEXT}"' in dash
+    assert f"<q-tooltip>{NO_DATE_TEXT}</q-tooltip>" in dash
+    assert "—" in dash
+
+
+async def test_the_last_video_column_sorts_by_the_day_and_has_a_keyboard_path(user, sessions):
+    await user.open("/subscriptions")
+
+    table = element_of(user, "channels-table")
+    sortable = {column["name"]: column.get("sortable", False) for column in table.columns}
+    # The column stands after the rules and before the actions, and no other column sorts.
+    assert sortable == {
+        "title": False,
+        "handle": False,
+        "subscribed": False,
+        "rules": False,
+        "last_video": True,
+        "actions": False,
+    }
+    column = next(column for column in table.columns if column["name"] == "last_video")
+    assert column[":sort"] == DAY_CELL_SORT
+    # The header cell takes the focus and sorts with Enter and Space.
+    header = table.slots["header-cell"].template
+    assert header is not None
+    assert "props.sort(props.col)" in header
+    assert "channels-sort-" in header
+
+
+def test_a_channel_without_a_date_sorts_as_the_oldest():
+    lists = subscriptions_page.StoredLists(
+        [
+            subscriptions_page.ChannelRecord(channel_id, channel_id, None, None, True, last_video)
+            for channel_id, last_video in (
+                (ALPHA, date(2026, 3, 1)),
+                (BRAVO, None),
+                (CHARLIE, date(2025, 12, 31)),
+                (DELTA, date(2026, 10, 2)),
+            )
+        ],
+        [],
+    )
+    rows = [subscriptions_page.channel_row(channel, lists, None) for channel in lists.channels]
+
+    # ``DAY_CELL_SORT`` compares the text of the field: the empty text first, then the days in their order.
+    ascending = sorted(rows, key=lambda row: row["last_video"])
+
+    assert [row["id"] for row in ascending] == [BRAVO, CHARLIE, ALPHA, DELTA]
+    assert [row["last_video"] for row in ascending] == ["", "2025-12-31", "2026-03-01", "2026-10-02"]
+    assert DAY_CELL_SORT == "(a, b) => ((a || '') < (b || '') ? -1 : (a || '') > (b || '') ? 1 : 0)"
+
+
+async def test_the_found_table_has_no_column_last_video(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(FOUND, "Found Channel", "@found", 1))
+
+    table = element_of(user, "found-table")
+    assert [column["name"] for column in table.columns] == ["title", "handle", "subscribers", "subscribed", "actions"]
+    assert "last_video" not in row_of(user, FOUND, "found-table")
+    assert "body-cell-last_video" not in table.slots
+
+
+def test_the_texts_of_the_last_video_column_have_a_ukrainian_translation(real_uk_catalog):
+    set_language("uk")
+
+    assert [column["label"] for column in subscriptions_page.channel_columns()][-2] == "Останнє відео"
+    assert "Сервіс не читає цей канал" in subscriptions_page.last_video_cell()
+    assert NO_DATE_TEXT not in subscriptions_page.last_video_cell()
 
 
 async def test_the_time_of_the_last_refresh_shows_in_the_time_zone_of_the_schedule(
@@ -1077,6 +1275,7 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
     # The columns of each table, by the id of the table.
     columns = {}
     cells = set()
+    last_video_cells = set()
 
     def collect() -> None:
         for element in user.client.elements.values():
@@ -1089,6 +1288,9 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
             if isinstance(element, ui.table):
                 columns[element.id] = [column["label"] for column in element.columns]
                 cells.update(slot.template for name, slot in element.slots.items() if name == "body-cell-actions")
+                last_video_cells.update(
+                    slot.template for name, slot in element.slots.items() if name == "body-cell-last_video"
+                )
                 for row in element.rows:
                     names = ("subscribed", "rules", "unsubscribe_question", "unsubscribe_note")
                     texts.extend(str(row[name]) for name in names if row.get(name))
@@ -1110,7 +1312,7 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
     assert "<<Rule Rule one now reads Bravo title.>>" in texts
     assert "<<Rule one (off)>>" in texts
     column_labels = [label for labels in columns.values() for label in labels]
-    assert len(column_labels) == 10
+    assert len(column_labels) == 11
     assert [label for label in column_labels if not (label.startswith("<<") and label.endswith(">>"))] == []
     # Both tables have the same texts in the cell of their actions, and each such text is marked.
     assert len(cells) == 2
@@ -1130,6 +1332,9 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
         assert "&lt;&lt;Add to rule&gt;&gt;" in template
         unmarked = re.sub(r"&lt;&lt;.*?&gt;&gt;", "", template, flags=re.DOTALL)
         assert [text for text in english if text in unmarked] == []
+    # The tooltip of the dash of the column "Last video" is marked too, and only the stored table has the cell.
+    (last_video_cell,) = last_video_cells
+    assert last_video_cell.count("&lt;&lt;The service does not read this channel&gt;&gt;") == 2
     untranslated = [
         text
         for text in texts

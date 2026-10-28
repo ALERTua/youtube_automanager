@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 21:49+0200\n"
+"POT-Creation-Date: 2026-10-28 22:19+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -736,6 +736,10 @@ msgstr "Останній запуск"
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Last update"
 msgstr "Останнє оновлення"
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Last video"
+msgstr "Останнє відео"
 
 #: youtube_automanager/web/ui/account_lists.py
 #, python-brace-format
@@ -1649,6 +1653,10 @@ msgid ""
 msgstr ""
 "Сервіс видаляє старіші запуски разом з їхніми діями під час старту й "
 "щодня о {time} ({zone})."
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "The service does not read this channel"
+msgstr "Сервіс не читає цей канал"
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid ""
