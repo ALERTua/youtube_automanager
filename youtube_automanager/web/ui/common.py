@@ -1,5 +1,5 @@
 """The helpers that two or more pages share: the table columns, the button of a table row, the keyboard sort of a table,
-the icon button, the confirm dialog, the busy button, the button "Run now", the result label, the time zone of the
+the icon button, the confirm dialog, the busy button, the notification of a result, the button "Run now", the result label, the time zone of the
 schedule, the format of a time, and the labels of the run statuses, the session states and the run triggers.
 """
 
@@ -355,13 +355,28 @@ def busy(button: ui.button) -> Generator[None]:
             button.enable()
 
 
-async def run_now(services: Services) -> None:
-    """Start a manual run and tell the user whether it started. The Scheduler page and the Dashboard share it."""
+def notify_in(client: Client, message: str, **options: Any) -> None:
+    """Show ``message`` to the user of ``client``, also when the element that started the handler is gone.
+
+    ``ui.notify`` takes the client from the slot of the element that the handler belongs to. A redraw of a refreshable
+    or a close of a dialog deletes that element, and the call then raises. A handler that tells the result after an
+    ``await`` captures ``ui.context.client`` before the first change of the page, and shows the result with this
+    function. A client whose tab is gone has no user, so the function then does nothing.
+    """
+    if client.is_deleted:
+        return
+    with client:
+        ui.notify(message, **options)
+
+
+async def run_now(services: Services, client: Client) -> None:
+    """Start a manual run and tell the user of ``client`` whether it started. The Scheduler page and the Dashboard
+    share it."""
     result = await services.scheduler.run_now()
     if result.outcome is RunNowOutcome.STARTED:
-        ui.notify(_("Run {id} started.").format(id=result.run_id), type="positive")
+        notify_in(client, _("Run {id} started.").format(id=result.run_id), type="positive")
     else:
-        ui.notify(_("A run is already active, so no new run started."), type="warning")
+        notify_in(client, _("A run is already active, so no new run started."), type="warning")
 
 
 def run_now_button(services: Services, marker: str) -> ui.button:
@@ -370,9 +385,12 @@ def run_now_button(services: Services, marker: str) -> ui.button:
     The button is busy while the start runs, so a double click starts one run.
     """
 
+    # The dashboard draws the card of the button again at each event of a run, which deletes the button.
+    client = ui.context.client
+
     async def press() -> None:
         with busy(button):
-            await run_now(services)
+            await run_now(services, client)
 
     button = ui.button(_("Run now"), icon="bolt", on_click=press).mark(marker)
     return button

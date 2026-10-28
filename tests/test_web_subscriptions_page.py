@@ -10,7 +10,18 @@ from nicegui import ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
 from sqlalchemy import select
-from ui_support import client_of, element_of, elements_of, eventually, running_service, set_value, store, text_of
+from ui_support import (
+    Held,
+    client_of,
+    collect_deleted_elements,
+    element_of,
+    elements_of,
+    eventually,
+    running_service,
+    set_value,
+    store,
+    text_of,
+)
 
 from youtube_automanager import i18n
 from youtube_automanager.account_cache import REFRESHED_AT_KEY
@@ -18,6 +29,7 @@ from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, 
 from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
+from youtube_automanager.web.ui import subscriptions_page
 from youtube_automanager.web.ui.dates import today_in
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
@@ -842,6 +854,61 @@ async def test_the_buttons_of_the_dialog_are_off_while_the_child_works(user, sto
     fake_starter.children[0].finish(0)
     await user.should_see("Subscribed to Bravo Cooking.")
     await eventually(lambda: not elements_of(user, "channel-working"), "The end of the note")
+
+
+@pytest.mark.parametrize("subscribe", [True, False], ids=["subscribe", "unsubscribe"])
+async def test_the_result_shows_when_the_dialog_redraws_itself_while_the_child_works(
+    user, stored_channels, sessions, fake_starter, subscribe
+):
+    channel_id, title = (BRAVO, "Bravo Cooking") if subscribe else (ALPHA, "alpha news")
+    message = f"Subscribed to {title}." if subscribe else f"Unsubscribed from {title}."
+    await user.open("/subscriptions")
+    await open_channel(user, channel_id)
+    fake_starter.plan.append(
+        {"blocking": True, "stderr": stderr_line({"channel_id": channel_id, "subscribed": subscribe})}
+    )
+    # The child writes the database. The fake child does not, so the test writes what the child would write.
+    with sessions.begin() as session:
+        session.get(Channel, channel_id).is_subscribed = subscribe
+    if not subscribe:
+        user.find(marker="channel-unsubscribe").click()
+        await eventually(lambda: elements_of(user, "confirm-unsubscribe"), "The question before the unsubscribe")
+
+    user.find(marker="channel-subscribe" if subscribe else "confirm-unsubscribe").click()
+
+    await eventually(lambda: elements_of(user, "channel-working"), "The note that the service works")
+    await collect_deleted_elements()
+    fake_starter.children[0].finish(0)
+    await user.should_see(message)
+    new_state = "Yes" if subscribe else "No"
+    await eventually(lambda: text_of(user, "channel-subscribed") == new_state, "The new state in the dialog")
+    await eventually(lambda: not elements_of(user, "channel-working"), "The end of the note")
+    assert elements_of(user, "channel-unsubscribe" if subscribe else "channel-subscribe")
+    rows = {row["id"]: row["subscribed"] for row in rows_of(user, "channels-table")}
+    assert rows[channel_id] == new_state
+
+
+async def test_the_result_of_the_save_to_a_rule_shows_when_the_dialog_redraws_itself_while_the_save_runs(
+    user, stored_channels, sessions, monkeypatch
+):
+    save = Held(subscriptions_page.add_to_rule)
+    monkeypatch.setattr(subscriptions_page, "add_to_rule", save)
+    await user.open("/subscriptions")
+    await open_channel(user, ALPHA)
+    await choose_rule(user, 2)
+    user.find(marker="rule-save").click()
+    await eventually(save.entered.is_set, "The start of the save")
+
+    # Back redraws the dialog and deletes the button of the save, which still waits for the database.
+    user.find(marker="rule-back").click()
+    await eventually(lambda: elements_of(user, "channel-unsubscribe"), "The details after the back button")
+    await collect_deleted_elements()
+    save.gate.set()
+
+    await user.should_see("Rule Cooking now reads alpha news.")
+    assert (2, ALPHA) in rule_links(sessions)
+    await eventually(lambda: rows_of(user, "channels-table")[0]["rules"].startswith("Cooking"), "The table reloads")
+    await eventually(lambda: text_of(user, "channel-rules").startswith("Cooking"), "The rules in the dialog")
 
 
 # The translation.

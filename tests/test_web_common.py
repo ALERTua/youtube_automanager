@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import Mock, call
+from unittest.mock import MagicMock, Mock, call
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -22,6 +22,7 @@ from youtube_automanager.web.ui.common import (
     icon_button,
     keyboard_sort_template,
     named,
+    notify_in,
     read_timezone,
     row_button_selector,
     row_button_template,
@@ -395,3 +396,19 @@ def test_the_header_of_a_sortable_column_has_a_keyboard_path_and_tells_its_sort(
 def test_the_key_of_a_keyboard_sort_holds_only_letters_digits_and_dashes(key):
     with pytest.raises(ValueError, match="The key of a table must hold only letters, digits and '-'"):
         keyboard_sort_template(key)
+
+
+def test_notify_in_shows_the_message_under_the_client_and_does_nothing_for_a_client_that_is_gone(monkeypatch):
+    shown = []
+    monkeypatch.setattr(ui, "notify", lambda message, **options: shown.append((message, options)))
+    client = MagicMock(is_deleted=False)
+
+    notify_in(client, "Saved.", type="positive")
+
+    assert shown == [("Saved.", {"type": "positive"})]
+    client.__enter__.assert_called_once()
+    client.is_deleted = True
+
+    notify_in(client, "Late.")
+
+    assert shown == [("Saved.", {"type": "positive"})]

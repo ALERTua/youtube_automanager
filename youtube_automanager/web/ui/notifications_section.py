@@ -26,7 +26,7 @@ from nicegui import ui
 from youtube_automanager.i18n import _
 from youtube_automanager.notify import EVENT_LEVELS, Event, Level, Notifier
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import confirm, icon_button, set_loading
+from youtube_automanager.web.ui.common import confirm, icon_button, notify_in, set_loading
 from youtube_automanager.web.ui.notification_targets import (
     APPRISE_URLS,
     EVENT_LABELS,
@@ -70,6 +70,8 @@ class TargetEditor:
         self.saving = False
 
     def build(self) -> None:
+        # Cancel draws the form again while a save runs, which deletes the Save button, so the result goes through the client.
+        self.client = ui.context.client
         target = self.target
         ui.label(_("Change the target") if target else _("New target")).classes("text-h6").mark("target-editor-title")
         self.name_input = (
@@ -151,10 +153,10 @@ class TargetEditor:
             self.show_error(_("Another target has this name."))
             return
         if outcome is SaveOutcome.GONE:
-            ui.notify(_("The target does not exist any more."), type="warning")
+            notify_in(self.client, _("The target does not exist any more."), type="warning")
         else:
             LOG.info("Saved the notification target %r", name)
-            ui.notify(_("The target {name} is saved.").format(name=name), type="positive")
+            notify_in(self.client, _("The target {name} is saved.").format(name=name), type="positive")
         self.close()
         await self.done()
 
@@ -182,6 +184,9 @@ def _event_label(event: Event) -> str:
 
 async def notifications_section(services: Services, draft: SettingsDraft) -> None:
     writes = draft.writes
+    # A redraw of the cards deletes their buttons, and a handler of a button can end after it. So the result goes through
+    # the client.
+    client = ui.context.client
     targets = await asyncio.to_thread(read_targets, services.sessions)
     state = TargetsState(targets, {target.id: target.choices for target in targets})
 
@@ -262,12 +267,13 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
             state.sending.discard(target_id)
             show_sending(target_id)
         if target is None:
-            ui.notify(_("The target does not exist any more."), type="warning")
+            notify_in(client, _("The target does not exist any more."), type="warning")
             await reload()
         elif sent:
-            ui.notify(_("The test notification went to {name}.").format(name=target.name), type="positive")
+            notify_in(client, _("The test notification went to {name}.").format(name=target.name), type="positive")
         else:
-            ui.notify(
+            notify_in(
+                client,
                 _("The test notification to {name} failed. The log of the service names the cause.").format(
                     name=target.name
                 ),
@@ -286,7 +292,7 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
         async with writes:
             await asyncio.to_thread(delete_target, services.sessions, target.id)
         LOG.info("Deleted the notification target %r", target.name)
-        ui.notify(_("The target {name} is deleted.").format(name=target.name), type="positive")
+        notify_in(client, _("The target {name} is deleted.").format(name=target.name), type="positive")
         await reload()
 
     def close_editor() -> None:
@@ -298,7 +304,7 @@ async def notifications_section(services: Services, draft: SettingsDraft) -> Non
         if target is not None:
             stored = await asyncio.to_thread(load_target, services.sessions, target.id)
             if stored is None:
-                ui.notify(_("The target does not exist any more."), type="warning")
+                notify_in(client, _("The target does not exist any more."), type="warning")
                 await reload()
                 return
             # Another page can have changed the name.
