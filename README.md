@@ -7,6 +7,8 @@
 
 YouTube AutoManager adds new YouTube videos to your playlists by your rules. It runs all the time as one service with a web UI, and it checks the channels on a schedule. A rule names the channels to watch, the conditions that a video must meet, and the target playlist, also Watch Later.
 
+![The rule editor with two channels, a condition and the preview of the next run](media/rule.png)
+
 ## What the service does
 
 - It reads the uploads of each channel of a rule, or the subscriptions feed of your account for a rule without channels.
