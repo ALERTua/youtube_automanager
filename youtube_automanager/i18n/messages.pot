@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 20:11+0200\n"
+"POT-Creation-Date: 2026-10-28 21:43+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -674,6 +674,14 @@ msgstr ""
 #: youtube_automanager/web/ui/history_page.py
 #, python-brace-format
 msgid "Keep the history for {days} days?"
+msgstr ""
+
+#. Translators: the name of the list of languages in the header, for screen
+#. readers. {language} is the name
+#. of the current language, for example "English".
+#: youtube_automanager/web/ui/layout.py
+#, python-brace-format
+msgid "Language: {language}"
 msgstr ""
 
 #: youtube_automanager/web/ui/dashboard.py

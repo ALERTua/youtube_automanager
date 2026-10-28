@@ -54,7 +54,7 @@ from youtube_automanager.db.models import (
     ScheduleKind,
 )
 from youtube_automanager.engine.rules import MATCH_ALL
-from youtube_automanager.i18n.setting import NAMES
+from youtube_automanager.i18n.setting import NAMES, save_language
 from youtube_automanager.rules_store import validate_name
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.web.ui import layout, rule_editor, rules_page
@@ -672,8 +672,8 @@ async def test_the_editor_says_the_errors_of_the_rule_in_the_language_of_the_pag
     user, sessions, account_copy, real_uk_catalog, name, playlist_id, error
 ):
     # The same two errors that the HTTP API gives in English whatever the language of the pages is.
-    # The service started in English before the test body, so the test switches the language of the process.
-    i18n.set_language("uk")
+    # The service started in English before the test body, so the test stores the language that the page then applies.
+    save_language(sessions, "uk")
     await user.open("/rules")
     await open_editor(user)
     set_value(user, "rule-name", name)
@@ -885,7 +885,7 @@ async def test_the_remove_button_of_a_channel_has_its_name_in_the_language_of_th
 ):
     store(sessions, rule(1, "A rule"))
     store(sessions, *links(1, A, C))
-    i18n.set_language("uk")
+    save_language(sessions, "uk")
     await user.open("/rules")
     await open_editor(user, 1)
 

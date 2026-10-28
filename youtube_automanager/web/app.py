@@ -63,9 +63,10 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
         try:
             sessions = make_session_factory(engine)
             # The pages show the stored language from the first page on. The holder keeps a language that is already
-            # in place, for example its English at the first start.
+            # in place, for example its English at the first start. Without a stored language it keeps English until
+            # the first page, which takes the language of its browser.
             stored_language = await asyncio.to_thread(read_language, sessions)
-            if stored_language != language():
+            if stored_language is not None and stored_language != language():
                 set_language(stored_language)
             spec = await asyncio.to_thread(load_schedule, sessions, settings.tz)
             # No run is active after this, so the events of the runs start with no poll.
