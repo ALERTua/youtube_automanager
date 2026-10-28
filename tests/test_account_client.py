@@ -32,6 +32,7 @@ from youtube_automanager.youtube.account import (
     AccountIdentity,
     AccountPlaylist,
     FeedVideo,
+    NetworkOrServerError,
     NotLoggedInError,
     RequestsPausedError,
     SubscribedChannel,
@@ -148,7 +149,8 @@ class FakeYouTube:
     def answer(self, endpoint: str, *answers) -> None:
         """Answer the API endpoint with these answers in order, and repeat the last one.
 
-        An int is an HTTP error, and a tuple of an int and a text is an HTTP error with that message of YouTube.
+        An int is an HTTP error, and a tuple of an int and a text is an HTTP error with that message of YouTube. An
+        exception is a failed connection, which the transport raises.
         """
         self.api[endpoint] = list(answers)
 
@@ -163,6 +165,8 @@ class FakeYouTube:
             endpoint = path.split("/youtubei/v1/")[1]
             answers = self.api[endpoint]
             answer = answers.pop(0) if len(answers) > 1 else answers[0]
+            if isinstance(answer, Exception):
+                raise answer
             if isinstance(answer, int):
                 answer = (answer, "Fake error")
             if isinstance(answer, tuple):
@@ -592,8 +596,9 @@ def test_another_error_answer_leaves_the_breaker_closed(client, youtube, session
         AccountClient.subscribed_channels,
         lambda client: client.add_video("WL", VIDEO),
         lambda client: client.unsubscribe(CHANNEL),
+        AccountClient.home_config,
     ],
-    ids=["check_session", "identity", "subscribed_channels", "add_video", "unsubscribe"],
+    ids=["check_session", "identity", "subscribed_channels", "add_video", "unsubscribe", "home_config"],
 )
 def test_during_the_pause_each_call_of_the_client_fails_at_once_without_the_network(client, youtube, budget, call):
     budget.open_breaker(BreakerReason.BOT_CHECK)
@@ -740,7 +745,7 @@ def test_a_server_error_whose_text_names_a_limit_page_opens_no_breaker(budget, s
 
     mapped = account._account_error(error, "read the account menu", budget)
 
-    assert type(mapped) is AccountError
+    assert type(mapped) is NetworkOrServerError
     assert breaker(sessions) == (None, None)
 
 
@@ -1051,6 +1056,92 @@ def test_a_subscription_change_without_confirmation_raises_write_rejected(client
     assert len(youtube.api_requests("subscription/subscribe")) == 1
 
 
+def test_home_config_reads_the_home_page_once_and_gives_its_config(client, youtube, closes):
+    ytcfg = client.home_config()
+
+    assert ytcfg["LOGGED_IN"] is True
+    assert ytcfg["INNERTUBE_API_KEY"] == "fakeApiKey"
+    assert [request["url"] for request in youtube.requests] == [HOME_URL]
+    assert len(closes) == 1
+
+
+def test_home_config_of_a_dead_session_raises_not_logged_in(client, youtube):
+    youtube.page(HOME_URL, ANONYMOUS_YTCFG)
+
+    with pytest.raises(NotLoggedInError):
+        client.home_config()
+
+
+def test_home_config_with_a_server_error_raises_network_or_server_error(client, youtube, closes):
+    youtube.page_errors[HOME_URL] = 503
+
+    with pytest.raises(NetworkOrServerError, match="read the page config"):
+        client.home_config()
+
+    assert len(closes) == 1
+
+
+@pytest.mark.parametrize(
+    ("call", "endpoint", "subscribed"),
+    [
+        (lambda client, ytcfg: client.subscribe(CHANNEL, ytcfg=ytcfg), "subscription/subscribe", True),
+        (lambda client, ytcfg: client.unsubscribe(CHANNEL, ytcfg=ytcfg), "subscription/unsubscribe", False),
+    ],
+    ids=["subscribe", "unsubscribe"],
+)
+def test_a_subscription_change_with_a_page_config_reads_no_home_page_and_a_repeat_is_a_success(
+    client, youtube, call, endpoint, subscribed
+):
+    ytcfg = client.home_config()
+    # The answer to a change of a channel in the target state already can have a status, and it confirms the state.
+    youtube.answer(
+        endpoint,
+        subscribe_answer(CHANNEL, subscribed),
+        {**subscribe_answer(CHANNEL, subscribed), "status": "STATUS_SUCCEEDED"},
+    )
+
+    assert call(client, ytcfg) is None
+    assert call(client, ytcfg) is None
+
+    assert [request["url"].split("?")[0] for request in youtube.requests] == [HOME_URL] + [
+        f"https://www.youtube.com/youtubei/v1/{endpoint}"
+    ] * 2
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [500, 502, (503, "The service is currently unavailable."), TransportError("[Errno 10054] connection reset")],
+    ids=["500", "502", "503", "connection"],
+)
+def test_a_change_that_gets_no_answer_or_a_server_error_raises_network_or_server_error_after_one_request(
+    client, youtube, sessions, answer
+):
+    youtube.answer("subscription/unsubscribe", answer)
+
+    with pytest.raises(NetworkOrServerError, match=f"unsubscribe from channel {CHANNEL}"):
+        client.unsubscribe(CHANNEL, ytcfg=YTCFG)
+
+    assert len(youtube.api_requests("subscription/unsubscribe")) == 1
+    assert breaker(sessions) == (None, None)
+
+
+def test_a_timeout_of_a_change_raises_network_or_server_error(client, youtube):
+    youtube.answer("subscription/subscribe", TransportError(cause=TimeoutError("timed out")))
+
+    with pytest.raises(NetworkOrServerError, match="timed out"):
+        client.subscribe(CHANNEL, ytcfg=YTCFG)
+
+
+@pytest.mark.parametrize("status", [400, 403, 404])
+def test_another_error_answer_of_a_change_is_no_network_or_server_error(client, youtube, status):
+    youtube.answer("subscription/subscribe", status)
+
+    with pytest.raises(AccountError) as raised:
+        client.subscribe(CHANNEL, ytcfg=YTCFG)
+
+    assert type(raised.value) is AccountError
+
+
 # The lists of the account
 
 
@@ -1247,7 +1338,7 @@ def http_error(status: int) -> ExtractorError:
     ("error", "raised"),
     [
         (download_error(http_error(401)), NotLoggedInError),
-        (download_error(http_error(503)), AccountError),
+        (download_error(http_error(503)), NetworkOrServerError),
         (download_error(ExtractorError("YouTube said: The playlist does not exist.", expected=True)), AccountError),
     ],
     ids=["401", "503", "missing playlist"],
@@ -1267,7 +1358,7 @@ def test_a_yt_dlp_failure_raises_an_account_error(monkeypatch, client, closes, e
     assert len(closes) == 1
 
 
-@pytest.mark.parametrize(("status", "raised"), [(401, NotLoggedInError), (503, AccountError)])
+@pytest.mark.parametrize(("status", "raised"), [(401, NotLoggedInError), (503, NetworkOrServerError)])
 def test_a_failure_on_a_later_page_raises_an_account_error(monkeypatch, client, closes, status, raised):
     error = http_error(status)
 

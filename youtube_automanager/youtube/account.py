@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 from yt_dlp import YoutubeDL
 from yt_dlp.cookies import YoutubeDLCookieJar
-from yt_dlp.networking.exceptions import HTTPError
+from yt_dlp.networking.exceptions import HTTPError, TransportError
 from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError, traverse_obj
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
@@ -102,6 +102,11 @@ class NotLoggedInError(AccountError):
 
 class WriteRejectedError(AccountError):
     """YouTube answered a change, but the answer does not confirm the change."""
+
+
+class NetworkOrServerError(AccountError):
+    """The request got no answer, because the connection failed or timed out, or YouTube answered with a server error
+    (HTTP 5xx). The same request can succeed later."""
 
 
 class RequestsPausedError(AccountError):
@@ -293,16 +298,7 @@ class AccountClient:
         Raise NotLoggedInError when YouTube answers as to an anonymous user, sends the request to the Google sign-in
         page, or refuses the session with HTTP 401. Raise AccountError when the answer does not tell either way.
         """
-        what = "check the session"
-        ydl = self._new_youtube_dl()
-        try:
-            _initialize(ydl)
-            self._home_config(ydl, what)
-        except YoutubeDLError as error:
-            raise _account_error(error, what, self._budget) from error
-        finally:
-            ydl.close()
-        self._budget.end_if_answered()
+        self._read_home_config("check the session")
 
     def cookies_text(self) -> str:
         """Return the current cookies of the client as the text of a Netscape cookie file.
@@ -408,13 +404,29 @@ class AccountClient:
         }
         self._edit_playlist(playlist_id, action, f"remove video {video_id} from playlist {playlist_id}")
 
-    def subscribe(self, channel_id: str) -> None:
-        """Subscribe the account to a channel. Raise an error unless YouTube confirms the change."""
-        self._change_subscription("subscription/subscribe", channel_id, subscribed=True)
+    def home_config(self) -> dict:
+        """Read the config of the YouTube home page, which also confirms the login, and return it.
 
-    def unsubscribe(self, channel_id: str) -> None:
-        """Unsubscribe the account from a channel. Raise an error unless YouTube confirms the change."""
-        self._change_subscription("subscription/unsubscribe", channel_id, subscribed=False)
+        A caller that changes many subscriptions reads the config once and gives it to each change. The config holds
+        cookie values, so the caller never logs or stores it.
+        """
+        return self._read_home_config("read the page config")
+
+    def subscribe(self, channel_id: str, *, ytcfg: dict | None = None) -> None:
+        """Subscribe the account to a channel. Raise an error unless YouTube confirms the change.
+
+        With ``ytcfg`` from ``home_config``, the change reads no home page. A confirmed subscribed state is a success,
+        also when the account was subscribed already.
+        """
+        self._change_subscription("subscription/subscribe", channel_id, subscribed=True, ytcfg=ytcfg)
+
+    def unsubscribe(self, channel_id: str, *, ytcfg: dict | None = None) -> None:
+        """Unsubscribe the account from a channel. Raise an error unless YouTube confirms the change.
+
+        With ``ytcfg`` from ``home_config``, the change reads no home page. A confirmed unsubscribed state is a
+        success, also when the account was not subscribed.
+        """
+        self._change_subscription("subscription/unsubscribe", channel_id, subscribed=False, ytcfg=ytcfg)
 
     def _new_youtube_dl(self, **options) -> _AccountYoutubeDL:
         return _AccountYoutubeDL({**_OPTIONS, **options}, self._cookiejar, self._budget)
@@ -476,6 +488,19 @@ class AccountClient:
             raise AccountError(f"YouTube gave an empty answer when the client tried to {what}")
         return response
 
+    def _read_home_config(self, what: str) -> dict:
+        """Read the config of the home page with a yt-dlp instance of its own. ``what`` names the call in an error."""
+        ydl = self._new_youtube_dl()
+        try:
+            _initialize(ydl)
+            ytcfg = self._home_config(ydl, what)
+        except YoutubeDLError as error:
+            raise _account_error(error, what, self._budget) from error
+        finally:
+            ydl.close()
+        self._budget.end_if_answered()
+        return ytcfg
+
     @staticmethod
     def _home_config(ydl: _AccountYoutubeDL, what: str) -> dict:
         """Read the config of the home page. The login check of the yt-dlp instance raises for an anonymous answer."""
@@ -513,11 +538,11 @@ class AccountClient:
             raise WriteRejectedError(f"YouTube did not confirm that it could {what}: status {status!r}")
         LOG.info("YouTube confirmed the change: %s", what)
 
-    def _change_subscription(self, endpoint: str, channel_id: str, *, subscribed: bool) -> None:
+    def _change_subscription(self, endpoint: str, channel_id: str, *, subscribed: bool, ytcfg: dict | None) -> None:
         verb = "subscribe to" if subscribed else "unsubscribe from"
         what = f"{verb} channel {channel_id}"
         query = {"channelIds": [_require(channel_id, CHANNEL_ID, "channel id")]}
-        response = self._call_api(endpoint, query, what, retries=0)
+        response = self._call_api(endpoint, query, what, ytcfg=ytcfg, retries=0)
         status = response.get("status")
         if status is not None and status != _SUCCEEDED:
             raise WriteRejectedError(f"YouTube did not confirm that it could {what}: status {status!r}")
@@ -558,7 +583,7 @@ def _iter_entries(info: dict, url: str, budget: RequestBudget) -> Iterator[dict]
 
 def _account_error(error: YoutubeDLError, what: str, budget: RequestBudget) -> AccountError:
     """Map a yt-dlp error to a client error. A limit of YouTube opens the breaker, and while it is open each error
-    names the pause."""
+    names the pause. A failed connection, a timeout and a server error give ``NetworkOrServerError``."""
     causes = list(_causes(error))
     status = next((cause.status for cause in causes if isinstance(cause, HTTPError)), None)
     reason = None
@@ -572,6 +597,8 @@ def _account_error(error: YoutubeDLError, what: str, budget: RequestBudget) -> A
     budget.end_if_answered()
     if status == 401:
         return NotLoggedInError(f"YouTube refused the session with HTTP 401 when the client tried to {what}")
+    if _server_error(status) or any(isinstance(cause, TransportError) for cause in causes):
+        return NetworkOrServerError(f"yt-dlp failed to {what}: {error}")
     return AccountError(f"yt-dlp failed to {what}: {error}")
 
 
