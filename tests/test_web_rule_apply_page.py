@@ -26,6 +26,8 @@ from test_sync import LONG, A, B, entry, feed_video, upcoming
 from ui_support import (
     WAIT_SECONDS,
     PatientUser,
+    channel_remove_button,
+    click_on,
     element_of,
     elements_of,
     eventually,
@@ -627,6 +629,22 @@ async def test_a_change_of_the_form_removes_the_old_preview(
     set_value(user, marker, value)
 
     await eventually(lambda: not elements_of(user, "preview-table"), "The removed preview")
+
+
+async def test_a_remove_button_of_a_channel_removes_the_old_preview(user, sessions, settings, account_copy, youtube):
+    store_cookies(sessions, settings)
+    saved_rule(sessions, condition={"and": [{"regex": [{"var": "title"}, "video", "i"]}]}, channels=(A, B))
+    youtube.uploads[A] = [entry("new", A, title="New video", day=today())]
+    await user.open("/rules")
+    await open_editor(user, 1)
+    set_value(user, "rule-catch-up", days_back(7).isoformat())
+    await preview_in_editor(user)
+    assert shown(user, "preview-table") == [("New video", "Will be added")]
+
+    click_on(user, channel_remove_button(user, B))
+
+    await eventually(lambda: not elements_of(user, "preview-table"), "The removed preview")
+    assert elements_of(user, "rule-channels")[-1].value == [A]
 
 
 async def test_a_change_of_the_name_keeps_the_preview(user, sessions, settings, account_copy, youtube):

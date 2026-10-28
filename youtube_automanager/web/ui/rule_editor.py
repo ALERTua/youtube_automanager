@@ -50,6 +50,7 @@ from youtube_automanager.web.ui.common import (
     busy,
     column,
     confirm,
+    focus_when_drawn,
     icon_button,
     named,
     set_loading,
@@ -89,6 +90,18 @@ NEW_RULE_PATH = "/rules/new"
 RETURN_FOCUS = "rules-return-focus"
 # The query parameter of ``/rules/new`` with the id of the rule that the new rule copies.
 COPY_PARAMETER = "from"
+# The attribute of the select that searches and adds the channels of a rule. Its input takes the focus after the remove
+# of the last channel of the list. Quasar puts the attribute of a select with an input on the input itself.
+CHANNEL_SEARCH_ATTRIBUTE = "data-channel-search"
+CHANNEL_SEARCH_SELECTOR = f"input[{CHANNEL_SEARCH_ATTRIBUTE}]"
+# The attribute of the remove button of a channel in the list under the select. Its value is the id of the channel.
+CHANNEL_REMOVE_ATTRIBUTE = "data-channel-remove"
+# The browser code that empties the search text of the select and closes its menu after the user chose a channel.
+# Quasar keeps the text and the menu of a select with ``multiple``, so the user had to delete the text before the next
+# search, and the open menu covered the list under the field. The next typed letter opens the menu again, and the focus
+# stays in the search. The second argument ``true`` skips the filter of Quasar, which would open the menu again.
+# ``{id}`` is the id of the select.
+CLEAR_SEARCH_HANDLER = "() => {{ runMethod({id}, 'updateInputValue', ['', true]); runMethod({id}, 'hidePopup', []); }}"
 
 # The table of a preview shows this many videos on one page.
 PREVIEW_PAGE_SIZE = 20
@@ -126,6 +139,20 @@ def channel_label(channel: ChannelChoice) -> str:
         # Translators: a channel that left the subscriptions. A rule can still read it by its id.
         label = _("{channel}, not subscribed").format(channel=label)
     return label
+
+
+def channel_remove_selector(channel_id: str) -> str:
+    """Return the CSS selector of the remove button of the channel ``channel_id`` in the list of the rule editor."""
+    return f"[{CHANNEL_REMOVE_ATTRIBUTE}={json.dumps(channel_id)}]"
+
+
+def sorted_channels(channel_ids: Sequence[str], options: dict[str, str]) -> list[tuple[str, str]]:
+    """Return each id of ``channel_ids`` with its label of ``options``, in the order of the labels, case-insensitively.
+
+    An id without a label shows as its id.
+    """
+    labelled = [(channel_id, options.get(channel_id, channel_id)) for channel_id in channel_ids]
+    return sorted(labelled, key=lambda item: (item[1].casefold(), item[1], item[0]))
 
 
 def copy_name(name: str) -> str:
@@ -534,19 +561,25 @@ class RuleEditor:
         """Add the channels that the rule reads and its target playlist."""
         rule = self.source
         channel_ids = list(rule.channel_ids) if rule else []
+        # The labels of the channels that the select offers, by their ids.
+        self.channel_labels = channel_options(self.stored, channel_ids)
+        # The select searches and adds the channels. It hides the chosen channels, and the list under it shows them.
         self.channel_select = (
             ui.select(
-                channel_options(self.stored, channel_ids),
+                self.channel_labels,
                 label=_("Channels"),
                 value=channel_ids,
                 multiple=True,
                 with_input=True,
-                on_change=self._rule_changed,
+                on_change=self._channels_changed,
             )
-            .props("outlined dense use-chips")
+            .props(f"outlined dense hide-selected {CHANNEL_SEARCH_ATTRIBUTE}")
             .classes("w-full")
             .mark("rule-channels")
         )
+        self.channel_select.on("add", js_handler=CLEAR_SEARCH_HANDLER.format(id=self.channel_select.id))
+        self.channel_list = ui.column().classes("w-full gap-0").mark("rule-channel-list")
+        self._draw_channels()
         ui.label(
             _("Without channels, the rule reads the subscriptions feed. The feed needs the YouTube account.")
         ).classes("text-grey-7").mark("rule-feed-hint").bind_visibility_from(
@@ -577,6 +610,44 @@ class RuleEditor:
                     "at the top of the page."
                 )
             ).classes("text-warning").mark("rule-no-playlists")
+
+    def _channels_changed(self) -> None:
+        """Take a change of the channels: draw their list again, then do what each change of the rule does."""
+        self._draw_channels()
+        self._rule_changed()
+
+    def _draw_channels(self) -> None:
+        """Draw the list of the chosen channels under the select, sorted by their labels, each with a remove button."""
+        self.channel_list.clear()
+        with self.channel_list:
+            for channel_id, label in sorted_channels(self.channel_select.value or (), self.channel_labels):
+                with ui.row().classes("w-full items-center gap-1 no-wrap").mark("rule-channel") as row:
+                    row.props["data-channel"] = channel_id
+                    ui.label(label).classes("ellipsis").mark("rule-channel-label")
+                    # Translators: the name of the button that removes the channel {channel} from the rule.
+                    text = _("Remove {channel}").format(channel=label)
+                    button = icon_button("close", text, lambda channel_id=channel_id: self._remove_channel(channel_id))
+                    button.props[CHANNEL_REMOVE_ATTRIBUTE] = channel_id
+                    button.mark("rule-channel-remove")
+
+    def _remove_channel(self, channel_id: str) -> None:
+        """Remove the channel ``channel_id`` from the rule, and give the keyboard focus to the next remove button.
+
+        The next button is the one of the next row, or of the row before when the channel was the last. Without
+        channels, the search of the select gets the focus.
+        """
+        select = self.channel_select
+        ids = [item for item, _label in sorted_channels(select.value or (), self.channel_labels)]
+        if channel_id not in ids:
+            return
+        index = ids.index(channel_id)
+        rest = ids[:index] + ids[index + 1 :]
+        select.set_value([item for item in select.value if item != channel_id])
+        if rest:
+            target = channel_remove_selector(rest[min(index, len(rest) - 1)])
+        else:
+            target = CHANNEL_SEARCH_SELECTOR
+        focus_when_drawn(select.client, target, fallback=CHANNEL_SEARCH_SELECTOR)
 
     def _actions(self) -> None:
         """Add the switch that turns the rule on and off, the hint about new videos, the error and the buttons."""

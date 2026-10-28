@@ -22,6 +22,8 @@ from test_live_rules import (
 )
 from test_sync import entry, feed_video
 from ui_support import (
+    channel_remove_button,
+    click_on,
     client_of,
     element_of,
     elements_of,
@@ -31,6 +33,7 @@ from ui_support import (
     set_value,
     store,
     text_of,
+    texts_of,
 )
 
 from youtube_automanager import i18n
@@ -719,6 +722,190 @@ async def test_the_hint_about_the_feed_shows_only_without_channels(user, account
     await user.should_not_see(marker="rule-feed-hint")
     set_value(user, "rule-channels", [])
     await user.should_see(marker="rule-feed-hint")
+
+
+def listed_channels(user) -> list[tuple[str, str]]:
+    """Each row of the list of the channels under the search, as the id of the channel and its label."""
+    rows = elements_of(user, "rule-channel")
+    labels = texts_of(user, "rule-channel-label")
+    return [(row.props["data-channel"], label) for row, label in zip(rows, labels, strict=True)]
+
+
+async def test_the_editor_lists_the_channels_under_the_search_in_the_order_of_their_names(user, sessions):
+    # A sort that minds the case puts "Bravo" and "Charlie" before "alpha".
+    one, two, three, four, five = (f"UC{letter * 22}" for letter in "vwxyz")
+    store(
+        sessions,
+        channel(one, "zulu"),
+        channel(two, "Charlie", "@charlie"),
+        channel(three, "alpha"),
+        channel(four, "Bravo"),
+        channel(five, "delta"),
+        playlist("WL", "Watch later"),
+        rule(1, "A rule"),
+    )
+    store(sessions, *links(1, one, two, three, four))
+    await user.open("/rules")
+    await open_editor(user, 1)
+
+    assert listed_channels(user) == [
+        (three, "alpha"),
+        (four, "Bravo"),
+        (two, "Charlie (@charlie)"),
+        (one, "zulu"),
+    ]
+    # The select only searches and adds: the list shows the chosen channels, not the field.
+    select = element_of(user, "rule-channels")
+    assert (select.props.get("hide-selected"), "use-chips" in select.props) == (True, False)
+
+    set_value(user, "rule-channels", [*select.value, five])
+
+    await eventually(lambda: [label for _id, label in listed_channels(user)][3] == "delta", "The added channel")
+    assert [label for _id, label in listed_channels(user)] == ["alpha", "Bravo", "Charlie (@charlie)", "delta", "zulu"]
+
+
+async def test_the_search_of_the_channels_empties_and_its_menu_closes_after_each_choice(user, account_copy):
+    await user.open("/rules")
+    await open_editor(user)
+
+    select = element_of(user, "rule-channels")
+    handlers = [listener.js_handler for listener in select._event_listeners.values() if listener.type == "add"]
+
+    # Quasar emits "add" when the user chooses an option with the mouse or the keyboard. The browser then empties the
+    # text of the search without the filter, which would open the menu again, and closes the menu, at once and without a
+    # round trip to the service.
+    assert handlers == [
+        f"() => {{ runMethod({select.id}, 'updateInputValue', ['', true]); runMethod({select.id}, 'hidePopup', []); }}"
+    ]
+
+
+async def test_a_remove_button_removes_only_its_channel(user, sessions, account_copy):
+    store(sessions, rule(1, "A rule"))
+    store(sessions, *links(1, A, B, C))
+    await user.open("/rules")
+    await open_editor(user, 1)
+
+    click_on(user, channel_remove_button(user, B))
+
+    await eventually(lambda: len(listed_channels(user)) == 2, "The list without the channel")
+    assert element_of(user, "rule-channels").value == [A, C]
+    assert listed_channels(user) == [(A, "Alpha (@alpha)"), (C, "Gamma (@gamma), not subscribed")]
+    await save(user)
+    assert rule_channels(sessions, 1) == [A, C]
+
+
+async def test_a_remove_of_a_channel_is_a_change_of_the_form(user, sessions, account_copy, warnings):
+    store(sessions, rule(1, "A rule"))
+    store(sessions, *links(1, A, B))
+    await user.open("/rules")
+    await open_editor(user, 1)
+
+    click_on(user, channel_remove_button(user, A))
+    await eventually(lambda: len(listed_channels(user)) == 1, "The list without the channel")
+
+    # The browser warns before a reload, and Cancel asks.
+    await eventually(lambda: warning_flags(warnings) == [True], "The warning before a reload")
+    user.find(marker="editor-cancel").click()
+
+    await discard(user)
+    assert rule_channels(sessions, 1) == [A, B]
+
+
+async def test_the_last_channel_goes_and_the_feed_hint_comes(user, sessions, account_copy):
+    store(sessions, rule(1, "A rule"))
+    store(sessions, *links(1, A))
+    await user.open("/rules")
+    await open_editor(user, 1)
+    await user.should_not_see(marker="rule-feed-hint")
+
+    click_on(user, channel_remove_button(user, A))
+
+    await user.should_see(marker="rule-feed-hint")
+    assert element_of(user, "rule-channels").value == []
+    assert elements_of(user, "rule-channel") == []
+
+
+@pytest.mark.parametrize(
+    ("removed", "focused"),
+    [
+        # The next row gets the focus.
+        (A, B),
+        (B, C),
+        # The last row has no next row, so the row before it gets the focus.
+        (C, B),
+    ],
+)
+async def test_the_focus_goes_to_the_next_remove_button_after_a_remove(
+    user, sessions, account_copy, scripts, removed, focused
+):
+    store(sessions, rule(1, "A rule"))
+    store(sessions, *links(1, A, B, C))
+    await user.open("/rules")
+    await open_editor(user, 1)
+    scripts.clear()
+
+    click_on(user, channel_remove_button(user, removed))
+
+    await eventually(lambda: scripts, "The move of the focus")
+    (code,) = scripts
+    assert f"document.querySelector({json.dumps(rule_editor.channel_remove_selector(focused))})" in code
+    # The search is the second choice, when the browser did not draw the button.
+    assert json.dumps(rule_editor.CHANNEL_SEARCH_SELECTOR) in code
+
+
+async def test_the_focus_goes_to_the_search_after_the_remove_of_the_only_channel(user, sessions, account_copy, scripts):
+    store(sessions, rule(1, "A rule"))
+    store(sessions, *links(1, A))
+    await user.open("/rules")
+    await open_editor(user, 1)
+    scripts.clear()
+
+    click_on(user, channel_remove_button(user, A))
+
+    await eventually(lambda: scripts, "The move of the focus")
+    (code,) = scripts
+    assert f"document.querySelector({json.dumps(rule_editor.CHANNEL_SEARCH_SELECTOR)})" in code
+    # The selector finds the input of the select of the channels.
+    assert rule_editor.CHANNEL_SEARCH_ATTRIBUTE in element_of(user, "rule-channels").props
+
+
+async def test_the_remove_button_of_a_channel_has_its_name_in_the_language_of_the_pages(
+    user, sessions, account_copy, real_uk_catalog
+):
+    store(sessions, rule(1, "A rule"))
+    store(sessions, *links(1, A, C))
+    i18n.set_language("uk")
+    await user.open("/rules")
+    await open_editor(user, 1)
+
+    names = [button.props["aria-label"] for button in elements_of(user, "rule-channel-remove")]
+
+    assert names == ["Прибрати Alpha (@alpha)", "Прибрати Gamma (@gamma), без підписки"]
+
+
+async def test_a_channel_of_the_rule_without_a_stored_title_shows_its_id_and_can_go(
+    user, sessions, account_copy, monkeypatch
+):
+    store(sessions, rule(1, "A rule"))
+    store(sessions, *links(1, A, B))
+    real = rule_editor.read_stored
+
+    def without_beta(*args):
+        # The copy of the account can lack a channel of a rule, for example after a refresh of the lists.
+        stored = real(*args)
+        del stored.channels[B]
+        return stored
+
+    monkeypatch.setattr(rule_editor, "read_stored", without_beta)
+    await user.open("/rules")
+    await open_editor(user, 1)
+    assert listed_channels(user) == [(A, "Alpha (@alpha)"), (B, B)]
+    assert channel_remove_button(user, B).props["aria-label"] == f"Remove {B}"
+
+    click_on(user, channel_remove_button(user, B))
+
+    await eventually(lambda: listed_channels(user) == [(A, "Alpha (@alpha)")], "The list without the channel")
+    assert element_of(user, "rule-channels").value == [A]
 
 
 async def test_a_rule_keeps_a_target_playlist_that_is_not_an_own_playlist_any_more(user, three_rules):
