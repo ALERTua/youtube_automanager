@@ -25,9 +25,10 @@ from youtube_automanager import notify
 from youtube_automanager.account_cache import ChannelLike, PlaylistLike
 from youtube_automanager.db.models import CookieOrigin, SessionState, utc_now
 from youtube_automanager.pacing import RequestBudget
+from youtube_automanager.request_pause import RequestPause
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube import session as cookie_store
-from youtube_automanager.youtube.account import AccountClient, AccountError, NotLoggedInError
+from youtube_automanager.youtube.account import AccountClient, AccountError, NotLoggedInError, RequestsPausedError
 from youtube_automanager.youtube.cookie_text import earliest_login_expiry
 from youtube_automanager.youtube.session import CookieCipher, CookieKeyError, StoredCookies
 
@@ -88,6 +89,8 @@ class CheckOutcome(enum.StrEnum):
 class CheckResult:
     outcome: CheckOutcome
     detail: str | None = None
+    # The pause of the requests with cookies when the check failed at an open breaker.
+    pause: RequestPause | None = None
 
 
 def load_stored(sessions: sessionmaker[Session], settings: Settings) -> tuple[CookieCipher, StoredCookies]:
@@ -217,6 +220,9 @@ class AccountSession:
         except NotLoggedInError as error:
             LOG.warning("YouTube refused the uploaded cookies, so the service keeps the stored cookies: %s", error)
             return CheckResult(CheckOutcome.DEAD, UPLOAD_REFUSED_TEXT)
+        except RequestsPausedError as error:
+            LOG.warning("The check of the uploaded cookies waits for the end of a pause, so the service stores nothing")
+            return CheckResult(CheckOutcome.FAILED, f"The check of the uploaded cookies failed: {error}", error.pause)
         except AccountError as error:
             LOG.warning("The check of the uploaded cookies failed, so the service stores nothing: %s", error)
             return CheckResult(CheckOutcome.FAILED, f"The check of the uploaded cookies failed: {error}")
@@ -278,6 +284,9 @@ class AccountSession:
             self._version_id = good.version_id
             client.use_cookies(good.text)
             return self._verify(client, good, roll_back=False)
+        except RequestsPausedError as error:
+            LOG.warning("The session check failed: %s", error)
+            return CheckResult(CheckOutcome.FAILED, f"The session check failed: {error}", error.pause)
         except AccountError as error:
             LOG.warning("The session check failed: %s", error)
             return CheckResult(CheckOutcome.FAILED, f"The session check failed: {error}")

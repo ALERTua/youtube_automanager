@@ -12,9 +12,19 @@ from sqlalchemy import select
 
 from youtube_automanager import notify
 from youtube_automanager import runner as runner_module
-from youtube_automanager.db.models import Account, CookieVersion, Run, RunStatus, RunTrigger, SessionState, Setting
+from youtube_automanager.db.models import (
+    Account,
+    BreakerReason,
+    CookieVersion,
+    Run,
+    RunStatus,
+    RunTrigger,
+    SessionState,
+    Setting,
+)
 from youtube_automanager.engine import account_session
 from youtube_automanager.notify import Event
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import (
     BUSY_TEXT,
     ERROR_TAIL_LINES,
@@ -35,7 +45,7 @@ from youtube_automanager.runner import (
     sync_lock_held,
 )
 from youtube_automanager.settings import Settings
-from youtube_automanager.youtube.account import AccountError, NotLoggedInError
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError, RequestsPausedError
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
 WAIT_SECONDS = 10
@@ -745,6 +755,22 @@ class TestSessionCheck:
             "The session check failed: HTTP Error 503",
         )
 
+    def test_a_check_that_stops_at_a_pause_gives_the_pause_and_its_english_text(self, runner, fake_starter):
+        pause = RequestPause(BreakerReason.BOT_CHECK, LATER, "Europe/Kyiv")
+        fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": "a warning\n" + pause.to_line() + "\n"})
+
+        result = runner.check_session()
+
+        assert (result.outcome, result.pause) == (SessionCheckOutcome.FAILED, pause)
+        assert result.detail == f"The session check failed: {pause}"
+
+    def test_the_pause_exit_code_without_a_pause_line_is_a_failed_check_without_a_pause(self, runner, fake_starter):
+        fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": "no pause here\n"})
+
+        result = runner.check_session()
+
+        assert (result.outcome, result.detail, result.pause) == (SessionCheckOutcome.FAILED, "no pause here", None)
+
     def test_a_check_while_a_run_is_active_starts_nothing(self, runner, fake_starter):
         run_id = runner.claim(RunTrigger.MANUAL)
         try:
@@ -867,6 +893,22 @@ class TestCheckSessionOnce:
 
         assert check_session_once(settings) == 1
         assert capsys.readouterr().err.strip().splitlines()[-1].endswith("HTTP Error 503")
+
+    def test_a_check_at_a_pause_writes_the_pause_line_and_exits_with_its_code(
+        self, settings, db_sessions, monkeypatch, capsys
+    ):
+        self.store(db_sessions, settings)
+        pause = RequestPause(BreakerReason.HTTP_429, LATER, "UTC")
+
+        def paused():
+            raise RequestsPausedError(pause)
+
+        self.client(monkeypatch, paused)
+
+        assert check_session_once(settings) == EXIT_PAUSED
+        assert RequestPause.from_line(capsys.readouterr().err.strip().splitlines()[-1]) == pause
+        with db_sessions() as session:
+            assert session.scalars(select(Account)).one().session_state is SessionState.UNKNOWN
 
     def test_without_cookies_the_child_exits_with_the_unavailable_code(self, settings, capsys):
         assert check_session_once(settings) == UNAVAILABLE_EXIT_CODE

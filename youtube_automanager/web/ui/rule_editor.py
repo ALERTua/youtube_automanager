@@ -29,6 +29,7 @@ from youtube_automanager.db.models import RunStatus
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.pacing import minimum_seconds
+from youtube_automanager.request_pause import RequestPause
 from youtube_automanager.rule_actions import AppliedRun, preview_in_child, read_applied
 from youtube_automanager.rules_store import (
     MAX_DAYS_BACK,
@@ -46,13 +47,14 @@ from youtube_automanager.run_events import ActionItem
 from youtube_automanager.runner import RunAlreadyActive
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.account_lists import child_error_text
+from youtube_automanager.web.ui.account_lists import child_error_text, child_pause, show_pause_end
 from youtube_automanager.web.ui.common import (
     busy,
     column,
     confirm,
     day_column,
     focus_when_drawn,
+    forget_time,
     icon_button,
     named,
     notify_in,
@@ -360,10 +362,12 @@ class PreviewView:
                 f"{self.marker}-working"
             )
 
-    def failed(self, text: str) -> None:
+    def failed(self, text: str, pause: RequestPause | None = None) -> None:
+        """Show the cause of a failure. ``pause`` is the pause of the requests whose end ``text`` holds as ``{time}``."""
         self.container.clear()
         with self.container:
-            ui.label(text).classes("text-negative whitespace-pre-wrap").mark(f"{self.marker}-failed")
+            label = ui.label(text).classes("text-negative whitespace-pre-wrap").mark(f"{self.marker}-failed")
+            show_pause_end(label, text, pause)
 
     def note(self, text: str) -> None:
         """Show only a note, for example that the result is old."""
@@ -981,6 +985,7 @@ class RuleEditor:
         self.previewing = True
         with busy(self.preview_button):
             self.preview_view.working()
+            pause = None
             try:
                 result: Preview | str = await asyncio.to_thread(
                     preview_in_child, self.services.runner, None, draft=draft
@@ -988,6 +993,7 @@ class RuleEditor:
             except ChildError as error:
                 LOG.warning("The preview of a rule failed: %s", error)
                 result = _("The preview failed. {reason}").format(reason=child_error_text(error))
+                pause = child_pause(error)
             finally:
                 self.previewing = False
         # The user can close the editor while the child runs.
@@ -997,7 +1003,7 @@ class RuleEditor:
             self.preview_view.note(_("The form changed while the preview ran. Press Preview again."))
             return
         if isinstance(result, str):
-            self.preview_view.failed(result)
+            self.preview_view.failed(result, pause)
             return
         self.preview_view.show(
             result,
@@ -1186,12 +1192,15 @@ class ApplyDialog:
             button.set_enabled(not working)
         self.since_input.set_enabled(not working)
 
-    def _status(self, text: str, *, error: bool = False) -> None:
+    def _status(self, text: str, *, error: bool = False, pause: RequestPause | None = None) -> None:
+        """Show ``text`` as the status of the apply. ``pause`` is the pause whose end ``text`` holds as ``{time}``."""
+        forget_time(self.status_label)
         if error:
             self.status_label.classes(add="text-negative")
         else:
             self.status_label.classes(remove="text-negative")
         self.status_label.set_text(text)
+        show_pause_end(self.status_label, text, pause)
         self.status_label.set_visibility(bool(text))
 
     async def run_preview(self) -> None:
@@ -1210,7 +1219,9 @@ class ApplyDialog:
             result = await asyncio.to_thread(preview_in_child, self.services.runner, since, rule_id=self.rule.id)
         except ChildError as error:
             LOG.warning("The preview of rule %s failed: %s", self.rule.id, error)
-            self.view.failed(_("The preview failed. {reason}").format(reason=child_error_text(error)))
+            self.view.failed(
+                _("The preview failed. {reason}").format(reason=child_error_text(error)), child_pause(error)
+            )
             return
         finally:
             self._set_working(False)
@@ -1241,7 +1252,8 @@ class ApplyDialog:
         except ChildError as error:
             LOG.warning("The apply of rule %s did not start: %s", rule.id, error)
             self._set_working(False)
-            self._status(_("The apply did not start. {reason}").format(reason=child_error_text(error)), error=True)
+            text = _("The apply did not start. {reason}").format(reason=child_error_text(error))
+            self._status(text, error=True, pause=child_pause(error))
             self.add_button.set_visibility(True)
             return
         except BaseException:

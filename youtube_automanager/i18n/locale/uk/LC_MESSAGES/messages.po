@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 18:47+0200\n"
+"POT-Creation-Date: 2026-10-28 19:22+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -652,6 +652,10 @@ msgstr "Повернутися до попередньої версії"
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Group type"
 msgstr "Тип групи"
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "HTTP 429, too many requests"
+msgstr "HTTP 429, забагато запитів"
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Handle"
@@ -1692,6 +1696,11 @@ msgstr ""
 msgid "The service reads the videos on YouTube. This takes up to a few minutes."
 msgstr "Сервіс читає відео на YouTube. Читання триває до кількох хвилин."
 
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The service stored nothing. {reason}"
+msgstr "Сервіс нічого не зберіг. {reason}"
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "The service works with YouTube. This takes up to a minute."
 msgstr "Сервіс працює з YouTube. Ця робота триває до хвилини."
@@ -1706,6 +1715,11 @@ msgstr "Сервіси Apprise та їхні URL"
 #, python-brace-format
 msgid "The session check cannot use the stored cookies: {cause}"
 msgstr "Перевірка сесії не може використати збережені cookies: {cause}"
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The session check failed. {reason}"
+msgstr "Перевірка сесії не вдалася. {reason}"
 
 #: youtube_automanager/web/ui/settings_page.py
 #, python-brace-format
@@ -2086,6 +2100,26 @@ msgstr ""
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "YouTube found no channel for this text."
 msgstr "YouTube не знайшов каналу за цим текстом."
+
+#. Translators: {reason} is the answer of YouTube, for example a bot check.
+#. {time} is the end of the pause, which the
+#. browser writes in its own form.
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid ""
+"YouTube limited the requests with the cookies of the account ({reason}). "
+"The service sends no such request until {time}."
+msgstr ""
+"YouTube обмежив запити з cookies акаунта ({reason}). Сервіс не надсилає "
+"таких запитів до {time}."
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "a \"try again later\" page"
+msgstr "сторінка «спробуйте пізніше»"
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "a bot check"
+msgstr "перевірка на бота"
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "a live stream that just ended"

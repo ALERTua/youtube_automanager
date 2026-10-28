@@ -6,6 +6,7 @@ anonymous reads of yt-dlp and for the account client. No test reads or changes Y
 
 import asyncio
 import contextlib
+import datetime
 import io
 import json
 import logging
@@ -14,13 +15,14 @@ import subprocess
 import threading
 import time
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from nicegui import ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
 from nicegui.testing.user_notify import UserNotify
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from test_run_events import service_with_pages
 from test_sync import LONG, A, B, entry, feed_video, upcoming
 from ui_support import (
@@ -33,6 +35,7 @@ from ui_support import (
     element_of,
     elements_of,
     eventually,
+    moment_of,
     running_service,
     store,
     text_of,
@@ -44,8 +47,10 @@ from youtube_automanager import runner as runner_module
 from youtube_automanager import scheduler as scheduler_module
 from youtube_automanager.db.models import (
     AddedVideo,
+    BreakerReason,
     Channel,
     Playlist,
+    RequestBudgetState,
     Rule,
     RuleChannel,
     Run,
@@ -53,6 +58,7 @@ from youtube_automanager.db.models import (
     RunActionKind,
     RunStatus,
     RunTrigger,
+    Schedule,
     SeenVideo,
     SeenVideoState,
     Setting,
@@ -63,12 +69,14 @@ from youtube_automanager.engine.rule_preview import APPLY_LIMIT, DraftRule, Mark
 from youtube_automanager.engine.rules import MATCH_ALL
 from youtube_automanager.engine.sync import PROCESSING_MODE_KEY, STATE_MODE_KEY
 from youtube_automanager.i18n.setting import NAMES
+from youtube_automanager.pacing import RequestBudget
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.rule_actions import apply_once, preview_once
 from youtube_automanager.runner import INTERRUPTED_ERROR, sync_lock_held
 from youtube_automanager.settings import Settings
 from youtube_automanager.web import applies as applies_module
 from youtube_automanager.web.ui import rule_editor
-from youtube_automanager.web.ui.common import DAY_CELL_FORMAT
+from youtube_automanager.web.ui.common import DAY_CELL_FORMAT, format_time, iso_time
 from youtube_automanager.youtube import public
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -1042,6 +1050,82 @@ async def test_an_apply_while_the_sync_lock_is_taken_writes_no_run_and_can_start
     assert runs(sessions) == []
     assert children.of("apply-rule") == []
     await user.should_see(marker="apply-run")
+
+
+PAUSE = RequestPause(BreakerReason.TRY_AGAIN_LATER, datetime.datetime(2026, 10, 28, 13, 0, tzinfo=datetime.UTC), ZONE)
+PAUSE_TEMPLATE = (
+    'YouTube limited the requests with the cookies of the account (a "try again later" page). The service sends no '
+    "such request until {time}."
+)
+
+
+async def test_a_preview_in_the_editor_at_a_pause_shows_the_end_of_the_pause(user, account_copy, children):
+    await user.open("/rules")
+    await open_editor(user)
+    children.plan.append(EndedChild(EXIT_PAUSED, PAUSE.to_line() + "\n"))
+
+    await preview_in_editor(user)
+
+    template = "The preview failed. " + PAUSE_TEMPLATE
+    assert text_of(user, "preview-failed") == template.format(time="2026-10-28 15:00 EET")
+    # The browser puts its form of the end of the pause into the translated sentence.
+    assert moment_of(user, "preview-failed") == ("2026-10-28T15:00:00+02:00", ZONE)
+    assert element_of(user, "preview-failed").props["data-time-template"] == template
+
+
+async def test_a_preview_in_the_apply_dialog_at_a_pause_shows_the_end_of_the_pause(
+    user, sessions, account_copy, children
+):
+    saved_rule(sessions)
+    await user.open("/rules")
+    await open_editor(user, 1)
+    await open_apply(user)
+    children.plan.append(EndedChild(EXIT_PAUSED, PAUSE.to_line() + "\n"))
+
+    await preview_in_dialog(user)
+
+    template = "The preview failed. " + PAUSE_TEMPLATE
+    assert text_of(user, "apply-result-failed") == template.format(time="2026-10-28 15:00 EET")
+    assert moment_of(user, "apply-result-failed") == ("2026-10-28T15:00:00+02:00", ZONE)
+    assert element_of(user, "apply-result-failed").props["data-time-template"] == template
+
+
+async def test_an_apply_at_a_pause_writes_no_run_and_shows_the_end_and_the_next_status_has_no_time(
+    user, sessions, settings, account_copy, youtube, children
+):
+    store_cookies(sessions, settings)
+    saved_rule(sessions)
+    youtube.uploads[A] = [entry("new", A, day=today())]
+    await user.open("/rules")
+    await open_editor(user, 1)
+    await open_apply(user)
+    await preview_in_dialog(user)
+    paused = RequestBudget(sessions, send=lambda notification: None).open_breaker(BreakerReason.BOT_CHECK)
+    # Without a schedule, the time zone of the service comes from the settings.
+    with sessions.begin() as session:
+        session.execute(delete(Schedule))
+
+    user.find(marker="apply-run").click()
+
+    await eventually(lambda: "did not start" in text_of(user, "apply-status"), "The refusal")
+    template = (
+        "The apply did not start. YouTube limited the requests with the cookies of the account (a bot check). The "
+        "service sends no such request until {time}."
+    )
+    zone = ZoneInfo(ZONE)
+    assert text_of(user, "apply-status") == template.format(time=format_time(paused.until, zone))
+    assert moment_of(user, "apply-status") == (iso_time(paused.until, zone), ZONE)
+    assert element_of(user, "apply-status").props["data-time-template"] == template
+    assert runs(sessions) == []
+    assert children.of("apply-rule") == []
+
+    # The pause ends, and the status of the next apply has no time, so the browser leaves its text as it is.
+    with sessions.begin() as session:
+        session.get(RequestBudgetState, 1).breaker_until = utc_now() - timedelta(seconds=1)
+    user.find(marker="apply-run").click()
+    await eventually(lambda: "The apply is done" in text_of(user, "apply-status"), "The end of the apply")
+    assert moment_of(user, "apply-status") == (None, None)
+    assert "data-time-template" not in element_of(user, "apply-status").props
 
 
 async def test_a_failed_apply_shows_the_error_of_its_run(user, sessions, account_copy, youtube, children):

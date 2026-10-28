@@ -30,9 +30,10 @@ from youtube_automanager.channel_actions import (
 )
 from youtube_automanager.db.models import Channel, Rule, RuleChannel
 from youtube_automanager.i18n import N_, _
+from youtube_automanager.request_pause import RequestPause
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.account_lists import account_lists, child_error_text
+from youtube_automanager.web.ui.account_lists import account_lists, child_error_text, child_pause, show_pause_end
 from youtube_automanager.web.ui.common import (
     FOCUS_DELAY_MS,
     ROW_SCOPE_ATTRIBUTE,
@@ -167,8 +168,9 @@ class PageState:
     rule_id: int | None = None
     # A subscription change of this page runs.
     working: bool = False
-    # The cause of the last failed action of the dialog.
+    # The cause of the last failed action of the dialog, and the pause of the requests with cookies that caused it.
     error: str | None = None
+    error_pause: RequestPause | None = None
     # The number of the newest read. A read that finishes after a newer one started drops its result.
     lists_read: int = 0
     # The channels of the last search that gave a result, by their id. A failed later search keeps them, so an open
@@ -397,6 +399,7 @@ async def subscriptions_page(services: Services) -> None:
         except ChildError as error:
             LOG.warning("The subscription of channel %s did not change: %s", channel.channel_id, error)
             state.error = _("The subscription did not change. {reason}").format(reason=child_error_text(error))
+            state.error_pause = child_pause(error)
         else:
             # The redraw of the dialog deleted the button of this handler, so the message goes through the client.
             if subscribe:
@@ -539,7 +542,8 @@ async def subscriptions_page(services: Services) -> None:
                 ui.spinner(size="sm")
                 ui.label(_("The service works with YouTube. This takes up to a minute.")).mark("channel-working")
         if state.error is not None:
-            ui.label(state.error).classes("text-negative").mark("channel-error")
+            label = ui.label(state.error).classes("text-negative").mark("channel-error")
+            show_pause_end(label, state.error, state.error_pause)
         if state.view is DialogView.ADD_TO_RULE:
             _add_to_rule_view(channel)
         elif state.view is DialogView.CONFIRM_UNSUBSCRIBE:

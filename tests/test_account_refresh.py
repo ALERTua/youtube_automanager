@@ -406,7 +406,7 @@ def test_a_failure_exit_code_without_stderr_still_has_a_text(runner, fake_starte
     assert str(raised.value)
 
 
-@pytest.mark.parametrize("exit_code", [1, 2, 6, 137])
+@pytest.mark.parametrize("exit_code", [1, 2, 7, 137])
 def test_another_exit_code_is_a_crash_and_its_stderr_stays_out_of_the_error(runner, fake_starter, exit_code, capsys):
     stderr = f"Traceback (most recent call last):\nValueError: cookie {COOKIE_VALUE}\n"
     fake_starter.plan.append({"exit_code": exit_code, "stderr": stderr})

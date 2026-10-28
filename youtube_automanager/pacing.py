@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager import notify
 from youtube_automanager.db.models import BreakerReason, RequestBudgetState, utc_now
+from youtube_automanager.request_pause import REASON_TEXTS, RequestPause
 from youtube_automanager.scheduler import stored_timezone
 
 LOG = logging.getLogger(__name__)
@@ -63,14 +64,6 @@ FIRST_PAUSES = {
 LONGEST_PAUSE = datetime.timedelta(hours=24)
 # The time after the start of the last pause from which a new pause has the first length again.
 LEVEL_RESET = datetime.timedelta(days=3)
-# The answer of YouTube for each reason, in the error texts and in the notifications.
-REASON_TEXTS = {
-    BreakerReason.HTTP_429: "HTTP 429 (too many requests)",
-    BreakerReason.TRY_AGAIN_LATER: 'a "try again later" page',
-    BreakerReason.BOT_CHECK: 'a bot check ("Sign in to confirm you\'re not a bot")',
-}
-# The form of the end of a pause in an error text, as the pages show a time before the browser formats it.
-END_FORMAT = "%Y-%m-%d %H:%M %Z"
 
 # The read of the row locks it until the end of the transaction where the database has a lock of a row, as PostgreSQL
 # does. SQLite has none, and the read, the change and the write of the row there go in one transaction.
@@ -90,16 +83,14 @@ class RequestsPaused(Exception):
     """The breaker is open: the service sends no request with the cookies of the account until ``until``.
 
     The text names the end of the pause in the time zone of the service, and the answer of YouTube that started it.
+    ``pause`` holds the same facts for a child process that passes them to the web process.
     """
 
     def __init__(self, reason: BreakerReason, until: datetime.datetime, zone: ZoneInfo) -> None:
         self.reason = reason
         self.until = until
-        super().__init__(
-            "The service sends no request with the cookies of the account until "
-            f"{until.astimezone(zone).strftime(END_FORMAT)}, because YouTube answered a request with "
-            f"{REASON_TEXTS[reason]}."
-        )
+        self.pause = RequestPause(reason, until, zone.key)
+        super().__init__(str(self.pause))
 
 
 def refilled_tokens(tokens: float, refilled_at: datetime.datetime, now: datetime.datetime) -> float:

@@ -14,6 +14,7 @@ from youtube_automanager import scheduler, ytdlp_job
 from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.db.models import (
     Account,
+    BreakerReason,
     Run,
     RunStatus,
     RunTrigger,
@@ -22,6 +23,7 @@ from youtube_automanager.db.models import (
     SessionState,
     Setting,
 )
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.rotation import INTERVAL_S, PAGE_URL
 from youtube_automanager.runner import INTERRUPTED_ERROR, UNAVAILABLE_EXIT_CODE
 from youtube_automanager.scheduler import MIN_INTERVAL_S, ROTATION_DELAY_S, ROTATION_JOB_ID, RunNowOutcome
@@ -335,6 +337,23 @@ def test_session_check_without_usable_cookies_answers_with_the_cause(settings, f
 
     assert answer.status_code == 200
     assert (answer.json()["outcome"], answer.json()["detail"]) == ("unavailable", "No YouTube cookies are stored.")
+
+
+def test_session_check_at_a_pause_answers_failed_with_the_english_cause_and_keeps_its_fields(settings, fake_starter):
+    pause = RequestPause(BreakerReason.HTTP_429, datetime(2026, 10, 28, 13, 0, tzinfo=UTC), "UTC")
+    fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": pause.to_line() + "\n"})
+
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        answer = client.post("/api/session/check")
+
+    assert answer.status_code == 200
+    assert answer.json() == {
+        "outcome": "failed",
+        "session_state": None,
+        "last_checked_at": None,
+        "earliest_cookie_expiry": None,
+        "detail": f"The session check failed: {pause}",
+    }
 
 
 def test_session_check_while_a_run_is_active_answers_409(settings, sessions, fake_starter):

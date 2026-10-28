@@ -3,6 +3,7 @@
 A fake client stands in for YouTube, so no test sends a request. Each cookie value is fake.
 """
 
+import datetime
 import json
 import logging
 import sys
@@ -17,9 +18,17 @@ from youtube_automanager.cookie_upload_check import (
     check_upload_in_child,
     check_upload_once,
 )
-from youtube_automanager.db.models import Account, CookieOrigin, CookieVersion, CookieVersionState, SessionState
+from youtube_automanager.db.models import (
+    Account,
+    BreakerReason,
+    CookieOrigin,
+    CookieVersion,
+    CookieVersionState,
+    SessionState,
+)
 from youtube_automanager.engine import account_session
 from youtube_automanager.engine.account_session import UPLOAD_REFUSED_TEXT
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import SCHEDULED_WAIT_S, SyncRunner
 from youtube_automanager.settings import Settings
 from youtube_automanager.short_child import (
@@ -29,10 +38,11 @@ from youtube_automanager.short_child import (
     ChildBusy,
     ChildFailed,
     ChildLoggedOut,
+    ChildPaused,
     ChildUnavailable,
     ChildYouTubeError,
 )
-from youtube_automanager.youtube.account import AccountError, NotLoggedInError
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError, RequestsPausedError
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
 WAIT_SECONDS = 10
@@ -49,8 +59,13 @@ def cookie_text(sidcc="new"):
     )
 
 
+# A pause of the requests with cookies that the breaker gives.
+PAUSE = RequestPause(BreakerReason.TRY_AGAIN_LATER, datetime.datetime(2026, 10, 28, 13, 0, tzinfo=datetime.UTC), "UTC")
+
+
 class FakeYouTube:
-    """Answers the session checks: ``answer`` is "accept", "refuse" or "fail". An answer brings a new SIDCC value."""
+    """Answers the session checks: ``answer`` is "accept", "refuse", "fail" or "pause". An answer brings a new SIDCC
+    value."""
 
     def __init__(self):
         self.answer = "accept"
@@ -71,6 +86,8 @@ class FakeClient:
             raise NotLoggedInError("YouTube answered https://www.youtube.com as to an anonymous user")
         if self.youtube.answer == "fail":
             raise AccountError("yt-dlp failed to check the session: HTTP Error 503")
+        if self.youtube.answer == "pause":
+            raise RequestsPausedError(PAUSE)
 
     def cookies_text(self):
         return self.text.replace("-sidcc-new", "-sidcc-renewed")
@@ -167,6 +184,25 @@ def test_a_text_that_youtube_does_not_accept_stores_nothing_and_names_the_cause(
     assert stored_rows(db_sessions) == before
     # YouTube refused an export of the user, so the service logs no error.
     assert [record.levelno for record in caplog.records if record.levelno >= logging.ERROR] == []
+
+
+def test_a_check_at_a_pause_stores_nothing_and_gives_the_pause_to_the_parent(
+    settings, db_sessions, youtube, capsys, runner, fake_starter
+):
+    store_old_upload(db_sessions)
+    before = stored_rows(db_sessions)
+    youtube.answer = "pause"
+
+    code = check_upload_once(settings, cookie_text())
+
+    assert code == EXIT_PAUSED
+    line = last_line(capsys)
+    assert RequestPause.from_line(line) == PAUSE
+    assert stored_rows(db_sessions) == before
+    fake_starter.plan.append({"exit_code": code, "stderr": line + "\n"})
+    with pytest.raises(ChildPaused) as raised:
+        check_upload_in_child(runner, cookie_text())
+    assert raised.value.pause == PAUSE
 
 
 def test_without_a_cookie_key_the_child_ends_with_the_unavailable_code_and_sends_no_request(

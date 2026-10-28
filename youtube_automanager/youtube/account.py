@@ -35,6 +35,7 @@ from yt_dlp.version import __version__ as YTDLP_VERSION
 
 from youtube_automanager.db.models import BreakerReason
 from youtube_automanager.pacing import RequestBudget, RequestsPaused
+from youtube_automanager.request_pause import RequestPause
 from youtube_automanager.youtube._ytdlp import (
     BASE_OPTIONS,
     CHANNEL_ID,
@@ -102,8 +103,12 @@ class WriteRejectedError(AccountError):
 class RequestsPausedError(AccountError):
     """The breaker of the request budget is open, so the client sent no request, or YouTube just limited one.
 
-    The text names the end of the pause and the answer of YouTube that started it.
+    The text names the end of the pause and the answer of YouTube that started it, and ``pause`` holds both.
     """
+
+    def __init__(self, pause: RequestPause) -> None:
+        self.pause = pause
+        super().__init__(str(pause))
 
 
 class _YtDlpCall:
@@ -241,7 +246,7 @@ class _AccountYoutubeDL(YoutubeDL):
         try:
             self._budget.before_request()
         except RequestsPaused as paused:
-            raise RequestsPausedError(str(paused)) from None
+            raise RequestsPausedError(paused.pause) from None
         status = None
         try:
             response = super().urlopen(req)
@@ -555,7 +560,7 @@ def _account_error(error: YoutubeDLError, what: str, budget: RequestBudget) -> A
     reason = BreakerReason.HTTP_429 if status == 429 else _text_reason(" ".join(map(str, causes)))
     paused = budget.paused() if reason is None else budget.open_breaker(reason)
     if paused is not None:
-        return RequestsPausedError(str(paused))
+        return RequestsPausedError(paused.pause)
     return AccountError(f"yt-dlp failed to {what}: {error}")
 
 

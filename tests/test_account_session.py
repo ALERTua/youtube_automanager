@@ -270,6 +270,8 @@ def test_http_429_of_the_session_check_pauses_the_requests_and_the_session_sends
     assert result.detail is not None
     assert result.detail.startswith("The session check failed: The service sends no request with the cookies")
     assert result.detail.endswith(" EET, because YouTube answered a request with HTTP 429 (too many requests).")
+    assert result.pause is not None
+    assert (result.pause.reason, result.pause.zone) == (BreakerReason.HTTP_429, "Europe/Kyiv")
     assert [notification.event for notification in harness.sent] == [Event.REQUEST_BREAKER]
     assert " EET. " in harness.sent[0].body
     with harness.sessions() as session:

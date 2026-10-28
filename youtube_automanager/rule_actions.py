@@ -25,9 +25,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.db.models import Run, RunAction, RunActionKind, RunStatus, RunTrigger
 from youtube_automanager.engine.rule_preview import DraftRule, Preview
+from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.runner import BUSY_TEXT, SyncRunner
 from youtube_automanager.settings import Settings
-from youtube_automanager.short_child import ChildBusy, ChildFailed, read_json, run_child, succeed, work_with_account
+from youtube_automanager.short_child import (
+    ChildBusy,
+    ChildFailed,
+    ChildPaused,
+    read_json,
+    run_child,
+    succeed,
+    work_with_account,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -188,6 +197,8 @@ def apply_in_child(
     rule_id: int,
     since: datetime.date,
     on_claimed: Callable[[int], object] | None = None,
+    *,
+    default_timezone: str = "UTC",
 ) -> AppliedRun:
     """Apply the saved rule ``rule_id`` to the videos since ``since`` as a run of ``runner``, and wait for its end.
 
@@ -195,7 +206,14 @@ def apply_in_child(
     when a run, a session check, a short child or a yt-dlp update holds the lock. ``on_claimed`` gets the id of the run
     after the claim and before the start of the child, in the thread of this call. A failed ``on_claimed`` does not stop
     the apply, because only the end of the run releases the sync lock. This call blocks for the whole apply.
+
+    Each add of an apply needs the account, so while the breaker of the request budget is open, the call raises
+    ``ChildPaused`` and writes no run. ``default_timezone`` is the time zone of the service when the database holds no
+    schedule.
     """
+    paused = RequestBudget(sessions, default_timezone=default_timezone).paused()
+    if paused is not None:
+        raise ChildPaused(paused.pause)
     run_id = runner.claim(RunTrigger.RULE_APPLY)
     if run_id is None:
         raise ChildBusy(BUSY_TEXT)

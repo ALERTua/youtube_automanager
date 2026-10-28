@@ -1,6 +1,8 @@
 """Tests of the subscriptions page. A fake child stands in for each child process, so no test reads YouTube."""
 
 import asyncio
+import contextlib
+import io
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -10,6 +12,7 @@ import pytest
 from nicegui import ui
 from nicegui.elements.mixins.label_element import LabelElement
 from nicegui.elements.mixins.text_element import TextElement
+from pydantic import SecretStr
 from sqlalchemy import select
 from ui_support import (
     Held,
@@ -24,9 +27,11 @@ from ui_support import (
     store,
     text_of,
 )
+from yt_dlp import YoutubeDL
 
 from youtube_automanager import i18n
 from youtube_automanager.account_cache import REFRESHED_AT_KEY
+from youtube_automanager.channel_actions import change_subscription_once
 from youtube_automanager.db.models import (
     BreakerReason,
     Channel,
@@ -38,11 +43,14 @@ from youtube_automanager.db.models import (
     Setting,
 )
 from youtube_automanager.i18n.setting import NAMES
-from youtube_automanager.pacing import RequestsPaused
+from youtube_automanager.pacing import RequestBudget
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
 from youtube_automanager.web.ui import subscriptions_page
+from youtube_automanager.web.ui.common import format_time, iso_time
 from youtube_automanager.web.ui.dates import today_in
+from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
 
@@ -139,6 +147,14 @@ def dialog_shows(user, channel_id: str) -> bool:
 async def open_channel(user, channel_id: str, marker: str = "channels-table") -> None:
     user.find(marker=marker).trigger("rowClick", args=channel_id)
     await eventually(lambda: dialog_shows(user, channel_id), f"The open dialog of channel {channel_id}")
+
+
+# The cookies of the account for the real body of a child, and the text of a pause on the page.
+PAUSE_COOKIES = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t4000000000\tSAPISID\tfake-sapisid\n"
+PAUSE_TEMPLATE = (
+    "YouTube limited the requests with the cookies of the account (HTTP 429, too many requests). The service sends "
+    "no such request until {time}."
+)
 
 
 def stored_channel(sessions, channel_id: str) -> Channel | None:
@@ -842,22 +858,50 @@ async def test_a_failed_subscribe_shows_its_cause_in_the_dialog(user, stored_cha
 
 
 async def test_a_subscribe_during_the_pause_of_the_requests_shows_the_end_of_the_pause(
-    user, stored_channels, fake_starter
+    user, settings, sessions, stored_channels, fake_starter, monkeypatch
 ):
-    # The text that the child writes when the breaker of the request budget is open.
-    paused = RequestsPaused(BreakerReason.HTTP_429, datetime(2026, 10, 28, 13, 0, tzinfo=UTC), ZoneInfo("Europe/Kyiv"))
+    """From the real body of the child to the text of the dialog: the browser writes the end of the pause."""
+    key = generate_key()
+    with sessions.begin() as session:
+        save_cookies(session, CookieCipher(key), PAUSE_COOKIES)
+    paused = RequestBudget(sessions, send=lambda notification: None).open_breaker(BreakerReason.HTTP_429)
+    requests = []
+    monkeypatch.setattr(YoutubeDL, "urlopen", lambda ydl, request: requests.append(request.url))
+    stderr = io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        child_settings = settings.model_copy(update={"cookies_key": SecretStr(key)})
+        code = change_subscription_once(child_settings, BRAVO, subscribe=True)
+    assert requests == []
     await user.open("/subscriptions")
     await open_channel(user, BRAVO)
-    fake_starter.plan.append({"exit_code": EXIT_YOUTUBE_ERROR, "stderr": f"The session check failed: {paused}\n"})
+    fake_starter.plan.append({"exit_code": code, "stderr": stderr.getvalue()})
 
     user.find(marker="channel-subscribe").click()
 
     await eventually(lambda: elements_of(user, "channel-error"), "The cause of the failure")
-    assert text_of(user, "channel-error") == (
-        "The subscription did not change. YouTube did not give the expected answer: The session check failed: The "
-        "service sends no request with the cookies of the account until 2026-10-28 15:00 EET, because YouTube "
-        "answered a request with HTTP 429 (too many requests)."
+    template = "The subscription did not change. " + PAUSE_TEMPLATE
+    zone = ZoneInfo(settings.tz)
+    assert text_of(user, "channel-error") == template.format(time=format_time(paused.until, zone))
+    assert moment_of(user, "channel-error") == (iso_time(paused.until, zone), settings.tz)
+    assert element_of(user, "channel-error").props["data-time-template"] == template
+    assert text_of(user, "channel-subscribed") == "No"
+
+
+async def test_a_refresh_of_the_lists_during_the_pause_shows_the_end_of_the_pause(user, fake_starter):
+    pause = RequestPause(BreakerReason.BOT_CHECK, datetime(2026, 10, 28, 13, 0, tzinfo=UTC), "Europe/Kyiv")
+    await user.open("/subscriptions")
+    fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": pause.to_line() + "\n"})
+
+    user.find(marker="refresh-lists").click()
+
+    template = (
+        "The lists did not refresh. YouTube limited the requests with the cookies of the account (a bot check). The "
+        "service sends no such request until {time}."
     )
+    expected = template.format(time="2026-10-28 15:00 EET")
+    await eventually(lambda: text_of(user, "refresh-lists-result") == expected, "The pause of the failed refresh")
+    assert moment_of(user, "refresh-lists-result") == ("2026-10-28T15:00:00+02:00", "Europe/Kyiv")
+    assert element_of(user, "refresh-lists-result").props["data-time-template"] == template
 
 
 async def test_a_subscribe_during_a_run_starts_nothing_and_says_so(user, stored_channels, fake_starter):

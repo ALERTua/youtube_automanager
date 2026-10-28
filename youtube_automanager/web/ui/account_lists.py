@@ -4,7 +4,9 @@ The subscriptions page and the rules page read the stored copy of the subscripti
 so a page load sends no request to YouTube. The button refreshes the copy through ``refresh_in_child``, which runs the
 refresh in a child process. The page waits for it in a thread, so the event loop goes on.
 
-``child_error_text`` gives the text of a failed child, for each page that starts a short child.
+``child_error_text`` gives the text of a failed child, for each page that starts a short child. The text of a child
+that stopped at a pause of the requests with cookies holds ``{time}`` for the end of the pause, and ``show_pause_end``
+lets the browser put the end into it in its own form.
 """
 
 import asyncio
@@ -16,18 +18,35 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from nicegui import ui
+from nicegui.elements.mixins.text_element import TextElement
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.account_cache import RefreshResult, last_refresh
 from youtube_automanager.account_refresh import refresh_in_child
-from youtube_automanager.i18n import _
-from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildUnavailable, ChildYouTubeError
+from youtube_automanager.db.models import BreakerReason
+from youtube_automanager.i18n import N_, _
+from youtube_automanager.request_pause import RequestPause
+from youtube_automanager.short_child import (
+    ChildBusy,
+    ChildError,
+    ChildLoggedOut,
+    ChildPaused,
+    ChildUnavailable,
+    ChildYouTubeError,
+)
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.common import ResultLabel, busy, read_timezone, show_time
 
 LOG = logging.getLogger(__name__)
 
 type OnRefreshed = Callable[[], Awaitable[None]]
+
+# The answer of YouTube that started a pause of the requests with cookies.
+REASON_LABELS = {
+    BreakerReason.HTTP_429: N_("HTTP 429, too many requests"),
+    BreakerReason.TRY_AGAIN_LATER: N_('a "try again later" page'),
+    BreakerReason.BOT_CHECK: N_("a bot check"),
+}
 
 
 @dataclass(frozen=True)
@@ -43,8 +62,39 @@ def read_refresh_time(sessions: sessionmaker[Session], default_timezone: str) ->
     return RefreshTime(last_refresh(sessions), timezone)
 
 
+def pause_text(pause: RequestPause) -> str:
+    """Return the text of a pause of the requests with cookies, with ``{time}`` for its end."""
+    # Translators: {reason} is the answer of YouTube, for example a bot check. {time} is the end of the pause, which the
+    # browser writes in its own form.
+    return _(
+        "YouTube limited the requests with the cookies of the account ({reason}). The service sends no such request "
+        "until {time}."
+    ).format(reason=_(REASON_LABELS[pause.reason]), time="{time}")
+
+
+def child_pause(error: ChildError | None) -> RequestPause | None:
+    """Return the pause of a child that stopped at an open breaker, or None."""
+    return error.pause if isinstance(error, ChildPaused) else None
+
+
+def show_pause_end[T: TextElement](element: T, text: str, pause: RequestPause | None) -> T:
+    """Let the browser put the end of ``pause`` into ``text``, the text of ``element`` with ``{time}`` for the end.
+
+    Without a pause, the element keeps its text. Call it after each new text of the element, because a new text of a
+    ``ResultLabel`` forgets the moment.
+    """
+    if pause is not None:
+        show_time(element, pause.until, ZoneInfo(pause.zone), text)
+    return element
+
+
 def child_error_text(error: ChildError) -> str:
-    """Return the text that a page shows for a failed short child. The cause from the child stays as it is."""
+    """Return the text that a page shows for a failed short child. The cause from the child stays as it is.
+
+    The text of a pause holds ``{time}``, so the page shows it with ``show_pause_end``.
+    """
+    if isinstance(error, ChildPaused):
+        return pause_text(error.pause)
     if isinstance(error, ChildBusy):
         return _(
             "Another task works with YouTube now: a sync run, a session check, a refresh of the lists, a channel action "
@@ -94,7 +144,9 @@ async def account_lists(services: Services, on_refreshed: OnRefreshed | None = N
                 result = await asyncio.to_thread(refresh_in_child, services.runner)
             except ChildError as error:
                 LOG.warning("The account lists did not refresh: %s", error)
-                result_label.problem(_("The lists did not refresh. {reason}").format(reason=child_error_text(error)))
+                text = _("The lists did not refresh. {reason}").format(reason=child_error_text(error))
+                result_label.problem(text)
+                show_pause_end(result_label, text, child_pause(error))
                 return
         result_label.set_text(counts_text(result))
         refreshed_view.refresh(await asyncio.to_thread(read_refresh_time, services.sessions, services.settings.tz))
