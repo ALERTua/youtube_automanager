@@ -56,7 +56,22 @@ async def service_with_pages(settings, start) -> AsyncGenerator[tuple[User, Any]
         app.router.lifespan_context(app),
         httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client,
     ):
-        yield PatientUser(client), app.state.services
+        try:
+            yield PatientUser(client), app.state.services
+        finally:
+            close_tabs()
+
+
+def close_tabs() -> None:
+    """Delete each NiceGUI client, as NiceGUI does after the browser closed its tab.
+
+    The reset of NiceGUI between two tests only forgets the clients. A forgotten client stays in memory when one of its
+    elements is still registered somewhere, for example an ``AddressFollower`` or the canary of a ``ui.dialog``, and
+    it keeps its service with it. Each later ``gc.collect`` of the reset then scans more objects, and the suite gets
+    slower with each test. The delete removes the elements of the client the same way as in the service.
+    """
+    for client in list(Client.instances.values()):
+        client.delete()
 
 
 @asynccontextmanager

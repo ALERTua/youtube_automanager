@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import fastapi.dependencies.models as fastapi_models
 import pytest
 from babel.messages.mofile import write_mo
 from babel.messages.pofile import read_po
@@ -290,6 +291,21 @@ def nicegui_globals():
             yield
         finally:
             Client.page_routes.clear()
+            forget_endpoints()
+
+
+def forget_endpoints():
+    """Empty the caches in which FastAPI keeps each endpoint function that it classified.
+
+    ``mount_ui`` makes a new page function for each application, and the function holds its application. The caches
+    of FastAPI keep up to 4096 functions, so without this each test would keep its whole service in memory.
+    """
+    for cached in (
+        fastapi_models._is_gen_callable_cached,
+        fastapi_models._is_async_gen_callable_cached,
+        fastapi_models._is_coroutine_callable_cached,
+    ):
+        cached.cache_clear()
 
 
 class FakeChild:
