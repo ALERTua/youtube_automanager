@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 21:43+0200\n"
+"POT-Creation-Date: 2026-10-28 21:49+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -99,7 +99,7 @@ msgid "Add the channel to a rule"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Add to rule…"
+msgid "Add to rule"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
@@ -183,10 +183,6 @@ msgid ""
 "service."
 msgstr ""
 
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Back"
-msgstr ""
-
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Back to the rules"
 msgstr ""
@@ -195,6 +191,7 @@ msgstr ""
 #: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Cancel"
 msgstr ""
 
@@ -285,7 +282,6 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rule_editor.py
-#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Close"
 msgstr ""
 
@@ -422,10 +418,6 @@ msgstr ""
 msgid "Duration"
 msgstr ""
 
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Each rule already reads this channel."
-msgstr ""
-
 #: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "Each run adds the new videos that the rule matches. The videos that are "
@@ -468,7 +460,6 @@ msgid "Earliest cookie expiry"
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
-#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Edit"
 msgstr ""
 
@@ -818,10 +809,6 @@ msgstr ""
 msgid "No expiry date"
 msgstr ""
 
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "No handle"
-msgstr ""
-
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "No longer matches"
 msgstr ""
@@ -847,10 +834,6 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "No rule matches the filters."
-msgstr ""
-
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "No rule reads this channel."
 msgstr ""
 
 #: youtube_automanager/web/ui/rules_page.py
@@ -914,10 +897,6 @@ msgstr ""
 msgid ""
 "Open a new private window, and sign in to YouTube there with the account "
 "that the service uses."
-msgstr ""
-
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Open on YouTube"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
@@ -1018,7 +997,6 @@ msgid "Rotate the cookie session"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
-#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Rule"
 msgstr ""
 
@@ -1081,7 +1059,6 @@ msgstr ""
 #: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/scheduler_page.py
 #: youtube_automanager/web/ui/settings_draft.py
-#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Save"
 msgstr ""
 
@@ -1630,7 +1607,8 @@ msgstr ""
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid ""
 "The subscriptions of the account from the last refresh, and each channel "
-"that a rule reads. Click a channel to see its actions."
+"that a rule reads. A click on the title of a channel opens the channel on"
+" YouTube."
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
@@ -1775,7 +1753,8 @@ msgid "Unsubscribe"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Unsubscribe the YouTube account from this channel?"
+#, python-brace-format
+msgid "Unsubscribe the YouTube account from {title}?"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -1982,6 +1961,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "a past live stream"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "already reads"
 msgstr ""
 
 #. Translators: the word between two conditions that must both match.

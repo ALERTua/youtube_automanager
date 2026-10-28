@@ -206,19 +206,29 @@ async def test_the_edit_button_of_a_rule_row_opens_the_editor_like_a_click_on_th
     assert element_of(user, "rule-name").value == "Long videos"
 
 
-async def test_the_edit_button_of_each_channel_row_opens_the_channel_like_a_click_on_the_row(user, stored_data):
+async def test_each_action_of_a_channel_row_is_a_button_with_a_name_and_its_menu_closes_on_escape(user, stored_data):
     await user.open("/subscriptions")
     table = element_of(user, "channels-table")
-    assert table.slots["body-cell-actions"].template.count('aria-label="Edit"') == 1
-    assert table.slots["body-cell-actions"].template.count('icon="edit"') == 1
+    template = table.slots["body-cell-actions"].template
+    assert template is not None
 
-    user.find(marker="channels-table").trigger("rowButton", args=CHANNEL)
-
-    await eventually(lambda: element_of(user, "channel-dialog").value, "The open dialog of the channel")
-    await eventually(
-        lambda: [link.props["href"].endswith(CHANNEL) for link in elements_of(user, "channel-link")] == [True],
-        "The link of the channel",
-    )
+    # Each action is a Quasar button with its text, so the Tab key reaches it and a screen reader names it.
+    for label in ("Subscribe", "Unsubscribe", "Add to rule", "Cancel"):
+        assert f'label="{label}"' in template
+    # The rules of the menu are items that the keyboard reaches, and a rule that reads the channel is off.
+    assert "<q-item v-for=" in template
+    assert "clickable" in template
+    # Quasar closes a menu on Escape and gives the focus back to its button, unless a prop turns it off.
+    assert template.count("<q-menu") == 2
+    assert "no-esc-dismiss" not in template
+    assert "no-refocus" not in template
+    # A click on a row opens nothing, so no row needs a button that does the same.
+    assert "rowButton" not in template
+    # A redraw of the table replaces the buttons. The head script gives the focus back to the button of the same row
+    # in the same table, by the id of the row and the scope of the table, or by the key of the button.
+    assert table.props["data-row-scope"] == "channels"
+    assert template.count(':data-row-button="props.row.id"') == 2
+    assert ":data-focus-key=\"'channels-add-' + props.row.id\"" in template
 
 
 async def test_the_open_button_of_a_run_row_opens_the_run_like_a_click_on_the_row(user, stored_data):
@@ -314,23 +324,6 @@ async def test_the_focus_goes_to_the_card_when_a_run_opens_and_back_to_its_butto
     await eventually(lambda: scripts, "The move of the focus")
     (code,) = scripts
     assert selector_in(code, '[data-row-scope="runs"] [data-row-button="1"]')
-
-
-@pytest.mark.parametrize("event", ["rowButton", "rowClick"])
-async def test_the_focus_goes_back_to_the_row_button_when_the_channel_dialog_closes(user, stored_data, scripts, event):
-    await user.open("/subscriptions")
-    assert element_of(user, "channels-table").props["data-row-scope"] == "channels"
-    user.find(marker="channels-table").trigger(event, args=CHANNEL)
-    await eventually(lambda: element_of(user, "channel-dialog").value, "The open dialog")
-    scripts.clear()
-
-    with client_of(user):
-        element_of(user, "channel-dialog").close()
-
-    await eventually(lambda: scripts, "The move of the focus")
-    (code,) = scripts
-    # The page has two tables of rows, so the scope tells which table gets the focus.
-    assert selector_in(code, f'[data-row-scope="channels"] [data-row-button="{CHANNEL}"]')
 
 
 # The skip link.
@@ -639,20 +632,6 @@ async def test_the_focus_returns_to_the_filter_of_the_action_kind_after_a_change
     (code,) = scripts
     assert selector_in(code, "[data-action-filter] input")
     assert json.dumps("[data-run-details]") in code
-
-
-async def test_the_focus_of_a_closed_channel_dialog_has_the_filter_field_as_fallback(user, stored_data, scripts):
-    await user.open("/subscriptions")
-    user.find(marker="channels-table").trigger("rowButton", args=CHANNEL)
-    await eventually(lambda: element_of(user, "channel-dialog").value, "The open dialog")
-    scripts.clear()
-
-    with client_of(user):
-        element_of(user, "channel-dialog").close()
-
-    await eventually(lambda: scripts, "The move of the focus")
-    # The row can be gone, for example after Unsubscribe with the filter Subscribed.
-    assert json.dumps(f"#{element_of(user, 'filter-text').html_id}") in scripts[0]
 
 
 # The script that names the parts of Quasar.

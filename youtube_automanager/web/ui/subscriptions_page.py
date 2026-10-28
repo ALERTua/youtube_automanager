@@ -1,8 +1,9 @@
 """The subscriptions page: the stored channels with filters, a search of channels on YouTube, and the channel actions.
 
 The table shows the stored copy of the subscriptions and each channel that a rule reads, so a page load sends no
-request to YouTube. A click on a channel, in the table or in the search results, opens the dialog of the channel:
-subscribe or unsubscribe, add the channel to a rule, or open the channel on YouTube.
+request to YouTube. The title of a channel, in the table or in the search results, opens the channel on YouTube in a
+new tab. The last cell of each row holds the actions of the channel: subscribe or unsubscribe, and add the channel to a
+rule. The result of an action shows above the table of the stored channels.
 
 The search, the subscribe and the unsubscribe run in child processes of the runner, and the page waits for them in a
 thread, so the web process never imports yt-dlp. While a run, a session check or another child holds the sync lock,
@@ -10,13 +11,15 @@ they start nothing, and the page says so. The page reads and writes the database
 """
 
 import asyncio
-import enum
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import quote
 
 from nicegui import context, ui
+from nicegui.events import GenericEventArguments
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -30,21 +33,20 @@ from youtube_automanager.channel_actions import (
 )
 from youtube_automanager.db.models import Channel, Rule, RuleChannel
 from youtube_automanager.i18n import N_, _
-from youtube_automanager.request_pause import RequestPause
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text, child_pause, show_pause_end
 from youtube_automanager.web.ui.common import (
-    FOCUS_DELAY_MS,
+    FOCUS_KEY_ATTRIBUTE,
+    ROW_BUTTON_COLUMN,
     ROW_SCOPE_ATTRIBUTE,
+    ResultLabel,
     actions_column,
-    add_row_button,
     busy,
     column,
-    focus_when_drawn,
     notify_in,
     read_timezone,
-    row_button_selector,
+    template_text,
 )
 from youtube_automanager.web.ui.dates import DEFAULT_DAYS_BACK, default_first_day
 from youtube_automanager.web.ui.layout import register_page
@@ -62,14 +64,30 @@ YES_NO = {True: N_("Yes"), False: N_("No")}
 SUBSCRIBED_FILTER = {ANY: N_("All"), YES: N_("Subscribed"), NO: N_("Not subscribed")}
 RULES_FILTER = {ANY: N_("All"), YES: N_("With rules"), NO: N_("Without rules")}
 
-# The title cell shows the avatar of the channel in front of the title.
+# The scopes of the two tables, so the head script brings the focus back to the button of the right table.
+FOUND_SCOPE = "found"
+CHANNELS_SCOPE = "channels"
+
+# The events of the actions of a row. Each one sends the id of the channel, and the add to a rule also the id of the
+# rule.
+SUBSCRIBE_EVENT = "subscribeChannel"
+UNSUBSCRIBE_EVENT = "unsubscribeChannel"
+ADD_TO_RULE_EVENT = "addChannelToRule"
+CHANNEL_JS_HANDLER = "(id) => emit(id)"
+RULE_JS_HANDLER = "(id, rule) => emit(id, rule)"
+
+type OnRowEvent = Callable[[GenericEventArguments], Any]
+
+# The title cell shows the avatar of the channel in front of the title, and the title is the link to the channel on
+# YouTube. The click on the link does not reach the row.
 TITLE_CELL = """
 <q-td :props="props">
   <div class="row items-center no-wrap q-gutter-sm">
     <q-avatar v-if="props.row.thumbnail" size="28px">
       <img :src="props.row.thumbnail" referrerpolicy="no-referrer">
     </q-avatar>
-    <span>{{ props.value }}</span>
+    <a :href="props.row.url" target="_blank" rel="noopener noreferrer" @click.stop>{{ props.value }}\
+<q-icon name="open_in_new" size="xs" class="q-ml-xs" /></a>
   </div>
 </q-td>
 """
@@ -115,8 +133,8 @@ class ChannelFilter:
 
 
 @dataclass(frozen=True)
-class SelectedChannel:
-    """The channel of the dialog. ``stored`` is its stored row, and ``found`` is its search result."""
+class ShownChannel:
+    """The channel of a row action. ``stored`` is its stored row, and ``found`` is its search result."""
 
     channel_id: str
     stored: ChannelRecord | None
@@ -126,7 +144,7 @@ class SelectedChannel:
     def title(self) -> str:
         if self.stored is not None:
             return self.stored.title
-        # The dialog opens only for a stored channel or a found channel, so one of the two is here.
+        # A row is a stored channel or a found channel, so one of the two is here.
         return "" if self.found is None else self.found.title
 
     @property
@@ -141,28 +159,6 @@ class SelectedChannel:
             return self.stored.thumbnail_url
         return None if self.found is None else self.found.thumbnail_url
 
-    @property
-    def subscriber_count(self) -> int | None:
-        return None if self.found is None else self.found.subscriber_count
-
-    @property
-    def is_subscribed(self) -> bool:
-        return self.stored is not None and self.stored.is_subscribed
-
-
-@dataclass(frozen=True)
-class DialogError:
-    """The cause of a failed action of the dialog. ``text`` holds ``{time}`` for the end of ``pause``, when it has one."""
-
-    text: str
-    pause: RequestPause | None = None
-
-
-class DialogView(enum.Enum):
-    DETAILS = "details"
-    ADD_TO_RULE = "add_to_rule"
-    CONFIRM_UNSUBSCRIBE = "confirm_unsubscribe"
-
 
 @dataclass
 class PageState:
@@ -170,21 +166,11 @@ class PageState:
     # The channels of the last search, in the order of YouTube. None before the first search.
     found: list[FoundChannel] | None = None
     search_error: str | None = None
-    selected_id: str | None = None
-    view: DialogView = DialogView.DETAILS
-    # The rule that the person chose in the dialog.
-    rule_id: int | None = None
-    # A subscription change of this page runs.
-    working: bool = False
-    # The cause of the last failed action of the dialog.
-    error: DialogError | None = None
+    # The channel whose subscription change of this page runs. The sync lock lets one child run at a time, so the
+    # page starts no second change while one runs.
+    working_id: str | None = None
     # The number of the newest read. A read that finishes after a newer one started drops its result.
     lists_read: int = 0
-    # The channels of the last search that gave a result, by their id. A failed later search keeps them, so an open
-    # dialog of a found channel still works.
-    found_by_id: dict[str, FoundChannel] = field(default_factory=dict)
-    # The scope of the table whose row opened the dialog, so the focus goes back to that row when the dialog closes.
-    row_scope: str | None = None
 
 
 def read_lists(sessions: sessionmaker[Session]) -> StoredLists:
@@ -206,7 +192,7 @@ def read_lists(sessions: sessionmaker[Session]) -> StoredLists:
 
 
 def add_to_rule(
-    sessions: sessionmaker[Session], default_timezone: str, rule_id: int, channel: SelectedChannel
+    sessions: sessionmaker[Session], default_timezone: str, rule_id: int, channel: ShownChannel
 ) -> AddOutcome:
     """Make the rule read the channel, and let the next run also add the videos of the last DEFAULT_DAYS_BACK days.
 
@@ -259,26 +245,152 @@ def format_count(count: int | None) -> str:
     return "" if count is None else f"{count:,}"
 
 
-def channel_row(channel: ChannelRecord, rules: list[RuleRecord]) -> dict:
+def action_fields(channel_id: str, title: str, is_subscribed: bool, lists: StoredLists, working_id: str | None) -> dict:
+    """Return the fields of a row that the cell of the actions reads.
+
+    The texts with the title of the channel or the name of a rule come as values of the row, so no such text runs in
+    the template. ``working_id`` is the channel whose subscription change runs, or None.
+    """
+    return {
+        "is_subscribed": is_subscribed,
+        "unsubscribe_question": _("Unsubscribe the YouTube account from {title}?").format(title=title),
+        "unsubscribe_note": (
+            _("The rules that name this channel still read its videos.") if lists.rules_of(channel_id) else ""
+        ),
+        "choices": [
+            {
+                "id": rule.id,
+                "label": rule_label(rule),
+                "reads": channel_id in rule.channel_ids,
+                # A rule without channels reads the subscriptions feed, and the first channel ends that.
+                "feed": not rule.channel_ids,
+            }
+            for rule in lists.rules
+        ],
+        "working": channel_id == working_id,
+        "locked": working_id is not None,
+    }
+
+
+def channel_row(channel: ChannelRecord, lists: StoredLists, working_id: str | None) -> dict:
     return {
         "id": channel.channel_id,
         "title": channel.title,
+        "url": channel_url(channel.channel_id),
         "thumbnail": channel.thumbnail_url or "",
         "handle": channel.handle or "",
         "subscribed": _(YES_NO[channel.is_subscribed]),
-        "rules": ", ".join(rule_label(rule) for rule in rules),
+        "rules": ", ".join(rule_label(rule) for rule in lists.rules_of(channel.channel_id)),
+        **action_fields(channel.channel_id, channel.title, channel.is_subscribed, lists, working_id),
     }
 
 
-def found_row(found: FoundChannel, stored: ChannelRecord | None) -> dict:
+def found_row(found: FoundChannel, lists: StoredLists, working_id: str | None) -> dict:
+    stored = lists.channel(found.channel_id)
+    is_subscribed = stored is not None and stored.is_subscribed
     return {
         "id": found.channel_id,
         "title": found.title,
+        "url": channel_url(found.channel_id),
         "thumbnail": found.thumbnail_url or "",
         "handle": found.handle or "",
         "subscribers": format_count(found.subscriber_count),
-        "subscribed": _(YES_NO[stored is not None and stored.is_subscribed]),
+        "subscribed": _(YES_NO[is_subscribed]),
+        **action_fields(found.channel_id, found.title, is_subscribed, lists, working_id),
     }
+
+
+def actions_cell(scope: str) -> str:
+    """Return the Vue template of the cell of the actions of a row, in the table with ``scope``.
+
+    While the subscription change of the row runs, the cell shows a spinner and a note. Else it shows Subscribe or
+    Unsubscribe, by the stored state, and "Add to rule". Subscribe starts at once. Unsubscribe and "Add to rule" open a
+    menu next to the button: the question before the unsubscribe, or the rules. A rule that reads the channel already
+    cannot be chosen. While a change of any channel runs, the buttons Subscribe and Unsubscribe are off.
+
+    Each action is a button that the Tab key reaches, and Escape closes a menu. The click on the cell does not reach the
+    row. The subscription button carries the id of the row, so the head script gives it the focus again after the
+    redraw of the row. The button "Add to rule" has a key of ``focus_key`` for the same reason.
+    """
+    texts = {
+        name: template_text(text)
+        for name, text in {
+            "working": _("The service works with YouTube. This takes up to a minute."),
+            "subscribe": _("Subscribe"),
+            "unsubscribe": _("Unsubscribe"),
+            "cancel": _("Cancel"),
+            "add": _("Add to rule"),
+            "add_title": _("Add the channel to a rule"),
+            "no_rule": _("No rule exists yet. Create a rule first."),
+            "reads": _("already reads"),
+            "feed": _(
+                "This rule has no channels now, so it reads the subscriptions feed. After this change, it reads only "
+                "its channels, and not the subscriptions feed."
+            ),
+            "catch_up": _(
+                "The next run adds the videos of this channel from the last {days} days that the rule matches. After "
+                "that, the rule adds each new video of the channel. To add older videos, open the rule and change Also "
+                "add videos from."
+            ).format(days=DEFAULT_DAYS_BACK),
+        }.items()
+    }
+    return f"""
+<q-td :props="props" auto-width @click.stop>
+  <div v-if="props.row.working" class="row items-center no-wrap q-gutter-sm">
+    <q-spinner size="sm" />
+    <span>{texts["working"]}</span>
+  </div>
+  <div v-else class="row items-center justify-end no-wrap q-gutter-sm">
+    <q-btn v-if="props.row.is_subscribed" outline dense no-caps color="negative" icon="remove_circle" \
+label="{texts["unsubscribe"]}" :disable="props.row.locked" :data-row-button="props.row.id">
+      <q-menu anchor="bottom right" self="top right">
+        <q-card flat class="q-pa-md column q-gutter-sm" style="max-width: 22rem">
+          <div class="text-subtitle1" style="white-space: normal">{{{{ props.row.unsubscribe_question }}}}</div>
+          <div v-if="props.row.unsubscribe_note" style="white-space: normal">{{{{ props.row.unsubscribe_note }}}}</div>
+          <div class="row q-gutter-sm">
+            <q-btn color="negative" icon="remove_circle" label="{texts["unsubscribe"]}" v-close-popup \
+@click="() => $parent.$emit('{UNSUBSCRIBE_EVENT}', props.row.id)" />
+            <q-btn flat label="{texts["cancel"]}" v-close-popup />
+          </div>
+        </q-card>
+      </q-menu>
+    </q-btn>
+    <q-btn v-else outline dense no-caps icon="add_circle" label="{texts["subscribe"]}" :disable="props.row.locked" \
+:data-row-button="props.row.id" @click="() => $parent.$emit('{SUBSCRIBE_EVENT}', props.row.id)" />
+    <q-btn outline dense no-caps icon="playlist_add" icon-right="arrow_drop_down" label="{texts["add"]}" \
+:{FOCUS_KEY_ATTRIBUTE}="'{scope}-add-' + props.row.id">
+      <q-menu anchor="bottom right" self="top right">
+        <q-list style="max-width: 24rem">
+          <q-item-label header>{texts["add_title"]}</q-item-label>
+          <q-item v-if="!props.row.choices.length"><q-item-section>{texts["no_rule"]}</q-item-section></q-item>
+          <q-item v-for="choice in props.row.choices" :key="choice.id" clickable v-close-popup \
+:disable="choice.reads" @click="() => $parent.$emit('{ADD_TO_RULE_EVENT}', props.row.id, choice.id)">
+            <q-item-section>
+              <q-item-label>{{{{ choice.label }}}}</q-item-label>
+              <q-item-label v-if="choice.feed" caption class="text-warning" style="white-space: normal">\
+{texts["feed"]}</q-item-label>
+            </q-item-section>
+            <q-item-section v-if="choice.reads" side>{texts["reads"]}</q-item-section>
+          </q-item>
+          <q-item-label v-if="props.row.choices.length" caption class="q-px-md q-pb-sm" style="white-space: normal">\
+{texts["catch_up"]}</q-item-label>
+        </q-list>
+      </q-menu>
+    </q-btn>
+  </div>
+</q-td>
+"""
+
+
+def add_actions(
+    table: ui.table, scope: str, on_subscribe: OnRowEvent, on_unsubscribe: OnRowEvent, on_add: OnRowEvent
+) -> None:
+    """Put the actions of ``actions_cell`` into the last column of ``table``, and connect their events."""
+    table.props[ROW_SCOPE_ATTRIBUTE] = scope
+    table.add_slot(f"body-cell-{ROW_BUTTON_COLUMN}", actions_cell(scope))
+    table.on(SUBSCRIBE_EVENT, on_subscribe, js_handler=CHANNEL_JS_HANDLER)
+    table.on(UNSUBSCRIBE_EVENT, on_unsubscribe, js_handler=CHANNEL_JS_HANDLER)
+    table.on(ADD_TO_RULE_EVENT, on_add, js_handler=RULE_JS_HANDLER)
 
 
 def channel_columns() -> list[dict]:
@@ -312,16 +424,16 @@ def _options(labels: dict[str, str]) -> dict[str, str]:
 @register_page("/subscriptions", label=N_("Subscriptions"), icon="subscriptions")
 async def subscriptions_page(services: Services) -> None:
     state = PageState(lists=await asyncio.to_thread(read_lists, services.sessions))
+    # A redraw of the found channels deletes their table, whose events start the actions, so each action tells its
+    # result through the client of the page.
     client = context.client
 
-    def selected() -> SelectedChannel | None:
-        if state.selected_id is None:
-            return None
-        stored = state.lists.channel(state.selected_id)
-        found = state.found_by_id.get(state.selected_id)
+    def shown_channel(channel_id: str) -> ShownChannel | None:
+        stored = state.lists.channel(channel_id)
+        found = next((channel for channel in state.found or [] if channel.channel_id == channel_id), None)
         if stored is None and found is None:
             return None
-        return SelectedChannel(state.selected_id, stored, found)
+        return ShownChannel(channel_id, stored, found)
 
     def read_filter() -> ChannelFilter:
         return ChannelFilter(
@@ -333,7 +445,7 @@ async def subscriptions_page(services: Services) -> None:
     def show_channels() -> None:
         lists = state.lists
         channels = filter_channels(lists, read_filter())
-        channels_table.rows = [channel_row(channel, lists.rules_of(channel.channel_id)) for channel in channels]
+        channels_table.rows = [channel_row(channel, lists, state.working_id) for channel in channels]
         summary.set_text(_("{shown} of {total} channels").format(shown=len(channels), total=len(lists.channels)))
         # A filter that matches nothing and a service without stored channels need different next steps.
         no_channels.set_text(
@@ -343,6 +455,10 @@ async def subscriptions_page(services: Services) -> None:
         )
         no_channels.set_visibility(not channels)
 
+    def show_rows() -> None:
+        show_channels()
+        results_view.refresh()
+
     async def reload() -> None:
         state.lists_read += 1
         read = state.lists_read
@@ -350,9 +466,7 @@ async def subscriptions_page(services: Services) -> None:
         if read != state.lists_read:
             return
         state.lists = lists
-        show_channels()
-        results_view.refresh()
-        dialog_content.refresh()
+        show_rows()
 
     async def search() -> None:
         query = (search_input.value or "").strip()
@@ -369,72 +483,61 @@ async def subscriptions_page(services: Services) -> None:
                 state.search_error = _("The search failed. {reason}").format(reason=child_error_text(error))
             else:
                 state.found, state.search_error = found, None
-                state.found_by_id = {channel.channel_id: channel for channel in found}
         results_view.refresh()
 
-    def open_channel(event) -> None:
-        state.selected_id = str(event.args)
-        state.row_scope = event.sender.props.get(ROW_SCOPE_ATTRIBUTE)
-        state.view = DialogView.DETAILS
-        state.rule_id = None
-        state.error = None
-        dialog_content.refresh()
-        dialog.open()
-
-    def show_view(view: DialogView) -> None:
-        state.view = view
-        state.rule_id = None
-        state.error = None
-        dialog_content.refresh()
-
-    def choose_rule(event) -> None:
-        state.rule_id = event.value
-        dialog_content.refresh()
-
-    async def change_subscription(subscribe: bool) -> None:
-        channel = selected()
-        if channel is None or state.working:
+    async def change_subscription(channel_id: str, subscribe: bool) -> None:
+        channel = shown_channel(channel_id)
+        if channel is None or state.working_id is not None:
             return
-        state.working = True
-        state.error = None
-        dialog_content.refresh()
+        state.working_id = channel_id
+        result_label.ok("")
+        show_rows()
         try:
             if subscribe:
-                await asyncio.to_thread(subscribe_in_child, services.runner, channel.channel_id, channel.title)
+                await asyncio.to_thread(subscribe_in_child, services.runner, channel_id, channel.title)
             else:
-                await asyncio.to_thread(unsubscribe_in_child, services.runner, channel.channel_id)
+                await asyncio.to_thread(unsubscribe_in_child, services.runner, channel_id)
         except ChildError as error:
-            LOG.warning("The subscription of channel %s did not change: %s", channel.channel_id, error)
+            LOG.warning("The subscription of channel %s did not change: %s", channel_id, error)
             text = _("The subscription did not change. {reason}").format(reason=child_error_text(error))
-            state.error = DialogError(text, child_pause(error))
+            result_label.problem(text)
+            show_pause_end(result_label, text, child_pause(error))
         else:
-            # The redraw of the dialog deleted the button of this handler, so the message goes through the client.
             if subscribe:
-                notify_in(client, _("Subscribed to {title}.").format(title=channel.title), type="positive")
+                text = _("Subscribed to {title}.").format(title=channel.title)
             else:
-                notify_in(client, _("Unsubscribed from {title}.").format(title=channel.title), type="positive")
+                text = _("Unsubscribed from {title}.").format(title=channel.title)
+            result_label.ok(text)
+            notify_in(client, text, type="positive")
         finally:
-            state.working = False
-            state.view = DialogView.DETAILS
+            state.working_id = None
         await reload()
 
-    async def save_to_rule() -> None:
-        channel = selected()
-        rule = next((rule for rule in state.lists.rules if rule.id == state.rule_id), None)
+    async def subscribe_row(event: GenericEventArguments) -> None:
+        await change_subscription(str(event.args), subscribe=True)
+
+    async def unsubscribe_row(event: GenericEventArguments) -> None:
+        await change_subscription(str(event.args), subscribe=False)
+
+    async def add_row_to_rule(event: GenericEventArguments) -> None:
+        channel_id, rule_id = event.args
+        channel = shown_channel(str(channel_id))
+        rule = next((rule for rule in state.lists.rules if rule.id == rule_id), None)
         if channel is None or rule is None:
             return
         outcome = await asyncio.to_thread(add_to_rule, services.sessions, services.settings.tz, rule.id, channel)
-        # A click on Back while the save runs redraws the dialog and deletes the button of this handler.
         if outcome is AddOutcome.ADDED:
-            notify_in(
-                client, _("Rule {rule} now reads {title}.").format(rule=rule.name, title=channel.title), type="positive"
-            )
+            text = _("Rule {rule} now reads {title}.").format(rule=rule.name, title=channel.title)
+            result_label.ok(text)
+            notify_in(client, text, type="positive")
         elif outcome is AddOutcome.ALREADY_IN_RULE:
-            notify_in(client, _("Rule {rule} already reads {title}.").format(rule=rule.name, title=channel.title))
+            text = _("Rule {rule} already reads {title}.").format(rule=rule.name, title=channel.title)
+            result_label.ok(text)
+            notify_in(client, text)
         else:
-            notify_in(client, _("Rule {rule} does not exist any more.").format(rule=rule.name), type="warning")
-        state.view = DialogView.DETAILS
-        state.rule_id = None
+            text = _("Rule {rule} does not exist any more.").format(rule=rule.name)
+            result_label.problem(text)
+            notify_in(client, text, type="warning")
         await reload()
 
     @ui.refreshable
@@ -447,116 +550,15 @@ async def subscriptions_page(services: Services) -> None:
         if not state.found:
             ui.label(_("YouTube found no channel for this text.")).mark("no-found")
             return
-        rows = [found_row(channel, state.lists.channel(channel.channel_id)) for channel in state.found]
+        rows = [found_row(channel, state.lists, state.working_id) for channel in state.found]
         table = (
             ui.table(columns=found_columns(), rows=rows, row_key="id")
             .props("flat bordered dense")
-            .classes("w-full cursor-pointer")
+            .classes("w-full")
             .mark("found-table")
         )
         table.add_slot("body-cell-title", TITLE_CELL)
-        table.on("rowClick", open_channel, js_handler="(event, row) => emit(row.id)")
-        add_row_button(table, open_channel, icon="edit", label=_("Edit"), scope="found")
-
-    def _details_view(channel: SelectedChannel) -> None:
-        rules = state.lists.rules_of(channel.channel_id)
-        with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-start"):
-            ui.label(_("Subscribed")).classes("text-grey-7")
-            ui.label(_(YES_NO[channel.is_subscribed])).mark("channel-subscribed")
-            count = channel.subscriber_count
-            if count is not None:
-                ui.label(_("Subscribers")).classes("text-grey-7")
-                ui.label(format_count(count)).mark("channel-subscribers")
-            ui.label(_("Rules")).classes("text-grey-7")
-            if rules:
-                ui.label(", ".join(rule_label(rule) for rule in rules)).mark("channel-rules")
-            else:
-                ui.label(_("No rule reads this channel.")).mark("channel-rules")
-        ui.link(_("Open on YouTube"), channel_url(channel.channel_id), new_tab=True).mark("channel-link")
-        with ui.row().classes("gap-2"):
-            if channel.is_subscribed:
-                ui.button(
-                    _("Unsubscribe"), icon="remove_circle", on_click=lambda: show_view(DialogView.CONFIRM_UNSUBSCRIBE)
-                ).props("outline").mark("channel-unsubscribe").set_enabled(not state.working)
-            else:
-                ui.button(_("Subscribe"), icon="add_circle", on_click=lambda: change_subscription(True)).mark(
-                    "channel-subscribe"
-                ).set_enabled(not state.working)
-            ui.button(_("Add to rule…"), icon="playlist_add", on_click=lambda: show_view(DialogView.ADD_TO_RULE)).mark(
-                "channel-add-to-rule"
-            )
-            ui.button(_("Close"), on_click=dialog.close).props("flat").mark("channel-close")
-
-    def _add_to_rule_view(channel: SelectedChannel) -> None:
-        ui.label(_("Add the channel to a rule")).classes("text-subtitle1")
-        rules = state.lists.rules
-        choices = [rule for rule in rules if channel.channel_id not in rule.channel_ids]
-        chosen = next((rule for rule in choices if rule.id == state.rule_id), None)
-        if not rules:
-            ui.label(_("No rule exists yet. Create a rule first.")).mark("no-rule-choice")
-        elif not choices:
-            ui.label(_("Each rule already reads this channel.")).mark("no-rule-choice")
-        else:
-            ui.select(
-                {rule.id: rule_label(rule) for rule in choices},
-                label=_("Rule"),
-                value=None if chosen is None else chosen.id,
-                on_change=choose_rule,
-            ).props("outlined dense").classes("w-full").mark("rule-select")
-            ui.label(
-                _(
-                    "The next run adds the videos of this channel from the last {days} days that the rule matches. "
-                    "After that, the rule adds each new video of the channel. To add older videos, open the rule and "
-                    "change Also add videos from."
-                ).format(days=DEFAULT_DAYS_BACK)
-            ).mark("fact-catch-up")
-            if chosen is not None and not chosen.channel_ids:
-                ui.label(
-                    _(
-                        "This rule has no channels now, so it reads the subscriptions feed. After this change, it reads "
-                        "only its channels, and not the subscriptions feed."
-                    )
-                ).classes("text-warning").mark("fact-feed")
-        with ui.row().classes("gap-2"):
-            ui.button(_("Save"), icon="save", on_click=save_to_rule).mark("rule-save").set_enabled(chosen is not None)
-            ui.button(_("Back"), on_click=lambda: show_view(DialogView.DETAILS)).props("flat").mark("rule-back")
-
-    def _confirm_unsubscribe_view(channel: SelectedChannel) -> None:
-        ui.label(_("Unsubscribe the YouTube account from this channel?")).classes("text-subtitle1").mark("confirm-text")
-        if state.lists.rules_of(channel.channel_id):
-            ui.label(_("The rules that name this channel still read its videos.")).mark("confirm-rules")
-        with ui.row().classes("gap-2"):
-            ui.button(_("Unsubscribe"), icon="remove_circle", on_click=lambda: change_subscription(False)).props(
-                "color=negative"
-            ).mark("confirm-unsubscribe").set_enabled(not state.working)
-            ui.button(_("Back"), on_click=lambda: show_view(DialogView.DETAILS)).props("flat").mark("confirm-back")
-
-    @ui.refreshable
-    def dialog_content() -> None:
-        channel = selected()
-        if channel is None:
-            return
-        with ui.row().classes("items-center gap-4 no-wrap"):
-            if channel.thumbnail_url:
-                ui.image(channel.thumbnail_url).props("referrerpolicy=no-referrer").classes(
-                    "w-16 h-16 rounded-full"
-                ).mark("channel-thumbnail")
-            with ui.column().classes("gap-0"):
-                ui.label(channel.title).classes("text-h6").mark("channel-title")
-                ui.label(channel.handle or _("No handle")).classes("text-grey-7").mark("channel-handle")
-        if state.working:
-            with ui.row().classes("items-center gap-2"):
-                ui.spinner(size="sm")
-                ui.label(_("The service works with YouTube. This takes up to a minute.")).mark("channel-working")
-        if state.error is not None:
-            label = ui.label(state.error.text).classes("text-negative").mark("channel-error")
-            show_pause_end(label, state.error.text, state.error.pause)
-        if state.view is DialogView.ADD_TO_RULE:
-            _add_to_rule_view(channel)
-        elif state.view is DialogView.CONFIRM_UNSUBSCRIBE:
-            _confirm_unsubscribe_view(channel)
-        else:
-            _details_view(channel)
+        add_actions(table, FOUND_SCOPE, subscribe_row, unsubscribe_row, add_row_to_rule)
 
     ui.label(_("Subscriptions")).classes("text-h5")
     await account_lists(services, on_refreshed=reload)
@@ -579,7 +581,7 @@ async def subscriptions_page(services: Services) -> None:
         ui.label(
             _(
                 "The subscriptions of the account from the last refresh, and each channel that a rule reads. "
-                "Click a channel to see its actions."
+                "A click on the title of a channel opens the channel on YouTube."
             )
         ).classes("text-grey-7")
         with ui.row().classes("w-full items-center gap-4"):
@@ -603,30 +605,14 @@ async def subscriptions_page(services: Services) -> None:
             )
         summary = ui.label().mark("channels-summary")
         no_channels = ui.label().mark("no-channels")
+        # The result of the last action of a row, in both tables.
+        result_label = ResultLabel().mark("channel-result")
         channels_table = (
             ui.table(columns=channel_columns(), rows=[], row_key="id", pagination=PAGE_SIZE)
             .props("flat bordered dense")
-            .classes("w-full cursor-pointer")
+            .classes("w-full")
             .mark("channels-table")
         )
         channels_table.add_slot("body-cell-title", TITLE_CELL)
-        channels_table.on("rowClick", open_channel, js_handler="(event, row) => emit(row.id)")
-        add_row_button(channels_table, open_channel, icon="edit", label=_("Edit"), scope="channels")
+        add_actions(channels_table, CHANNELS_SCOPE, subscribe_row, unsubscribe_row, add_row_to_rule)
     show_channels()
-
-    def dialog_changed(event) -> None:
-        # The row button that had the focus was drawn again while the dialog was open.
-        if not event.value and state.selected_id is not None:
-            # The row can be gone, for example after Unsubscribe with the filter Subscribed. Then the field of the
-            # table gets the focus: the search field for a found channel, and the filter field for a stored one.
-            field = search_input if state.row_scope == "found" else text_input
-            focus_when_drawn(
-                client,
-                row_button_selector(state.selected_id, state.row_scope),
-                fallback=f"#{field.html_id}",
-                delay_ms=FOCUS_DELAY_MS,
-            )
-
-    with ui.dialog().mark("channel-dialog") as dialog, ui.card().classes("w-full max-w-lg"):
-        dialog_content()
-    dialog.on_value_change(dialog_changed)
