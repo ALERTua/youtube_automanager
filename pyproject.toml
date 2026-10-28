@@ -1,6 +1,6 @@
 [project]
 name = "youtube-automanager"
-version = "0.1.2"
+version = "1.0.0"
 description = "Adds videos to your YouTube playlists automatically based on rules"
 readme = "README.md"
 requires-python = "==3.15.*"
