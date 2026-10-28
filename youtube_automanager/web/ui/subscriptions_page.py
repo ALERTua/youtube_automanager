@@ -5,6 +5,9 @@ request to YouTube. The title of a channel, in the table or in the search result
 new tab. The last cell of each row holds the actions of the channel: subscribe or unsubscribe, and add the channel to a
 rule. The result of an action shows above the table of the stored channels.
 
+The column "Last video" of the stored table shows the newest upload date that ``seen_video`` holds for the channel, so
+only a channel that a rule reads has one. A channel without a date shows a dash and sorts as the oldest.
+
 The search, the subscribe and the unsubscribe run in child processes of the runner, and the page waits for them in a
 thread, so the web process never imports yt-dlp. While a run, a session check or another child holds the sync lock,
 they start nothing, and the page says so. The page reads and writes the database in a thread, never on the event loop.
@@ -15,12 +18,13 @@ import logging
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 from urllib.parse import quote
 
 from nicegui import context, ui
 from nicegui.events import GenericEventArguments
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.channel_actions import (
@@ -31,7 +35,7 @@ from youtube_automanager.channel_actions import (
     subscribe_in_child,
     unsubscribe_in_child,
 )
-from youtube_automanager.db.models import Channel, Rule, RuleChannel
+from youtube_automanager.db.models import Channel, Rule, RuleChannel, SeenVideo
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
@@ -42,8 +46,10 @@ from youtube_automanager.web.ui.common import (
     ROW_SCOPE_ATTRIBUTE,
     ResultLabel,
     actions_column,
+    add_keyboard_sort,
     busy,
     column,
+    day_column,
     notify_in,
     read_timezone,
     template_text,
@@ -59,6 +65,9 @@ CHANNEL_URL = "https://www.youtube.com/channel/"
 ANY = "any"
 YES = "yes"
 NO = "no"
+# The source of ``seen_video`` for the subscriptions feed, as ``FEED_SOURCE`` of ``engine.sync``. That module imports
+# yt-dlp, which the process of the service never imports. The feed is not a channel, so it gives no date to a channel.
+FEED_SOURCE = "feed"
 
 YES_NO = {True: N_("Yes"), False: N_("No")}
 SUBSCRIBED_FILTER = {ANY: N_("All"), YES: N_("Subscribed"), NO: N_("Not subscribed")}
@@ -100,6 +109,8 @@ class ChannelRecord:
     handle: str | None
     thumbnail_url: str | None
     is_subscribed: bool
+    # The newest upload date among the videos of the channel in ``seen_video``. None when the service saw no such video.
+    last_video: date | None = None
 
 
 @dataclass(frozen=True)
@@ -174,10 +185,30 @@ class PageState:
 
 
 def read_lists(sessions: sessionmaker[Session]) -> StoredLists:
-    """Read the stored channels and the rules with their channels. This call blocks."""
+    """Read the stored channels, with the date of their newest seen video, and the rules with their channels.
+
+    One grouped query gives the dates of all channels. The service asks YouTube for nothing, so a channel that no rule
+    reads has no date. This call blocks.
+    """
     with sessions() as session:
+        newest = {
+            channel_id: upload_date
+            for channel_id, upload_date in session.execute(
+                select(SeenVideo.channel_id, func.max(SeenVideo.upload_date))
+                .where(SeenVideo.channel_id != FEED_SOURCE)
+                .group_by(SeenVideo.channel_id)
+            )
+            if upload_date is not None
+        }
         channels = [
-            ChannelRecord(row.channel_id, row.title, row.handle, row.thumbnail_url, row.is_subscribed)
+            ChannelRecord(
+                row.channel_id,
+                row.title,
+                row.handle,
+                row.thumbnail_url,
+                row.is_subscribed,
+                newest.get(row.channel_id),
+            )
             for row in session.scalars(select(Channel))
         ]
         links: dict[int, set[str]] = defaultdict(set)
@@ -281,6 +312,8 @@ def channel_row(channel: ChannelRecord, lists: StoredLists, working_id: str | No
         "handle": channel.handle or "",
         "subscribed": _(YES_NO[channel.is_subscribed]),
         "rules": ", ".join(rule_label(rule) for rule in lists.rules_of(channel.channel_id)),
+        # The day as ``YYYY-MM-DD``, or an empty text. The browser shows the day in its own form, see ``day_column``.
+        "last_video": "" if channel.last_video is None else channel.last_video.isoformat(),
         **action_fields(channel.channel_id, channel.title, channel.is_subscribed, lists, working_id),
     }
 
@@ -393,12 +426,28 @@ def add_actions(
     table.on(ADD_TO_RULE_EVENT, on_add, js_handler=RULE_JS_HANDLER)
 
 
+def last_video_cell() -> str:
+    """Return the Vue template of the cell "Last video" of the stored table.
+
+    A channel with a date shows the day that the column formats in the form of the browser. A channel without a date
+    shows a dash, and its tooltip says why. The dash has the text as its name for a screen reader.
+    """
+    text = template_text(_("The service does not read this channel"))
+    return f"""
+<q-td :props="props">
+  <span v-if="props.row.last_video">{{{{ props.value }}}}</span>
+  <span v-else role="img" aria-label="{text}">—<q-tooltip>{text}</q-tooltip></span>
+</q-td>
+"""
+
+
 def channel_columns() -> list[dict]:
     return [
         column("title", _("Channel")),
         column("handle", _("Handle")),
         column("subscribed", _("Subscribed")),
         column("rules", _("Rules")),
+        day_column("last_video", _("Last video"), sortable=True),
         actions_column(),
     ]
 
@@ -614,5 +663,7 @@ async def subscriptions_page(services: Services) -> None:
             .mark("channels-table")
         )
         channels_table.add_slot("body-cell-title", TITLE_CELL)
+        channels_table.add_slot("body-cell-last_video", last_video_cell())
+        add_keyboard_sort(channels_table, CHANNELS_SCOPE)
         add_actions(channels_table, CHANNELS_SCOPE, subscribe_row, unsubscribe_row, add_row_to_rule)
     show_channels()
