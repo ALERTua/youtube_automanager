@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 22:19+0200\n"
+"POT-Creation-Date: 2026-10-28 22:40+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -16,6 +16,13 @@ msgstr ""
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
+
+#. Translators: {count} is the number of the selected stored channels that the
+#. filters do not show.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "({count} hidden by the filters)"
+msgstr "(приховано фільтрами: {count})"
 
 #: youtube_automanager/web/ui/service_settings.py
 msgid "A fixed number of the newest videos"
@@ -112,6 +119,10 @@ msgstr "Додати адресата"
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Add the channel to a rule"
 msgstr "Додати канал до правила"
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Add the selected channels to a rule"
+msgstr "Додати вибрані канали до правила"
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Add to rule"
@@ -297,6 +308,10 @@ msgstr "Виберіть перший день для відео."
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Choose whether the video is a Short."
 msgstr "Виберіть, чи відео є Short."
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Clear selection"
+msgstr "Зняти виділення"
 
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rule_editor.py
@@ -948,6 +963,10 @@ msgstr ""
 "Одне застосування додає найстаріші відео: {limit} із {count}. Застосуйте "
 "ще раз, щоб додати решту."
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Only selected"
+msgstr "Тільки вибрані"
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "Open"
 msgstr "Відкрити"
@@ -1067,6 +1086,11 @@ msgstr "Застосування правила"
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
+msgid "Rule {rule} already reads each selected channel."
+msgstr "Правило {rule} уже читає кожен вибраний канал."
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
 msgid "Rule {rule} already reads {title}."
 msgstr "Правило {rule} уже читає {title}."
 
@@ -1074,6 +1098,13 @@ msgstr "Правило {rule} уже читає {title}."
 #, python-brace-format
 msgid "Rule {rule} does not exist any more."
 msgstr "Правила {rule} більше немає."
+
+#. Translators: {count} is the number of the channels that the rule did not
+#. read before.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Rule {rule} now reads {count} more channels."
+msgstr "Правило {rule} тепер читає ще каналів: {count}."
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
@@ -1145,6 +1176,33 @@ msgstr "Пошук"
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Seconds"
 msgstr "Секунди"
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Select"
+msgstr "Вибір"
+
+#. Translators: the name of the checkbox in the header of the table. {count} is
+#. the number of the channels.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
+"Select each channel that the filters show, also on the other pages "
+"({count})"
+msgstr ""
+"Вибрати кожен канал, який показують фільтри, також на інших сторінках "
+"(каналів: {count})"
+
+#. Translators: the name of the checkbox in the header of the table. {count} is
+#. the number of the channels.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Select each found channel ({count})"
+msgstr "Вибрати кожен знайдений канал (каналів: {count})"
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Selected: {count}"
+msgstr "Вибрано: {count}"
 
 #: youtube_automanager/web/ui/notifications_section.py
 msgid "Send a test"
@@ -1468,6 +1526,19 @@ msgstr "Наступний запуск не додасть жодного ві�
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid ""
+"The next run adds the videos of these channels from the last {days} days "
+"that the rule matches. After that, the rule adds each new video of the "
+"channels. To add older videos, open the rule and change Also add videos "
+"from."
+msgstr ""
+"Наступний запуск додасть відео цих каналів за останні {days} дн., які "
+"підходять під правило. Після цього правило додаватиме кожне нове відео "
+"цих каналів. Щоб додати старіші відео, відкрийте правило й змініть поле "
+"«Додати також відео від»."
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
 "The next run adds the videos of this channel from the last {days} days "
 "that the rule matches. After that, the rule adds each new video of the "
 "channel. To add older videos, open the rule and change Also add videos "
@@ -1741,11 +1812,12 @@ msgstr "Підписка не змінилася. {reason}"
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid ""
 "The subscriptions of the account from the last refresh, and each channel "
-"that a rule reads. A click on the title of a channel opens the channel on"
-" YouTube."
+"that a rule reads. A click on a row selects the channel. A click on the "
+"title of a channel opens the channel on YouTube."
 msgstr ""
 "Підписки акаунта з останнього оновлення й кожен канал, який читає "
-"правило. Клік по назві каналу відкриває канал на YouTube."
+"правило. Клік по рядку вибирає канал. Клік по назві каналу відкриває "
+"канал на YouTube."
 
 #: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format

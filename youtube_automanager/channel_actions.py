@@ -11,9 +11,9 @@ The search and the subscription change need yt-dlp, so each runs in a short chil
 - ``change-subscriptions`` changes the subscription of many channels in one child. It reads the batch as one JSON line
   on its standard input, and it writes each confirmed change as the single change does.
 
-``add_channel_to_rule`` sends no request to YouTube, so it runs in the web process. A rule knows a channel only by its
-id, and a ``channel`` row never goes away, because a rule can point at it. ``mark_date`` and ``last_checked_at`` of a
-channel belong to the sync engine, and this module never writes them.
+``add_channel_to_rule`` and ``add_channels_to_rule`` send no request to YouTube, so they run in the web process. A rule
+knows a channel only by its id, and a ``channel`` row never goes away, because a rule can point at it. ``mark_date`` and
+``last_checked_at`` of a channel belong to the sync engine, and this module never writes them.
 """
 
 import dataclasses
@@ -27,6 +27,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.db.models import Channel, Rule, RuleChannel
@@ -497,6 +498,16 @@ def _found_channel(item: object) -> FoundChannel | None:
 # The rules.
 
 
+@dataclass(frozen=True)
+class ChannelForRule:
+    """A channel for a rule. The title, the handle and the avatar go into a new ``channel`` row only."""
+
+    channel_id: str
+    title: str
+    handle: str | None = None
+    thumbnail_url: str | None = None
+
+
 def add_channel_to_rule(
     sessions: sessionmaker[Session],
     rule_id: int,
@@ -507,33 +518,60 @@ def add_channel_to_rule(
     thumbnail_url: str | None = None,
     catch_up_since: datetime.date | None = None,
 ) -> AddOutcome:
-    """Make the rule ``rule_id`` read the channel. This call blocks.
+    """Make the rule ``rule_id`` read the channel, as ``add_channels_to_rule`` does. This call blocks."""
+    added = add_channels_to_rule(
+        sessions, rule_id, [ChannelForRule(channel_id, title, handle, thumbnail_url)], catch_up_since=catch_up_since
+    )
+    if added is None:
+        return AddOutcome.NO_RULE
+    return AddOutcome.ADDED if added else AddOutcome.ALREADY_IN_RULE
+
+
+def add_channels_to_rule(
+    sessions: sessionmaker[Session],
+    rule_id: int,
+    channels: Sequence[ChannelForRule],
+    *,
+    catch_up_since: datetime.date | None = None,
+) -> int | None:
+    """Make the rule ``rule_id`` read each of ``channels`` in one transaction. This call blocks.
+
+    Return the number of channels that the rule did not read before, or None when the rule does not exist. A channel
+    that the rule reads already changes nothing.
 
     A channel that the stored list does not have gets its ``channel`` row first, with ``is_subscribed`` false. The next
     refresh of the account lists corrects the flag when the account is subscribed. A stored row stays as it is.
 
     With ``catch_up_since``, the next run also adds the matching videos of the rule since that day. A rule that already
-    has an earlier catch-up day keeps it.
+    has an earlier catch-up day keeps it, and a rule that gets no new channel keeps its day too.
     """
     with sessions.begin() as session:
         rule = session.get(Rule, rule_id)
         if rule is None:
-            return AddOutcome.NO_RULE
-        if session.get(RuleChannel, (rule_id, channel_id)) is not None:
-            return AddOutcome.ALREADY_IN_RULE
+            return None
+        read = set(session.scalars(select(RuleChannel.channel_id).where(RuleChannel.rule_id == rule_id)))
+        # A channel that comes twice counts once, with its first data.
+        new: dict[str, ChannelForRule] = {}
+        for channel in channels:
+            if channel.channel_id not in read:
+                new.setdefault(channel.channel_id, channel)
+        if not new:
+            return 0
         if catch_up_since is not None and (rule.catch_up_since is None or catch_up_since < rule.catch_up_since):
             rule.catch_up_since = catch_up_since
-        if session.get(Channel, channel_id) is None:
-            session.add(
-                Channel(
-                    channel_id=channel_id,
-                    title=title.strip() or channel_id,
-                    handle=handle,
-                    thumbnail_url=thumbnail_url,
-                    is_subscribed=False,
-                )
+        stored = set(session.scalars(select(Channel.channel_id).where(Channel.channel_id.in_(new))))
+        session.add_all(
+            Channel(
+                channel_id=channel.channel_id,
+                title=channel.title.strip() or channel.channel_id,
+                handle=channel.handle,
+                thumbnail_url=channel.thumbnail_url,
+                is_subscribed=False,
             )
-            # The rule_channel row needs the channel row first, because of its foreign key.
-            session.flush()
-        session.add(RuleChannel(rule_id=rule_id, channel_id=channel_id))
-    return AddOutcome.ADDED
+            for channel in new.values()
+            if channel.channel_id not in stored
+        )
+        # The rule_channel rows need the channel rows first, because of their foreign key.
+        session.flush()
+        session.add_all(RuleChannel(rule_id=rule_id, channel_id=channel_id) for channel_id in new)
+    return len(new)

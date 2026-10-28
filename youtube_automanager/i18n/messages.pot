@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 22:19+0200\n"
+"POT-Creation-Date: 2026-10-28 22:40+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -16,6 +16,13 @@ msgstr ""
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
+
+#. Translators: {count} is the number of the selected stored channels that the
+#. filters do not show.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "({count} hidden by the filters)"
+msgstr ""
 
 #: youtube_automanager/web/ui/service_settings.py
 msgid "A fixed number of the newest videos"
@@ -96,6 +103,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Add the channel to a rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Add the selected channels to a rule"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -278,6 +289,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py
 msgid "Choose whether the video is a Short."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Clear selection"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -893,6 +908,10 @@ msgid ""
 "add the rest."
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Only selected"
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "Open"
 msgstr ""
@@ -1010,12 +1029,24 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
+msgid "Rule {rule} already reads each selected channel."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
 msgid "Rule {rule} already reads {title}."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "Rule {rule} does not exist any more."
+msgstr ""
+
+#. Translators: {count} is the number of the channels that the rule did not
+#. read before.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Rule {rule} now reads {count} more channels."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -1087,6 +1118,31 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Seconds"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Select"
+msgstr ""
+
+#. Translators: the name of the checkbox in the header of the table. {count} is
+#. the number of the channels.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
+"Select each channel that the filters show, also on the other pages "
+"({count})"
+msgstr ""
+
+#. Translators: the name of the checkbox in the header of the table. {count} is
+#. the number of the channels.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Select each found channel ({count})"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Selected: {count}"
 msgstr ""
 
 #: youtube_automanager/web/ui/notifications_section.py
@@ -1381,6 +1437,15 @@ msgstr ""
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid ""
+"The next run adds the videos of these channels from the last {days} days "
+"that the rule matches. After that, the rule adds each new video of the "
+"channels. To add older videos, open the rule and change Also add videos "
+"from."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
 "The next run adds the videos of this channel from the last {days} days "
 "that the rule matches. After that, the rule adds each new video of the "
 "channel. To add older videos, open the rule and change Also add videos "
@@ -1615,8 +1680,8 @@ msgstr ""
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid ""
 "The subscriptions of the account from the last refresh, and each channel "
-"that a rule reads. A click on the title of a channel opens the channel on"
-" YouTube."
+"that a rule reads. A click on a row selects the channel. A click on the "
+"title of a channel opens the channel on YouTube."
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py

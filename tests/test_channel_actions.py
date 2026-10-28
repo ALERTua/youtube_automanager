@@ -12,7 +12,8 @@ import sys
 import threading
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.orm import Session
 from yt_dlp import YoutubeDL
 from yt_dlp.networking.common import Response
 
@@ -24,11 +25,13 @@ from youtube_automanager.channel_actions import (
     SUBSCRIPTION_TIMEOUT_SECONDS,
     AddOutcome,
     BatchChannel,
+    ChannelForRule,
     ChannelOutcome,
     FoundChannel,
     OutcomeKind,
     SubscriptionBatchResult,
     add_channel_to_rule,
+    add_channels_to_rule,
     batch_request,
     batch_timeout_seconds,
     change_subscription_once,
@@ -1322,6 +1325,111 @@ def test_a_missing_rule_adds_no_row(db_sessions, rule_id):
 
     assert rule_links(db_sessions) == set()
     assert stored_channel(db_sessions, A) is None
+
+
+# Many channels for a rule.
+
+
+def commits_of(sessions, work):
+    """Run ``work`` and return the number of transactions that it committed."""
+    commits = []
+
+    def record(session):
+        commits.append(session)
+
+    event.listen(sessions, "after_commit", record)
+    try:
+        work()
+    finally:
+        event.remove(sessions, "after_commit", record)
+    return len(commits)
+
+
+def test_many_channels_go_into_the_rule_in_one_transaction(db_sessions, rule_id):
+    store(db_sessions, Channel(channel_id=A, title="Stored", handle="@stored", is_subscribed=True))
+    channels = [
+        ChannelForRule(A, "New title of A", "@new"),
+        ChannelForRule(B, " Beta ", "@beta", "https://yt3.example/b.jpg"),
+        ChannelForRule(C, "  "),
+    ]
+    added = []
+
+    commits = commits_of(
+        db_sessions,
+        lambda: added.append(
+            add_channels_to_rule(db_sessions, rule_id, channels, catch_up_since=datetime.date(2026, 10, 5))
+        ),
+    )
+
+    assert (added, commits) == ([3], 1)
+    assert rule_links(db_sessions) == {(rule_id, A), (rule_id, B), (rule_id, C)}
+    assert catch_up_since(db_sessions, rule_id) == datetime.date(2026, 10, 5)
+    # A stored row stays as it is, and a channel that is not stored gets its row.
+    stored = stored_channel(db_sessions, A)
+    assert (stored.title, stored.handle, stored.is_subscribed) == ("Stored", "@stored", True)
+    beta = stored_channel(db_sessions, B)
+    assert (beta.title, beta.handle, beta.thumbnail_url, beta.is_subscribed) == (
+        "Beta",
+        "@beta",
+        "https://yt3.example/b.jpg",
+        False,
+    )
+    assert stored_channel(db_sessions, C).title == C
+
+
+def test_the_channels_that_the_rule_reads_already_do_not_count(db_sessions, rule_id):
+    add_channel_to_rule(db_sessions, rule_id, A, title="Alpha")
+
+    added = add_channels_to_rule(
+        db_sessions, rule_id, [ChannelForRule(A, "Other"), ChannelForRule(B, "Beta"), ChannelForRule(B, "Beta again")]
+    )
+
+    # A channel that comes twice counts once.
+    assert added == 1
+    assert rule_links(db_sessions) == {(rule_id, A), (rule_id, B)}
+    assert (stored_channel(db_sessions, A).title, stored_channel(db_sessions, B).title) == ("Alpha", "Beta")
+
+
+def test_a_rule_that_reads_each_channel_already_changes_nothing(db_sessions, rule_id):
+    add_channel_to_rule(db_sessions, rule_id, A, title="Alpha")
+
+    added = add_channels_to_rule(
+        db_sessions, rule_id, [ChannelForRule(A, "Alpha")], catch_up_since=datetime.date(2026, 10, 5)
+    )
+
+    assert added == 0
+    assert rule_links(db_sessions) == {(rule_id, A)}
+    assert catch_up_since(db_sessions, rule_id) is None
+
+
+def test_many_channels_for_a_missing_rule_add_no_row(db_sessions, rule_id):
+    assert (
+        add_channels_to_rule(db_sessions, rule_id + 1, [ChannelForRule(A, "Alpha"), ChannelForRule(B, "Beta")]) is None
+    )
+
+    assert rule_links(db_sessions) == set()
+    assert stored_channel(db_sessions, A) is None
+
+
+def test_a_failed_link_adds_no_channel_row_and_no_link(db_sessions, rule_id, monkeypatch):
+    original = Session.flush
+
+    def flush_then_fail(session, *args, **kwargs):
+        # The links go to the database after the rows of the channels, in the flush of the commit.
+        links = any(isinstance(row, RuleChannel) for row in session.new)
+        original(session, *args, **kwargs)
+        if links:
+            raise RuntimeError("the database failed")
+
+    monkeypatch.setattr(Session, "flush", flush_then_fail)
+
+    with pytest.raises(RuntimeError, match="the database failed"):
+        add_channels_to_rule(db_sessions, rule_id, [ChannelForRule(A, "Alpha"), ChannelForRule(B, "Beta")])
+    monkeypatch.undo()
+
+    # The transaction holds the rows of the channels and the links, so none of them stays.
+    assert rule_links(db_sessions) == set()
+    assert (stored_channel(db_sessions, A), stored_channel(db_sessions, B)) == (None, None)
 
 
 # The real child process.
