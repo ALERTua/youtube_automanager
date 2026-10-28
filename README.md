@@ -12,11 +12,15 @@ YouTube AutoManager adds new YouTube videos to your playlists by your rules. It 
 - It reads the uploads of each channel of a rule, or the subscriptions feed of your account for a rule without channels.
 - It checks each new video against each enabled rule, and it adds a matching video to the target playlist once. A video that you removed from the playlist does not come back.
 - A rule condition is a tree of groups: "all of", "any of" and "none of". Its conditions read the title, the channel, the duration, the upload date, the live status and Shorts. A title condition can be a regular expression.
-- The rules page shows a preview of what the next run does with a rule. The button "Apply to videos from a date" adds the matching older videos of a saved rule. The apply runs in the background of the service, so you can close the page, and the Rules page and the History page show it while it runs.
-- The subscriptions page lists your subscriptions, finds channels on YouTube, and subscribes or unsubscribes.
-- The scheduler page sets the schedule of the runs, and the history page shows each run with each decision about a video.
+- The rule editor shows a preview of what the next run does with a rule. The button "Apply to videos from a date" adds the matching older videos of a saved rule. The apply runs in the background of the service, so you can close the page, and the Rules page and the History page show it while it runs.
+- The Dashboard shows the cookie session, the scheduler, the last run and yt-dlp on one page, and it has the button "Run now".
+- The Subscriptions page lists your subscriptions, finds channels on YouTube, and subscribes or unsubscribes.
+- The Scheduler page sets the schedule of the runs, and the History page shows each run with each decision about a video.
+- The pages follow a run while it runs, with no reload. For example, the History page shows the new actions of the run as they come.
+- A REST API starts a run and reads or changes the rules and the schedule from a script.
+- The pages show in English or in Ukrainian. A button in the header changes the language.
 - The service sends notifications through [Apprise](https://appriseit.com/services/), for example to Telegram or Discord. Examples are a summary of each run, a failed run, and cookies that stop to work.
-- The service updates yt-dlp by itself from the settings page or on a schedule, without a new image.
+- The service updates yt-dlp by itself from the Settings page or on a schedule, without a new image.
 
 ## How the service reaches YouTube
 
@@ -42,7 +46,7 @@ You need Docker with Docker Compose.
 
 The service keeps its database and its yt-dlp releases in the folder `data` next to `compose.yaml`. It runs as the user `1000:1000`. If the folder `data` belongs to another user, set that user in `compose.yaml`, for example `user: "99:100"` on Unraid.
 
-The web UI has no password by default. Anybody who can open the page can change the rules and see the URL of each notification target. To ask for a password, set `UI_PASSWORD` in `.env`. The browser then asks for it once, and any user name works. The password goes over plain HTTP, so do not publish the port on the internet. Reach the service through a VPN, or through a reverse proxy with HTTPS.
+The web UI has no password by default. Anybody who can open the page can change the rules and see the URL of each notification target. To ask for a password, set `UI_PASSWORD` in `.env`. The browser then asks for it once, and any user name works. The password also protects the REST API. The password goes over plain HTTP, so do not publish the port on the internet. Reach the service through a VPN, or through a reverse proxy with HTTPS.
 
 The service accepts only the host names of a home network: IP addresses, `localhost`, names without a dot such as `mini`, and names under `.ts.net`, `.local`, `.lan`, `.home.arpa` and `.internal`. It refuses each other host name with HTTP 400. This check stops a web page on the internet that tries to reach the service through your browser. If you open the service under another domain name, for example through a reverse proxy, add that name to `ALLOWED_HOSTS`.
 
@@ -60,15 +64,51 @@ A session lives only as long as no browser tab of it stays open. A YouTube tab t
 
 The service first checks the cookies with YouTube, and it stores them only when YouTube accepts them. A dead export never replaces the stored cookies. Before each run, the service checks the session again, and it sends a notification when the session ends or the cookies expire soon. The cookie rotation of the settings page renews the session about every 10 minutes, as an open YouTube tab does. It is on by default.
 
-## First steps in the web UI
+## The pages
 
-1. On the rules page, click "Refresh lists", so the service reads your subscriptions and your playlists.
-2. Create a rule: choose the channels, add the conditions, and choose the target playlist.
+The drawer on the left lists the pages: Dashboard, Rules, Subscriptions, Scheduler, History and Settings. The header has the button of the drawer, a language button and a theme button. The language button switches the pages between English and Ukrainian. The language is one setting of the service, so each browser shows the same language. The theme button goes through the theme of the system, the dark theme and the light theme.
+
+After you upload the cookies, take these first steps:
+
+1. On the Rules page, click "Refresh lists", so the service reads your subscriptions and your playlists.
+2. Click "New rule". Choose the channels, add the conditions, and choose the target playlist.
 3. Click "Preview" to see what the next run does with the rule.
-4. Save the rule. The next run on the schedule uses it, or click "Run now" on the scheduler page.
+4. Click "Save". The next run on the schedule uses the rule. Or click "Run now" on the Dashboard or on the Scheduler page.
 5. To add older videos of a saved rule, open the rule and click "Apply to videos from a date".
 
 The default schedule runs once a day at 18:00 in the time zone of `TZ`.
+
+**Dashboard.** The Dashboard shows four cards: the cookie session, the scheduler, the last run and yt-dlp. The scheduler card has the button "Run now", and the title of the last run card opens that run in the History page. If the cookies are dead or expire soon, the cookie card links to the Settings page with "Upload new cookies".
+
+**Rules.** The Rules page lists the rules in a table, with the filters "Search", "Playlist" and "State" and the button "New rule". The switch in the column "Enabled" turns a rule on or off at once. A click on a column header sorts the table. The column "Added 7 d / 30 d" counts the videos that each rule added in the last 7 and the last 30 days. The filters stay in the address, for example `/rules?state=enabled`, so a reload or a shared link shows the same rules. While an apply runs, a line above the table names its rule and shows the count of added videos.
+
+**The rule editor.** A click on a row, or on its button "Edit", opens the rule editor. The editor is a page of its own: `/rules/new` for a new rule and `/rules/<id>` for a saved rule. It has the name, the channels, the target playlist, the condition, the switch "No Shorts", the field "Also add videos from", the switch "Enabled" and the button "Preview". A new rule starts with "Also add videos from" set to 7 days back, so the next run also adds the matching videos of these days. Clear the field to add only new videos. A saved rule also has the buttons "Duplicate", "Apply to videos from a date" and "Delete". The button "Duplicate" opens a new rule with a copy of the saved rule. The copy has the name "Copy of" and the old name. If the form has changes that you did not save, the editor asks "Discard the changes?" before you leave it, and the browser warns before a reload. The Back button of the browser leaves without this question.
+
+**Subscriptions.** The Subscriptions page has the button "Refresh lists", a search for channels on YouTube, and a table of the stored channels with the filters "Name or @handle", "Subscription" and "Rules". The table shows the lists of the last refresh, so a load of the page sends no request to YouTube. A click on a channel opens a dialog, where you subscribe or unsubscribe, add the channel to a rule, or open the channel on YouTube.
+
+**Scheduler.** The Scheduler page shows the state of the schedule and its next 5 runs, with the buttons "Pause", "Resume" and "Run now". The form "Schedule" sets a "Cron" or an "Interval" schedule, the time zone and the switch "Enabled". The form shows the next runs of the edited schedule before you click "Save".
+
+**History.** The History page lists the runs, 50 on a page and the newest first, with the filters "Status", "Trigger", "From" and "To". A click on a run opens its actions below the table, one line for each decision about a video, and the filter "Action" narrows them. The filters, the page and the open run stay in the address, for example `/history?run=12`. A run that is in progress shows its new counts and actions as they come. The card "Retention" sets how many days the service keeps the history.
+
+**Settings.** The Settings page has a block for each of these: the YouTube cookies, the cookie rotation, the processing mode, yt-dlp and the notification targets. A change of the rotation, the processing mode or the yt-dlp settings waits until you click "Save" at the bottom right of the page, and "Discard" drops it. The cookie upload, the session check, "Update now" and the buttons of the notification targets act at once.
+
+## REST API
+
+The REST API lets a script do what the pages do: start a run, read the runs, and read or change the rules and the schedule. The page `/docs` of the service lists each route with its fields. If you set `UI_PASSWORD`, it protects the API like the pages, except `/health`. A client sends the password with HTTP Basic authentication, with any user name. For example, this command reads the status of the service:
+
+```
+curl -u user:password http://<host>:8080/api/status
+```
+
+The routes come in these groups:
+
+- Status: `GET /health` and `GET /api/status`.
+- Runs: `GET /api/runs`, `GET /api/runs/<id>` with the actions of the run, and `POST /api/runs` to start a run.
+- Rules: `GET /api/rules` and `POST /api/rules`, and `GET`, `PUT` and `DELETE` on `/api/rules/<id>`. A rule needs a playlist and channels that the last refresh of the lists stored.
+- Schedule: `GET /api/schedule` and `PUT /api/schedule`.
+- Account: `POST /api/session/check` checks the cookies, and `POST /api/account/refresh` refreshes the lists.
+
+A route that starts a run, checks the session, refreshes the lists or deletes a rule answers 409 while another task with YouTube is active. The error texts of the API are always in English, also when the pages show Ukrainian.
 
 ## How a run works
 
@@ -123,7 +163,7 @@ The file `.env` holds the settings. Each line of `.env.example` explains its set
 | `YTDLP_DIR` | `/data/yt-dlp` | The folder of the yt-dlp releases that the updater installs. |
 | `CHILD_TIMEOUT_S` | `3600` | The longest time of one run in seconds. |
 | `HOST`, `PORT` | `0.0.0.0`, `8080` | The address and the port inside the container. Change the port mapping in `compose.yaml` instead. |
-| `UI_PASSWORD` | none | The password of the web UI, with any user name. `/health` needs no password. |
+| `UI_PASSWORD` | none | The password of the web UI and of the REST API, with any user name. `/health` needs no password. |
 | `ALLOWED_HOSTS` | none | More host names of the web UI, separated by commas. A name that starts with a dot also allows the names under it. `*` turns the check of the host name off. |
 
 ## Backup
@@ -182,7 +222,7 @@ You need [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/ju
 | `just serve` | Starts the service on http://localhost:8080, with its data in the folder `data`. It ignores `DATABASE_URL`, `YTDLP_DIR` and `HOME` of `.env`, because these values are for the container. To use another database, set `LOCAL_DATABASE_URL`. |
 | `just test` | Runs the tests on each core of the machine. |
 | `just test-serial` | Runs the tests in one process, for example `just test-serial --durations=0`. |
-| `just cov` | Runs the tests with the coverage report, and fails when the coverage of the service drops below the limit of the justfile. |
+| `just cov` | Runs the tests on each core of the machine with the coverage report, and fails when the coverage of the service drops below the limit of the justfile. |
 | `just lint` | Formats the code, fixes the lint findings and checks the types with ty. |
 | `just pot` | Extracts the texts of the web UI into `youtube_automanager/i18n/messages.pot` again. |
 | `just po` | Updates the Ukrainian catalog `youtube_automanager/i18n/locale/uk/LC_MESSAGES/messages.po` from `messages.pot`. Translate each new message and check each fuzzy one in it: the tests fail on both. |
