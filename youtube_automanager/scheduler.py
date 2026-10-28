@@ -309,6 +309,7 @@ class Scheduler:
     ``cleanup`` is a blocking function. It runs once when the scheduler starts, and then each day at ``CLEANUP_HOUR``
     and ``CLEANUP_MINUTE`` in the time zone of the schedule, also while the schedule is paused. A failed cleanup only
     writes a log entry, and the next one runs as planned. Without ``cleanup``, the scheduler has no cleanup job.
+    ``shutdown`` waits until a cleanup that still runs ends, so the end of the service does not cut it.
     """
 
     def __init__(self, runner: SyncRunner, cleanup: Callable[[], object] | None = None):
@@ -319,6 +320,8 @@ class Scheduler:
         self._timezone = "UTC"
         # The time of the day of the yt-dlp update and whether it runs, after ``start_ytdlp_updates``.
         self._ytdlp_plan: tuple[time, bool] | None = None
+        # The tasks of the cleanup jobs that run now, which ``shutdown`` waits for.
+        self._cleanups: set[asyncio.Task[object]] = set()
 
     def _running_scheduler(self) -> AsyncIOScheduler:
         if self._scheduler is None:
@@ -347,7 +350,7 @@ class Scheduler:
         if self._cleanup is not None:
             # An explicit first run time makes the job run once at the start, and then by its daily trigger.
             scheduler.add_job(
-                self._cleanup,
+                self._run_cleanup,
                 trigger=_cleanup_trigger(spec.timezone),
                 id=CLEANUP_JOB_ID,
                 max_instances=1,
@@ -358,13 +361,28 @@ class Scheduler:
         self._scheduler = scheduler
         LOG.info("The scheduler started: %s", self._describe(spec))
 
+    async def _run_cleanup(self) -> None:
+        """The cleanup job. It is a coroutine job, so ``shutdown`` can wait for it. The cleanup runs in a thread."""
+        assert self._cleanup is not None
+        # The task of the job is the thing that ``shutdown`` waits for. It ends after the cleanup, with the log entry.
+        task = asyncio.current_task()
+        assert task is not None
+        self._cleanups.add(task)
+        task.add_done_callback(self._cleanups.discard)
+        await asyncio.to_thread(self._cleanup)
+
     async def shutdown(self) -> None:
-        """Stop the schedule. An active run goes on: ``SyncRunner.stop`` stops it."""
+        """Stop the schedule, after a cleanup that still runs ends. An active run goes on: ``SyncRunner.stop`` stops it."""
         scheduler = self._scheduler
         if scheduler is None:
             return
         self._scheduler = None
-        # AsyncIOScheduler cannot wait for a job in a thread, and it shuts down on the next turn of the event loop.
+        # AsyncIOScheduler cannot wait for a job in a thread, and its shutdown cancels each job that still runs, which
+        # logs an error. So the wait for the cleanup comes first. ``asyncio.wait`` does not cancel the cleanup, when the
+        # caller of ``shutdown`` is cancelled.
+        if self._cleanups:
+            await asyncio.wait(set(self._cleanups))
+        # The shutdown of the scheduler runs on the next turn of the event loop.
         scheduler.shutdown(wait=False)
         await asyncio.sleep(0)
         LOG.info("The scheduler stopped")

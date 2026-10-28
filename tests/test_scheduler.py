@@ -630,8 +630,35 @@ def test_a_failing_cleanup_is_logged_and_the_scheduler_goes_on(runner, caplog):
 
     assert result == (SchedulerState.RUNNING, 1, 1)
     errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
-    assert errors
+    assert len(errors) == 1
     assert "the cleanup failed" in str(errors[0].exc_info[1])
+
+
+def test_the_shutdown_waits_for_a_cleanup_that_still_runs(runner, caplog):
+    """A stop of the service right after its start must not cut the first cleanup, and must log no error."""
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def cleanup():
+        started.set()
+        if release.wait(WAIT_SECONDS):
+            finished.set()
+
+    async def main():
+        scheduler = Scheduler(runner, cleanup=cleanup)
+        await scheduler.start(cron("0 18 * * *"))
+        assert await asyncio.to_thread(started.wait, WAIT_SECONDS), "The cleanup did not start"
+        # The cleanup ends 0.3 s after the shutdown starts.
+        threading.Timer(0.3, release.set).start()
+        await scheduler.shutdown()
+        return finished.is_set()
+
+    with caplog.at_level(logging.ERROR):
+        finished_before_the_shutdown_returned = asyncio.run(main())
+
+    assert finished_before_the_shutdown_returned
+    assert [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR] == []
 
 
 def test_a_scheduler_without_a_cleanup_has_no_cleanup_job(runner):
