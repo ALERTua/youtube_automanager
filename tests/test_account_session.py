@@ -5,6 +5,7 @@ values here are fake.
 """
 
 import datetime
+import io
 
 import pytest
 from sqlalchemy import select
@@ -17,6 +18,7 @@ from youtube_automanager.db.models import (
     CookieVersion,
     CookieVersionState,
     Playlist,
+    RequestBudgetState,
     Run,
     RunStatus,
     RunTrigger,
@@ -33,6 +35,7 @@ from youtube_automanager.engine.account_session import (
     CheckResult,
 )
 from youtube_automanager.notify import Event
+from youtube_automanager.pacing import BUCKET_SIZE
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.account import AccountError, AccountPlaylist, NotLoggedInError, SubscribedChannel
 from youtube_automanager.youtube.cookie_text import cookies
@@ -214,6 +217,37 @@ def test_a_check_of_stored_text_that_is_not_a_cookie_file_names_no_value(harness
     assert result.detail is not None
     assert "stored cookies are not valid" in result.detail
     assert "fakeSIDvalue" not in result.detail
+
+
+@pytest.mark.parametrize("check", ["stored", "upload"])
+def test_the_client_of_a_session_takes_its_tokens_from_the_budget_of_the_database_of_the_session(
+    harness, monkeypatch, check
+):
+    """The real client: YouTube refuses the session with HTTP 401, and the request still took its token."""
+    from yt_dlp import YoutubeDL
+    from yt_dlp.networking.common import Response
+    from yt_dlp.networking.exceptions import HTTPError
+
+    requests = []
+
+    def refuse(ydl, request):
+        requests.append(request.url)
+        raise HTTPError(Response(io.BytesIO(b""), request.url, {}, status=401))
+
+    monkeypatch.setattr(YoutubeDL, "urlopen", refuse)
+    account = AccountSession(harness.sessions, harness.settings, send=harness.sent.append)
+    if check == "stored":
+        harness.upload()
+        result = account.check()
+    else:
+        result = account.check_upload(cookie_text())
+
+    assert result.outcome is CheckOutcome.DEAD
+    assert len(requests) == 1
+    with harness.sessions() as session:
+        row = session.get(RequestBudgetState, 1)
+    assert row.tokens == BUCKET_SIZE - 1
+    assert row.last_answer_at is not None
 
 
 # A live session
@@ -746,7 +780,6 @@ def test_a_run_whose_yt_dlp_changed_an_internal_of_the_client_goes_on_without_th
     from yt_dlp.version import __version__ as ytdlp_version
 
     from youtube_automanager.youtube import public
-    from youtube_automanager.youtube.account import AccountClient
 
     channel = "UCaaaaaaaaaaaaaaaaaaaaaa"
     reads = []
@@ -764,7 +797,7 @@ def test_a_run_whose_yt_dlp_changed_an_internal_of_the_client_goes_on_without_th
     monkeypatch.setattr(
         sync_module,
         "AccountSession",
-        lambda sessions, settings, *, send: AccountSession(sessions, settings, send=send, make_client=AccountClient),
+        lambda sessions, settings, *, send: AccountSession(sessions, settings, send=send),
     )
     sync.rule("all", {"==": [1, 1]}, channels=[channel])
     harness.upload()

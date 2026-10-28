@@ -821,7 +821,7 @@ class TestCheckSessionOnce:
         calls = []
 
         class FakeClient:
-            def __init__(self, text):
+            def __init__(self, text, *, budget):
                 self.text = text
 
             def check_session(self):

@@ -4,6 +4,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.networking.exceptions import TransportError
 
 from youtube_automanager import rotation
+from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.youtube import _ytdlp, public
 from youtube_automanager.youtube.account import AccountClient, AccountError
 from youtube_automanager.youtube.public import PublicSourceError
@@ -66,8 +67,8 @@ def test_a_public_read_sends_the_user_agent(sent_agents):
     assert set(sent_agents) == {USER_AGENT}
 
 
-def test_a_session_check_with_the_cookies_sends_the_user_agent(sent_agents):
-    client = AccountClient(COOKIES, pause_s=0)
+def test_a_session_check_with_the_cookies_sends_the_user_agent(sent_agents, sessions):
+    client = AccountClient(COOKIES, budget=RequestBudget(sessions, random=lambda low, high: 0.0))
 
     with pytest.raises(AccountError):
         client.check_session()

@@ -87,7 +87,7 @@ def fake_client(monkeypatch):
         check_error = None
         read_error = None
 
-        def __init__(self, text):
+        def __init__(self, text, *, budget):
             self.text = text
 
         def check_session(self):

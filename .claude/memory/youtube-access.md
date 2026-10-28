@@ -8,7 +8,7 @@ metadata:
 ## Principles
 
 - The service uses no YouTube Data API. Public reads go through yt-dlp without cookies. Account reads and writes go through yt-dlp with the cookies of the user.
-- Pause 5 s between two requests that carry cookies. Anonymous reads need no pause.
+- Each request that carries cookies takes one token of one shared budget in the database, `RequestBudget` of `pacing.py`. The bucket holds at most 15 tokens and gets one new token each 4 s. A request also waits a random pause of 0.25 to 1.25 s after the end of the last answer, also of an answer in another process. Anonymous reads take no token and no pause.
 - A check of the session reads `ytcfg` of `https://www.youtube.com` and looks at `LOGGED_IN`. A dying session first answers as an anonymous user, and only later gives HTTP 401. The expiry dates in the cookie file do not show the end of a session.
 
 ## yt-dlp

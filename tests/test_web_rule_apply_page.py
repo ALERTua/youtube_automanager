@@ -138,7 +138,7 @@ def youtube(monkeypatch):
     monkeypatch.setattr(public, "shorts_video_ids", fake.shorts_video_ids)
 
     class FakeClient:
-        def __init__(self, text):
+        def __init__(self, text, *, budget):
             self.text = text
 
         def check_session(self):

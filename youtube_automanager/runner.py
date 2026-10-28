@@ -45,15 +45,16 @@ ERROR_TAIL_LINES = 10
 ERROR_TEXT_MAX_CHARS = 2000
 # How long a killed child and the reader of its stderr get to end.
 KILL_WAIT_SECONDS = 10
-# The longest time of a session check in its child. A check sends at most two requests, 5 s apart.
+# The longest time of a session check in its child. A check sends at most two requests, and each takes a token of the
+# request budget, which waits at most 4 s.
 CHECK_TIMEOUT_S = 120
 # The exit code of a session check child that cannot use the stored cookies, or finds none.
 UNAVAILABLE_EXIT_CODE = 3
 BUSY_TEXT = "A sync run, a session check or a yt-dlp update is active. Try again when it ends."
 # How long a scheduled run waits for the sync lock. A cookie rotation or a session check keeps it for seconds, a
 # refresh of the account lists or a yt-dlp update for a few minutes, and an apply of a rule for up to about 20 minutes,
-# because each add sends two requests 5 s or more apart. A scheduled run that comes at that time starts late, but it
-# is not lost.
+# because each add sends two requests, and the request budget gives one request each 4 s after its first 15. A
+# scheduled run that comes at that time starts late, but it is not lost.
 SCHEDULED_WAIT_S = 1800
 # The longest single wait for the sync lock, so a stop of the service ends a wait soon.
 LOCK_POLL_S = 0.5
