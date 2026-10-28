@@ -58,14 +58,15 @@ async def service_with_pages(settings, start) -> AsyncGenerator[tuple[User, Any]
     copy_database_template(settings.database_url)
     app = create_app(settings, start=start)
     mount_ui(app)
-    async with (
-        app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client,
-    ):
-        try:
+    # As in the service, the tabs are still open while the service stops, and they close after it.
+    try:
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client,
+        ):
             yield PatientUser(client), app.state.services
-        finally:
-            close_tabs()
+    finally:
+        close_tabs()
 
 
 def copy_database_template(url: str) -> None:
