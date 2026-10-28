@@ -16,6 +16,7 @@ from pydantic import SecretStr
 from sqlalchemy import event, select
 from ui_support import (
     Held,
+    click_on,
     collect_deleted_elements,
     element_of,
     elements_of,
@@ -30,7 +31,7 @@ from yt_dlp import YoutubeDL
 
 from youtube_automanager import i18n
 from youtube_automanager.account_cache import REFRESHED_AT_KEY
-from youtube_automanager.channel_actions import change_subscription_once
+from youtube_automanager.channel_actions import add_channels_to_rule, change_subscription_once
 from youtube_automanager.db.models import (
     BreakerReason,
     Channel,
@@ -45,7 +46,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.engine.sync import FEED_SOURCE
 from youtube_automanager.i18n import set_language
-from youtube_automanager.i18n.setting import NAMES
+from youtube_automanager.i18n.setting import NAMES, save_language
 from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import sync_lock_held
@@ -238,6 +239,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
 
     table = element_of(user, "channels-table")
     assert [column["label"] for column in table.columns] == [
+        "Select",
         "Channel",
         "Handle",
         "Subscribed",
@@ -418,6 +420,7 @@ async def test_the_last_video_column_sorts_by_the_day_and_has_a_keyboard_path(us
     sortable = {column["name"]: column.get("sortable", False) for column in table.columns}
     # The column stands after the rules and before the actions, and no other column sorts.
     assert sortable == {
+        "selected": False,
         "title": False,
         "handle": False,
         "subscribed": False,
@@ -462,7 +465,14 @@ async def test_the_found_table_has_no_column_last_video(user, stored_channels, f
     await search_for(user, fake_starter, found(FOUND, "Found Channel", "@found", 1))
 
     table = element_of(user, "found-table")
-    assert [column["name"] for column in table.columns] == ["title", "handle", "subscribers", "subscribed", "actions"]
+    assert [column["name"] for column in table.columns] == [
+        "selected",
+        "title",
+        "handle",
+        "subscribers",
+        "subscribed",
+        "actions",
+    ]
     assert "last_video" not in row_of(user, FOUND, "found-table")
     assert "body-cell-last_video" not in table.slots
 
@@ -675,6 +685,7 @@ async def test_a_search_shows_the_found_channels_with_their_stored_state(user, s
     await eventually(lambda: elements_of(user, "found-table"), "The table of the found channels")
     table = element_of(user, "found-table")
     assert [column["label"] for column in table.columns] == [
+        "Select",
         "Channel",
         "Handle",
         "Subscribers",
@@ -799,7 +810,9 @@ async def search_for(user, fake_starter, *channels: dict) -> None:
 # The actions of a row.
 
 
-async def test_the_title_of_a_channel_is_a_link_to_youtube_and_a_row_opens_nothing(user, stored_channels, fake_starter):
+async def test_the_title_of_a_channel_is_a_link_to_youtube_and_a_row_selects_the_channel(
+    user, stored_channels, fake_starter
+):
     await user.open("/subscriptions")
     await search_for(user, fake_starter, found(FOUND, "Found Channel", "@found", 1, "https://yt3.example/f.jpg"))
 
@@ -811,11 +824,10 @@ async def test_the_title_of_a_channel_is_a_link_to_youtube_and_a_row_opens_nothi
         assert 'rel="noopener noreferrer"' in template
         # The click on the link does not reach the row.
         assert "@click.stop" in template
-        # A click on a row opens nothing, and a row does not look like a button.
+        # A click on a row selects the channel and opens nothing.
         events = {listener.type for listener in table._event_listeners.values()}
-        assert {"subscribeChannel", "unsubscribeChannel", "addChannelToRule"} <= events
-        assert {"rowClick", "rowButton"} & events == set()
-        assert "cursor-pointer" not in table.classes
+        assert {"subscribeChannel", "unsubscribeChannel", "addChannelToRule", "rowClick"} <= events
+        assert "rowButton" not in events
     assert row_of(user, FOUND, "found-table")["url"] == f"https://www.youtube.com/channel/{FOUND}"
     assert row_of(user, ALPHA)["url"] == f"https://www.youtube.com/channel/{ALPHA}"
 
@@ -1250,6 +1262,485 @@ async def test_the_result_of_an_add_to_a_rule_shows_when_the_found_table_redraws
     await eventually(lambda: rows_of(user, "channels-table")[0]["rules"].startswith("Cooking"), "The table reloads")
 
 
+# The selection.
+
+
+def toggle(user, channel_id: str, marker: str = "channels-table") -> None:
+    """Press the checkbox of the row: the template sends the event only from the checkbox."""
+    user.find(marker=marker).trigger("toggleChannel", args=channel_id)
+
+
+def click_row(user, channel_id: str, marker: str = "channels-table") -> None:
+    user.find(marker=marker).trigger("rowClick", args=channel_id)
+
+
+def toggle_all(user, marker: str = "channels-table") -> None:
+    """Press the checkbox of the header: the template sends the event without rows."""
+    user.find(marker=marker).trigger("toggleAllChannels")
+
+
+def selected_rows(user, marker: str = "channels-table") -> list[str]:
+    return [row["id"] for row in rows_of(user, marker) if row["selected"]]
+
+
+def header_of(user, marker: str = "channels-table") -> tuple[bool | None, bool, str]:
+    """Return the state of the checkbox of the header, whether it can be pressed, and its name."""
+    (column,) = [column for column in element_of(user, marker).columns if column["name"] == "selected"]
+    return column["select_state"], column["selectable"], column["select_label"]
+
+
+def bar_of(user) -> list[str] | None:
+    """Return the texts of the selection bar, or None when the bar is hidden."""
+    if not element_of(user, "selection-bar").visible:
+        return None
+    hidden = element_of(user, "selected-hidden")
+    return [element_of(user, "selected-count").text, *([hidden.text] if hidden.visible else [])]
+
+
+async def bar_is(user, expected: list[str] | None) -> None:
+    await eventually(lambda: bar_of(user) == expected, f"The selection bar with {expected}")
+
+
+def bulk_menu_of(user) -> list[tuple[int, bool, str, bool]]:
+    """Return each rule of the menu "Add to rule" of the bar: its id, whether it can be chosen, its note, and whether it
+    warns about the subscriptions feed."""
+    choices = []
+    for item in elements_of(user, "bulk-rule"):
+        rule_id = int(next(marker for marker in item._markers if marker.startswith("bulk-rule:")).split(":")[1])
+        notes = elements_of(user, f"bulk-rule-note:{rule_id}")
+        choices.append(
+            (
+                rule_id,
+                item.enabled,
+                notes[0].text if notes else "",
+                bool(elements_of(user, f"bulk-rule-feed:{rule_id}")),
+            )
+        )
+    return choices
+
+
+def choose_bulk_rule(user, rule_id: int) -> None:
+    """Open the menu "Add to rule" of the bar, and choose the rule. The user simulation clicks no item of a closed
+    menu."""
+    with user.client:
+        element_of(user, "bulk-add-menu").open()
+    click_on(user, element_of(user, f"bulk-rule:{rule_id}"))
+
+
+async def test_each_row_has_a_checkbox_with_the_title_of_its_channel_as_its_name(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"))
+
+    for marker, scope in (("channels-table", "channels"), ("found-table", "found")):
+        table = element_of(user, marker)
+        assert table.columns[0]["name"] == "selected"
+        cell = template_of(user, marker, "body-cell-selected")
+        assert ':model-value="props.row.selected"' in cell
+        assert ':aria-label="props.row.title"' in cell
+        assert "$parent.$emit('toggleChannel', props.row.id)" in cell
+        # Each change of the selection draws the rows again, so the checkbox keeps the focus by its key.
+        assert f"'{scope}-select-' + props.row.id" in cell
+        header = template_of(user, marker, "header-cell-selected")
+        assert ':model-value="props.col.select_state"' in header
+        assert ':aria-label="props.col.select_label"' in header
+        assert ':disable="!props.col.selectable"' in header
+        assert "$parent.$emit('toggleAllChannels')" in header
+        assert f"'{scope}-select-all'" in header
+        # A selected row looks selected, as in a table with the selection of Quasar.
+        assert table.props[":table-row-class-fn"] == "(row) => (row.selected ? 'selected' : '')"
+    # The other header cells of the stored table keep their keyboard sort.
+    assert "props.sort(props.col)" in template_of(user, "channels-table", "header-cell")
+
+
+async def test_a_click_on_a_row_or_on_its_checkbox_selects_the_channel_and_a_second_click_clears_it(
+    user, stored_channels
+):
+    await user.open("/subscriptions")
+    await bar_is(user, None)
+
+    click_row(user, BRAVO)
+    await eventually(lambda: selected_rows(user) == [BRAVO], "The selected row")
+    await bar_is(user, ["Selected: 1"])
+    toggle(user, DELTA)
+    await eventually(lambda: selected_rows(user) == [BRAVO, DELTA], "Two selected rows")
+    await bar_is(user, ["Selected: 2"])
+
+    toggle(user, BRAVO)
+    click_row(user, DELTA)
+
+    await eventually(lambda: selected_rows(user) == [], "No selected row")
+    await bar_is(user, None)
+
+
+async def test_an_unknown_channel_is_not_selected(user, stored_channels):
+    await user.open("/subscriptions")
+
+    toggle(user, FOUND)
+
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert selected_rows(user) == []
+    assert bar_of(user) is None
+
+
+async def test_the_selection_stays_across_each_filter_the_text_and_a_new_search(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"), found(CHARLIE, "Charlie"))
+    toggle(user, ALPHA)
+    toggle(user, BRAVO)
+    toggle(user, FOUND, "found-table")
+    await bar_is(user, ["Selected: 3"])
+
+    # Alpha is subscribed, so the filter hides it.
+    set_value(user, "filter-subscribed", "no")
+    await channels_are(user, [BRAVO, DELTA])
+    assert selected_rows(user) == [BRAVO]
+    await bar_is(user, ["Selected: 3", "(1 hidden by the filters)"])
+    # Bravo and Delta have rules, so the filter of the rules hides them too.
+    set_value(user, "filter-rules", "no")
+    await channels_are(user, [])
+    await bar_is(user, ["Selected: 3", "(2 hidden by the filters)"])
+    set_value(user, "filter-subscribed", "any")
+    set_value(user, "filter-rules", "any")
+    set_value(user, "filter-text", "charlie")
+    await channels_are(user, [CHARLIE])
+    await bar_is(user, ["Selected: 3", "(2 hidden by the filters)"])
+    set_value(user, "filter-text", "")
+    await channels_are(user, [ALPHA, BRAVO, CHARLIE, DELTA])
+    assert selected_rows(user) == [ALPHA, BRAVO]
+    # The found channel that is not stored is in no row of the stored table, so the filters hide nothing of it.
+    await bar_is(user, ["Selected: 3"])
+
+    # A new search keeps the selection, also of a found channel that the new search does not show.
+    await search_for(user, fake_starter, found(ALPHA, "Alpha on YouTube"), found(CHARLIE, "Charlie"))
+    await eventually(lambda: selected_rows(user, "found-table") == [ALPHA], "The selected found row")
+    await bar_is(user, ["Selected: 3"])
+
+
+async def test_one_selection_covers_both_tables(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(CHARLIE, "Charlie"), found(FOUND, "Found Channel"))
+
+    toggle(user, CHARLIE, "found-table")
+
+    await eventually(lambda: selected_rows(user) == [CHARLIE], "The stored row of the found channel")
+    assert selected_rows(user, "found-table") == [CHARLIE]
+    await bar_is(user, ["Selected: 1"])
+    click_row(user, CHARLIE)
+    await eventually(lambda: selected_rows(user, "found-table") == [], "The found row without the selection")
+    assert selected_rows(user) == []
+    await bar_is(user, None)
+
+
+async def test_the_header_checkbox_selects_each_filtered_channel_on_each_page_and_a_second_click_clears_them(
+    user, sessions
+):
+    ids = [f"UC{number:022d}" for number in range(120)]
+    store(
+        sessions,
+        watch_later(),
+        rule(1, "Science"),
+        *(channel(channel_id, f"Channel {channel_id}") for channel_id in ids),
+    )
+    # A rule reads each tenth channel, so the filter "Without rules" shows 108 channels on 3 pages.
+    store(sessions, *(RuleChannel(rule_id=1, channel_id=channel_id) for channel_id in ids[::10]))
+    without_rules = [channel_id for channel_id in ids if channel_id not in ids[::10]]
+    await user.open("/subscriptions")
+    set_value(user, "filter-rules", "no")
+    await eventually(lambda: len(channel_ids(user)) == 108, "The channels without rules")
+    assert header_of(user) == (
+        False,
+        True,
+        "Select each channel that the filters show, also on the other pages (108)",
+    )
+
+    toggle_all(user)
+
+    await eventually(lambda: selected_rows(user) == without_rules, "Each channel without rules is selected")
+    assert len(without_rules) > 2 * subscriptions_page.PAGE_SIZE
+    assert header_of(user)[0] is True
+    await bar_is(user, ["Selected: 108"])
+    # Each other channel stays as it was.
+    set_value(user, "filter-rules", "any")
+    await eventually(lambda: len(channel_ids(user)) == 120, "Each channel")
+    assert selected_rows(user) == without_rules
+    assert header_of(user)[0] is None
+
+    set_value(user, "filter-rules", "no")
+    await eventually(lambda: len(channel_ids(user)) == 108, "The channels without rules")
+    toggle_all(user)
+
+    await eventually(lambda: selected_rows(user) == [], "No selected channel")
+    assert header_of(user)[0] is False
+    await bar_is(user, None)
+
+
+async def test_the_header_checkbox_is_partial_when_some_rows_are_selected_and_then_selects_each_row(
+    user, stored_channels
+):
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+    await eventually(lambda: header_of(user)[0] is None, "The partial header")
+
+    toggle_all(user)
+
+    await eventually(lambda: selected_rows(user) == [ALPHA, BRAVO, CHARLIE, DELTA], "Each selected row")
+    assert header_of(user)[0] is True
+
+
+async def test_the_header_checkbox_is_off_without_rows(user, stored_channels):
+    await user.open("/subscriptions")
+
+    set_value(user, "filter-text", "nothing like this")
+
+    await channels_are(user, [])
+    assert header_of(user) == (False, False, "Select each channel that the filters show, also on the other pages (0)")
+    toggle_all(user)
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert bar_of(user) is None
+
+
+async def test_the_header_checkbox_of_the_found_table_selects_each_found_channel(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"), found(ALPHA, "alpha news"))
+    toggle(user, CHARLIE)
+    assert header_of(user, "found-table") == (False, True, "Select each found channel (2)")
+
+    toggle_all(user, "found-table")
+
+    await eventually(lambda: selected_rows(user, "found-table") == [FOUND, ALPHA], "Each selected found row")
+    assert header_of(user, "found-table")[0] is True
+    assert selected_rows(user) == [ALPHA, CHARLIE]
+    await bar_is(user, ["Selected: 3"])
+    toggle(user, ALPHA)
+    await eventually(lambda: header_of(user, "found-table")[0] is None, "The partial header of the found table")
+    toggle_all(user, "found-table")
+    toggle_all(user, "found-table")
+    await eventually(lambda: selected_rows(user, "found-table") == [], "No selected found row")
+    # A channel that only the stored table shows stays selected.
+    assert selected_rows(user) == [CHARLIE]
+
+
+async def test_only_selected_shows_the_selected_stored_channels_with_the_other_filters(user, stored_channels):
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+    toggle(user, CHARLIE)
+    await bar_is(user, ["Selected: 2"])
+
+    set_value(user, "filter-selected", True)
+
+    await channels_are(user, [BRAVO, CHARLIE])
+    assert text_of(user, "channels-summary") == "2 of 4 channels"
+    set_value(user, "filter-subscribed", "yes")
+    await channels_are(user, [CHARLIE])
+    await bar_is(user, ["Selected: 2", "(1 hidden by the filters)"])
+    # A channel that leaves the selection leaves the table too.
+    toggle(user, CHARLIE)
+    await channels_are(user, [])
+    set_value(user, "filter-subscribed", "any")
+    await channels_are(user, [BRAVO])
+    set_value(user, "filter-selected", False)
+    await channels_are(user, [ALPHA, BRAVO, CHARLIE, DELTA])
+
+
+async def test_clear_selection_clears_both_tables_and_hides_the_bar(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"))
+    toggle(user, ALPHA)
+    toggle(user, FOUND, "found-table")
+    set_value(user, "filter-text", "delta")
+    await bar_is(user, ["Selected: 2", "(1 hidden by the filters)"])
+
+    user.find(marker="clear-selection").click()
+
+    await bar_is(user, None)
+    assert selected_rows(user, "found-table") == []
+    set_value(user, "filter-text", "")
+    await channels_are(user, [ALPHA, BRAVO, CHARLIE, DELTA])
+    assert selected_rows(user) == []
+
+
+# Add the selected channels to a rule.
+
+
+async def test_the_menu_of_the_bar_tells_for_each_rule_how_many_channels_it_adds(user, stored_channels, sessions):
+    store(sessions, rule(3, "Feed rule"))
+    await user.open("/subscriptions")
+
+    # Rule 1 reads Bravo and Delta, rule 2 reads Bravo, and rule 3 reads no channel.
+    toggle(user, BRAVO)
+    toggle(user, DELTA)
+    await bar_is(user, ["Selected: 2"])
+    await eventually(
+        lambda: bulk_menu_of(user) == [(1, False, "already reads", False), (2, True, "+1", False), (3, True, "", True)],
+        "The rules of the menu",
+    )
+    feed = element_of(user, "bulk-rule-feed:3").text
+    assert feed == (
+        "This rule has no channels now, so it reads the subscriptions feed. After this change, it reads only its "
+        "channels, and not the subscriptions feed."
+    )
+    assert element_of(user, "bulk-catch-up").text == (
+        "The next run adds the videos of these channels from the last 7 days that the rule matches. After that, the "
+        "rule adds each new video of the channels. To add older videos, open the rule and change Also add videos from."
+    )
+    # A rule that reads none of the channels adds each of them, so it needs no number.
+    toggle(user, ALPHA)
+    await eventually(
+        lambda: bulk_menu_of(user) == [(1, True, "+1", False), (2, True, "+2", False), (3, True, "", True)],
+        "The rules of the menu for three channels",
+    )
+
+
+async def test_without_rules_the_menu_of_the_bar_offers_no_rule(user, sessions):
+    store(sessions, channel(ALPHA, "Alpha"))
+    await user.open("/subscriptions")
+
+    toggle(user, ALPHA)
+
+    await bar_is(user, ["Selected: 1"])
+    assert bulk_menu_of(user) == []
+    menu = element_of(user, "bulk-add-menu")
+    with user.client:
+        texts = [element.text for element in menu.descendants() if isinstance(element, TextElement)]
+    assert "No rule exists yet. Create a rule first." in texts
+    assert elements_of(user, "bulk-catch-up") == []
+
+
+async def test_the_selected_channels_go_into_a_rule_in_one_transaction(
+    user, stored_channels, sessions, fake_starter, monkeypatch
+):
+    await user.open("/subscriptions")
+    await search_for(
+        user, fake_starter, found(FOUND, "Found Channel", "@found", 5, "https://yt3.example/f.jpg"), found(ALPHA, "A")
+    )
+    toggle(user, FOUND, "found-table")
+    # A new search hides the found channel, and it stays selected.
+    await search_for(user, fake_starter, found(CHARLIE, "Charlie"))
+    toggle(user, ALPHA)
+    toggle(user, BRAVO)
+    toggle(user, DELTA)
+    await bar_is(user, ["Selected: 4"])
+    await eventually(lambda: bulk_menu_of(user)[0] == (1, True, "+2", False), "The rule of the menu")
+    # ``add_channels_to_rule`` writes each channel of one call in one transaction, see its tests.
+    calls = []
+
+    def add_channels(sessions, rule_id, channels, **options):
+        calls.append((rule_id, [channel.channel_id for channel in channels]))
+        return add_channels_to_rule(sessions, rule_id, channels, **options)
+
+    monkeypatch.setattr(subscriptions_page, "add_channels_to_rule", add_channels)
+
+    choose_bulk_rule(user, 1)
+    await eventually(lambda: result_of(user), "The result of the add")
+
+    assert result_of(user) == "Rule Science now reads more channels: 2."
+    await user.should_see("Rule Science now reads more channels: 2.")
+    assert "text-negative" not in element_of(user, "channel-result").classes
+    assert calls == [(1, [FOUND, ALPHA, BRAVO, DELTA])]
+    assert {link for link in rule_links(sessions) if link[0] == 1} == {(1, FOUND), (1, ALPHA), (1, BRAVO), (1, DELTA)}
+    with sessions() as session:
+        assert session.get(Rule, 1).catch_up_since == today_in("Europe/Kyiv") - timedelta(days=7)
+    # The found channel that was not stored gets its row, as an add of one channel gives it.
+    row = stored_channel(sessions, FOUND)
+    assert (row.title, row.handle, row.thumbnail_url, row.is_subscribed) == (
+        "Found Channel",
+        "@found",
+        "https://yt3.example/f.jpg",
+        False,
+    )
+    # A stored channel keeps its row.
+    assert stored_channel(sessions, ALPHA).title == "alpha news"
+    await channels_are(user, [ALPHA, BRAVO, CHARLIE, DELTA, FOUND])
+    # The channels stay selected, and the menu now tells that the rule reads each of them.
+    assert selected_rows(user) == [ALPHA, BRAVO, DELTA, FOUND]
+    await bar_is(user, ["Selected: 4"])
+    await eventually(lambda: bulk_menu_of(user)[0] == (1, False, "already reads", False), "The rule reads each")
+    assert row_of(user, FOUND)["rules"] == "Science"
+    # The choice closes the menu.
+    assert element_of(user, "bulk-add-menu").value is False
+
+
+async def test_a_rule_that_reads_each_selected_channel_already_adds_nothing(user, stored_channels, sessions):
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+    toggle(user, DELTA)
+    await eventually(lambda: bulk_menu_of(user)[0] == (1, False, "already reads", False), "The rule reads each")
+
+    # The menu offers no such rule, and a click on it does nothing.
+    choose_bulk_rule(user, 1)
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert result_of(user) == ""
+
+    # A menu that is older than the database still offers a rule that reads each channel now.
+    toggle(user, ALPHA)
+    await eventually(lambda: bulk_menu_of(user)[0] == (1, True, "+1", False), "The rule adds Alpha")
+    store(sessions, RuleChannel(rule_id=1, channel_id=ALPHA))
+    choose_bulk_rule(user, 1)
+
+    await eventually(lambda: result_of(user), "The result of the add")
+    assert result_of(user) == "Rule Science already reads each selected channel."
+    assert "text-negative" not in element_of(user, "channel-result").classes
+    await eventually(lambda: bulk_menu_of(user)[0] == (1, False, "already reads", False), "The fresh rules")
+
+
+async def test_a_rule_that_was_deleted_after_the_page_showed_it_adds_no_selected_channel(
+    user, stored_channels, sessions
+):
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, CHARLIE)
+    await bar_is(user, ["Selected: 2"])
+    # The menu draws its rules again a moment after the bar.
+    await eventually(lambda: bulk_menu_of(user)[0] == (1, True, "", False), "The rule of the menu")
+    with sessions.begin() as session:
+        session.delete(session.get(Rule, 1))
+
+    choose_bulk_rule(user, 1)
+
+    await user.should_see("Rule Science does not exist any more.")
+    assert result_of(user) == "Rule Science does not exist any more."
+    assert "text-negative" in element_of(user, "channel-result").classes
+    assert {link for link in rule_links(sessions) if link[1] in (ALPHA, CHARLIE)} == set()
+    await eventually(lambda: [choice[0] for choice in bulk_menu_of(user)] == [2], "The fresh rules")
+    assert selected_rows(user) == [ALPHA, CHARLIE]
+
+
+async def test_a_choice_in_a_menu_that_is_older_than_a_clear_of_the_selection_adds_nothing(
+    user, stored_channels, sessions
+):
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    await eventually(lambda: bulk_menu_of(user)[0] == (1, True, "", False), "The rule of the menu")
+    links = rule_links(sessions)
+
+    # The menu draws its rules again only at the next turn of the event loop, so the old item is still there.
+    user.find(marker="clear-selection").click()
+    choose_bulk_rule(user, 1)
+
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert rule_links(sessions) == links
+    assert result_of(user) == ""
+
+
+async def test_the_texts_of_the_selection_have_a_ukrainian_translation(
+    user, stored_channels, sessions, real_uk_catalog
+):
+    save_language(sessions, "uk")
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, CHARLIE)
+    set_value(user, "filter-text", "alpha")
+    await bar_is(user, ["Вибрано: 2", "(приховано фільтрами: 1)"])
+    assert header_of(user)[2] == "Вибрати кожен канал, який показують фільтри, також на інших сторінках (каналів: 1)"
+    assert element_of(user, "clear-selection").text == "Зняти виділення"
+    assert element_of(user, "filter-selected").text == "Тільки вибрані"
+    await eventually(lambda: bulk_menu_of(user)[0] == (1, True, "", False), "The rule of the menu")
+
+    choose_bulk_rule(user, 1)
+
+    await eventually(lambda: result_of(user) == "Правило Science тепер читає ще каналів: 2.", "The result in Ukrainian")
+
+
 # The translation.
 
 
@@ -1287,6 +1778,7 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
                 texts.extend(element.options.values() if isinstance(element.options, dict) else [])
             if isinstance(element, ui.table):
                 columns[element.id] = [column["label"] for column in element.columns]
+                texts.extend(column["select_label"] for column in element.columns if "select_label" in column)
                 cells.update(slot.template for name, slot in element.slots.items() if name == "body-cell-actions")
                 last_video_cells.update(
                     slot.template for name, slot in element.slots.items() if name == "body-cell-last_video"
@@ -1311,8 +1803,22 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
     assert "<<The lists were never refreshed.>>" in texts
     assert "<<Rule Rule one now reads Bravo title.>>" in texts
     assert "<<Rule one (off)>>" in texts
+    # The texts of the selection bar, of its menu and of the header checkboxes.
+    selection_texts = [
+        "<<Selected: 0>>",
+        "<<(0 hidden by the filters)>>",
+        "<<Add to rule>>",
+        "<<Clear selection>>",
+        "<<Add the selected channels to a rule>>",
+        "<<already reads>>",
+        "<<Only selected>>",
+        f"<<Select each channel that the filters show, also on the other pages ({2})>>",
+        f"<<Select each found channel ({1})>>",
+    ]
+    assert [text for text in selection_texts if text not in texts] == []
+    assert [text for text in texts if text.startswith("<<The next run adds the videos of these channels")] != []
     column_labels = [label for labels in columns.values() for label in labels]
-    assert len(column_labels) == 11
+    assert len(column_labels) == 13
     assert [label for label in column_labels if not (label.startswith("<<") and label.endswith(">>"))] == []
     # Both tables have the same texts in the cell of their actions, and each such text is marked.
     assert len(cells) == 2

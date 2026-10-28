@@ -8,6 +8,12 @@ rule. The result of an action shows above the table of the stored channels.
 The column "Last video" of the stored table shows the newest upload date that ``seen_video`` holds for the channel, so
 only a channel that a rule reads has one. A channel without a date shows a dash and sorts as the oldest.
 
+Each row of both tables has a checkbox, and a click on the row outside the link and the actions selects the channel
+too. One selection covers both tables, by the channel id. The page keeps it until the page loads again, so it stays when
+the filters or the search change. The checkbox of a header selects each row of its table, also the rows on the other
+pages, and a second click clears them. When the selection is not empty, a bar above the tables shows its size, the
+number of selected stored channels that the filters hide, the bulk "Add to rule" and "Clear selection".
+
 The search, the subscribe and the unsubscribe run in child processes of the runner, and the page waits for them in a
 thread, so the web process never imports yt-dlp. While a run, a session check or another child holds the sync lock,
 they start nothing, and the page says so. The page reads and writes the database in a thread, never on the event loop.
@@ -16,8 +22,8 @@ they start nothing, and the page says so. The page reads and writes the database
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 from urllib.parse import quote
@@ -29,8 +35,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.channel_actions import (
     AddOutcome,
+    ChannelForRule,
     FoundChannel,
     add_channel_to_rule,
+    add_channels_to_rule,
     find_channels_in_child,
     subscribe_in_child,
     unsubscribe_in_child,
@@ -84,6 +92,17 @@ UNSUBSCRIBE_EVENT = "unsubscribeChannel"
 ADD_TO_RULE_EVENT = "addChannelToRule"
 CHANNEL_JS_HANDLER = "(id) => emit(id)"
 RULE_JS_HANDLER = "(id, rule) => emit(id, rule)"
+
+# The column of the checkbox of each row, and the events of the checkboxes. A click on a row sends only its id.
+SELECT_COLUMN = "selected"
+TOGGLE_EVENT = "toggleChannel"
+TOGGLE_ALL_EVENT = "toggleAllChannels"
+ROW_CLICK_JS_HANDLER = "(event, row) => emit(row.id)"
+# A selected row has the class "selected" of Quasar, as in a table with its own selection.
+SELECTED_ROW_CLASS = "(row) => (row.selected ? 'selected' : '')"
+# The bar of the selection stays at the top of the window, below the header, while the page scrolls. The fixed header
+# of the layout is 74 px high, measured in Firefox.
+SELECTION_BAR_STYLE = "position: sticky; top: 74px; z-index: 10"
 
 type OnRowEvent = Callable[[GenericEventArguments], Any]
 
@@ -141,6 +160,8 @@ class ChannelFilter:
     text: str = ""
     subscribed: bool | None = None
     with_rules: bool | None = None
+    # Only these channels, or each channel when None.
+    only: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +203,9 @@ class PageState:
     working_id: str | None = None
     # The number of the newest read. A read that finishes after a newer one started drops its result.
     lists_read: int = 0
+    # The selected channels of both tables, by their id, in the order of the selection. Each one keeps the channel of
+    # its row, so a found channel that is not stored can go into a rule after a new search.
+    selected: dict[str, ShownChannel] = field(default_factory=dict)
 
 
 def read_lists(sessions: sessionmaker[Session]) -> StoredLists:
@@ -241,12 +265,34 @@ def add_to_rule(
     )
 
 
+def add_many_to_rule(
+    sessions: sessionmaker[Session], default_timezone: str, rule_id: int, channels: Sequence[ShownChannel]
+) -> int | None:
+    """Make the rule read each of ``channels`` in one transaction, as ``add_to_rule`` does for one channel.
+
+    Return the number of channels that the rule did not read before, or None when the rule does not exist. This call
+    blocks.
+    """
+    timezone = read_timezone(sessions, default_timezone)
+    return add_channels_to_rule(
+        sessions,
+        rule_id,
+        [
+            ChannelForRule(channel.channel_id, channel.title, channel.handle, channel.thumbnail_url)
+            for channel in channels
+        ],
+        catch_up_since=default_first_day(timezone),
+    )
+
+
 def filter_channels(lists: StoredLists, channel_filter: ChannelFilter) -> list[ChannelRecord]:
     """Return the stored channels that match the filter, in the order of the list."""
     needle = channel_filter.text.strip().casefold().removeprefix("@")
     with_rules = {channel_id for rule in lists.rules for channel_id in rule.channel_ids}
     matches = []
     for channel in lists.channels:
+        if channel_filter.only is not None and channel.channel_id not in channel_filter.only:
+            continue
         handle = (channel.handle or "").casefold().removeprefix("@")
         if needle and needle not in channel.title.casefold() and needle not in handle:
             continue
@@ -303,9 +349,10 @@ def action_fields(channel_id: str, title: str, is_subscribed: bool, lists: Store
     }
 
 
-def channel_row(channel: ChannelRecord, lists: StoredLists, working_id: str | None) -> dict:
+def channel_row(channel: ChannelRecord, lists: StoredLists, working_id: str | None, selected: bool = False) -> dict:
     return {
         "id": channel.channel_id,
+        "selected": selected,
         "title": channel.title,
         "url": channel_url(channel.channel_id),
         "thumbnail": channel.thumbnail_url or "",
@@ -318,11 +365,12 @@ def channel_row(channel: ChannelRecord, lists: StoredLists, working_id: str | No
     }
 
 
-def found_row(found: FoundChannel, lists: StoredLists, working_id: str | None) -> dict:
+def found_row(found: FoundChannel, lists: StoredLists, working_id: str | None, selected: bool = False) -> dict:
     stored = lists.channel(found.channel_id)
     is_subscribed = stored is not None and stored.is_subscribed
     return {
         "id": found.channel_id,
+        "selected": selected,
         "title": found.title,
         "url": channel_url(found.channel_id),
         "thumbnail": found.thumbnail_url or "",
@@ -426,6 +474,64 @@ def add_actions(
     table.on(ADD_TO_RULE_EVENT, on_add, js_handler=RULE_JS_HANDLER)
 
 
+def select_cell(scope: str) -> str:
+    """Return the Vue template of the checkbox of a row, in the table with ``scope``.
+
+    The title of the channel is the name of the checkbox for a screen reader. The checkbox stops its click, so the click
+    does not reach the row, and a click on the row outside it selects the row once. The checkbox has a key of
+    ``focus_key``, because each change of the selection draws the rows again.
+    """
+    return f"""
+<q-td :props="props" auto-width>
+  <q-checkbox dense :model-value="props.row.selected" :aria-label="props.row.title" \
+:{FOCUS_KEY_ATTRIBUTE}="'{scope}-select-' + props.row.id" \
+@update:model-value="() => $parent.$emit('{TOGGLE_EVENT}', props.row.id)" />
+</q-td>
+"""
+
+
+def select_header(scope: str) -> str:
+    """Return the Vue template of the checkbox in the header of the table with ``scope``.
+
+    The column of ``select_column`` gives its state: on, off, or partial (null). A click sends no rows, because the
+    page selects each row of the table, also the rows on the other pages.
+    """
+    return f"""
+<q-th :props="props" auto-width>
+  <q-checkbox dense :model-value="props.col.select_state" :disable="!props.col.selectable" \
+:aria-label="props.col.select_label" :{FOCUS_KEY_ATTRIBUTE}="'{scope}-select-all'" \
+@update:model-value="() => $parent.$emit('{TOGGLE_ALL_EVENT}')" />
+  <q-tooltip>{{{{ props.col.select_label }}}}</q-tooltip>
+</q-th>
+"""
+
+
+def add_selection(table: ui.table, scope: str, on_toggle: OnRowEvent, on_toggle_all: Callable[[], Any]) -> None:
+    """Put the checkboxes of ``select_cell`` and ``select_header`` into the first column of ``table``, and let a click
+    on a row select it too."""
+    table.add_slot(f"body-cell-{SELECT_COLUMN}", select_cell(scope))
+    table.add_slot(f"header-cell-{SELECT_COLUMN}", select_header(scope))
+    table.props[":table-row-class-fn"] = SELECTED_ROW_CLASS
+    table.on(TOGGLE_EVENT, on_toggle, js_handler=CHANNEL_JS_HANDLER)
+    table.on("rowClick", on_toggle, js_handler=ROW_CLICK_JS_HANDLER)
+    table.on(TOGGLE_ALL_EVENT, on_toggle_all)
+
+
+def select_column(label: str, channel_ids: Collection[str], selected: Collection[str]) -> dict:
+    """Return the column of the checkboxes. ``channel_ids`` are the channels of each row of the table, on each page.
+
+    The checkbox of the header is on when each of them is selected, off when none is, and partial between. ``label``
+    names it for a screen reader and in its tooltip.
+    """
+    count = sum(channel_id in selected for channel_id in channel_ids)
+    return {
+        **column(SELECT_COLUMN, _("Select")),
+        "select_state": None if 0 < count < len(channel_ids) else count > 0,
+        "selectable": bool(channel_ids),
+        "select_label": label,
+    }
+
+
 def last_video_cell() -> str:
     """Return the Vue template of the cell "Last video" of the stored table.
 
@@ -441,8 +547,12 @@ def last_video_cell() -> str:
 """
 
 
-def channel_columns() -> list[dict]:
+def channel_columns(channel_ids: Collection[str] = (), selected: Collection[str] = ()) -> list[dict]:
+    """Return the columns of the stored table. ``channel_ids`` are the channels that the filters show."""
+    # Translators: the name of the checkbox in the header of the table. {count} is the number of the channels.
+    label = _("Select each channel that the filters show, also on the other pages ({count})")
     return [
+        select_column(label.format(count=len(channel_ids)), channel_ids, selected),
         column("title", _("Channel")),
         column("handle", _("Handle")),
         column("subscribed", _("Subscribed")),
@@ -452,14 +562,62 @@ def channel_columns() -> list[dict]:
     ]
 
 
-def found_columns() -> list[dict]:
+def found_columns(channel_ids: Collection[str] = (), selected: Collection[str] = ()) -> list[dict]:
+    """Return the columns of the found table. ``channel_ids`` are the found channels."""
+    # Translators: the name of the checkbox in the header of the table. {count} is the number of the channels.
+    label = _("Select each found channel ({count})")
     return [
+        select_column(label.format(count=len(channel_ids)), channel_ids, selected),
         column("title", _("Channel")),
         column("handle", _("Handle")),
         column("subscribers", _("Subscribers")),
         column("subscribed", _("Subscribed")),
         actions_column(),
     ]
+
+
+def rule_menu(lists: StoredLists, channel_ids: Collection[str], on_choose: Callable[[int], Any]) -> None:
+    """Draw the items of the menu "Add to rule" of the selection bar: one item for each rule.
+
+    A rule that reads each of ``channel_ids`` already cannot be chosen and says so. A rule that reads some of them
+    shows how many it would add. A rule without channels warns that it stops to read the subscriptions feed, and the
+    note about the catch-up comes last. ``on_choose`` gets the id of the chosen rule.
+    """
+    with ui.list().style("max-width: 24rem"):
+        ui.item_label(_("Add the selected channels to a rule")).props("header")
+        if not lists.rules:
+            with ui.item():
+                ui.item_section(_("No rule exists yet. Create a rule first."))
+            return
+        for rule in lists.rules:
+            missing = sum(channel_id not in rule.channel_ids for channel_id in channel_ids)
+            with ui.item(on_click=lambda rule_id=rule.id: on_choose(rule_id)).mark(
+                "bulk-rule", f"bulk-rule:{rule.id}"
+            ) as item:
+                item.set_enabled(missing > 0)
+                with ui.item_section():
+                    ui.item_label(rule_label(rule))
+                    if not rule.channel_ids:
+                        ui.item_label(
+                            _(
+                                "This rule has no channels now, so it reads the subscriptions feed. After this change, "
+                                "it reads only its channels, and not the subscriptions feed."
+                            )
+                        ).props("caption").classes("text-warning").style("white-space: normal").mark(
+                            f"bulk-rule-feed:{rule.id}"
+                        )
+                if not missing:
+                    ui.item_section(_("already reads")).props("side").mark(f"bulk-rule-note:{rule.id}")
+                elif missing < len(channel_ids):
+                    # The number of the selected channels that the rule would add.
+                    ui.item_section(f"+{missing}").props("side").mark(f"bulk-rule-note:{rule.id}")
+        ui.item_label(
+            _(
+                "The next run adds the videos of these channels from the last {days} days that the rule matches. "
+                "After that, the rule adds each new video of the channels. To add older videos, open the rule and "
+                "change Also add videos from."
+            ).format(days=DEFAULT_DAYS_BACK)
+        ).props("caption").classes("q-px-md q-pb-sm").style("white-space: normal").mark("bulk-catch-up")
 
 
 def _choice(value: str) -> bool | None:
@@ -476,6 +634,8 @@ async def subscriptions_page(services: Services) -> None:
     # A redraw of the found channels deletes their table, whose events start the actions, so each action tells its
     # result through the client of the page.
     client = context.client
+    # The table of the found channels, while the page shows one.
+    found_table: ui.table | None = None
 
     def shown_channel(channel_id: str) -> ShownChannel | None:
         stored = state.lists.channel(channel_id)
@@ -489,12 +649,17 @@ async def subscriptions_page(services: Services) -> None:
             text=text_input.value or "",
             subscribed=_choice(subscribed_select.value),
             with_rules=_choice(rules_select.value),
+            only=frozenset(state.selected) if only_selected.value else None,
         )
 
     def show_channels() -> None:
         lists = state.lists
         channels = filter_channels(lists, read_filter())
-        channels_table.rows = [channel_row(channel, lists, state.working_id) for channel in channels]
+        shown_ids = [channel.channel_id for channel in channels]
+        channels_table.columns = channel_columns(shown_ids, state.selected)
+        channels_table.rows = [
+            channel_row(channel, lists, state.working_id, channel.channel_id in state.selected) for channel in channels
+        ]
         summary.set_text(_("{shown} of {total} channels").format(shown=len(channels), total=len(lists.channels)))
         # A filter that matches nothing and a service without stored channels need different next steps.
         no_channels.set_text(
@@ -503,10 +668,71 @@ async def subscriptions_page(services: Services) -> None:
             else _("No channel is stored yet. Press Refresh lists.")
         )
         no_channels.set_visibility(not channels)
+        show_bar(set(shown_ids))
+
+    def show_bar(shown_ids: set[str]) -> None:
+        count = len(state.selected)
+        stored_ids = {channel.channel_id for channel in state.lists.channels}
+        hidden = sum(channel_id in stored_ids and channel_id not in shown_ids for channel_id in state.selected)
+        selection_bar.set_visibility(count > 0)
+        selected_label.set_text(_("Selected: {count}").format(count=count))
+        # Translators: {count} is the number of the selected stored channels that the filters do not show.
+        hidden_label.set_text(_("({count} hidden by the filters)").format(count=hidden))
+        hidden_label.set_visibility(hidden > 0)
+        bulk_menu_view.refresh()
+
+    def show_found() -> None:
+        if found_table is None or state.found is None:
+            return
+        found_ids = [channel.channel_id for channel in state.found]
+        found_table.columns = found_columns(found_ids, state.selected)
+        found_table.rows = [
+            found_row(channel, state.lists, state.working_id, channel.channel_id in state.selected)
+            for channel in state.found
+        ]
+
+    def show_selection() -> None:
+        show_channels()
+        show_found()
 
     def show_rows() -> None:
         show_channels()
         results_view.refresh()
+
+    def toggle_channel(event: GenericEventArguments) -> None:
+        channel_id = str(event.args)
+        if channel_id in state.selected:
+            del state.selected[channel_id]
+        else:
+            channel = shown_channel(channel_id)
+            if channel is None:
+                return
+            state.selected[channel_id] = channel
+        show_selection()
+
+    def toggle_many(channels: list[ShownChannel]) -> None:
+        """Select each of ``channels``. When each of them is selected already, clear them instead."""
+        if channels and all(channel.channel_id in state.selected for channel in channels):
+            for channel in channels:
+                del state.selected[channel.channel_id]
+        else:
+            for channel in channels:
+                state.selected.setdefault(channel.channel_id, channel)
+        show_selection()
+
+    def toggle_shown_channels() -> None:
+        channels = filter_channels(state.lists, read_filter())
+        toggle_many([ShownChannel(channel.channel_id, channel, None) for channel in channels])
+
+    def toggle_found_channels() -> None:
+        found = state.found or []
+        toggle_many(
+            [ShownChannel(channel.channel_id, state.lists.channel(channel.channel_id), channel) for channel in found]
+        )
+
+    def clear_selection() -> None:
+        state.selected.clear()
+        show_selection()
 
     async def reload() -> None:
         state.lists_read += 1
@@ -589,8 +815,33 @@ async def subscriptions_page(services: Services) -> None:
             notify_in(client, text, type="warning")
         await reload()
 
+    async def add_selected_to_rule(rule_id: int) -> None:
+        rule = next((rule for rule in state.lists.rules if rule.id == rule_id), None)
+        # The stored row of a channel is newer than the row that the selection keeps.
+        channels = [shown_channel(channel_id) or kept for channel_id, kept in state.selected.items()]
+        if rule is None or not channels:
+            return
+        bulk_menu.close()
+        added = await asyncio.to_thread(add_many_to_rule, services.sessions, services.settings.tz, rule.id, channels)
+        if added is None:
+            text = _("Rule {rule} does not exist any more.").format(rule=rule.name)
+            result_label.problem(text)
+            notify_in(client, text, type="warning")
+        elif added:
+            # Translators: {count} is the number of the channels that the rule did not read before.
+            text = _("Rule {rule} now reads more channels: {count}.").format(rule=rule.name, count=added)
+            result_label.ok(text)
+            notify_in(client, text, type="positive")
+        else:
+            text = _("Rule {rule} already reads each selected channel.").format(rule=rule.name)
+            result_label.ok(text)
+            notify_in(client, text)
+        await reload()
+
     @ui.refreshable
     def results_view() -> None:
+        nonlocal found_table
+        found_table = None
         if state.search_error is not None:
             ui.label(state.search_error).classes("text-negative").mark("search-error")
             return
@@ -599,18 +850,43 @@ async def subscriptions_page(services: Services) -> None:
         if not state.found:
             ui.label(_("YouTube found no channel for this text.")).mark("no-found")
             return
-        rows = [found_row(channel, state.lists, state.working_id) for channel in state.found]
-        table = (
-            ui.table(columns=found_columns(), rows=rows, row_key="id")
+        found_table = (
+            ui.table(columns=found_columns(), rows=[], row_key="id")
             .props("flat bordered dense")
             .classes("w-full")
             .mark("found-table")
         )
-        table.add_slot("body-cell-title", TITLE_CELL)
-        add_actions(table, FOUND_SCOPE, subscribe_row, unsubscribe_row, add_row_to_rule)
+        found_table.add_slot("body-cell-title", TITLE_CELL)
+        add_selection(found_table, FOUND_SCOPE, toggle_channel, toggle_found_channels)
+        add_actions(found_table, FOUND_SCOPE, subscribe_row, unsubscribe_row, add_row_to_rule)
+        show_found()
+
+    @ui.refreshable
+    def bulk_menu_view() -> None:
+        rule_menu(state.lists, state.selected, add_selected_to_rule)
 
     ui.label(_("Subscriptions")).classes("text-h5")
     await account_lists(services, on_refreshed=reload)
+
+    # The bar of the selection, above both tables. U5 puts Subscribe and Unsubscribe of the selected channels here.
+    with (
+        ui.row()
+        .classes("w-full items-center gap-4 q-px-md q-py-sm bg-primary text-white rounded-borders shadow-2")
+        .style(SELECTION_BAR_STYLE)
+        .mark("selection-bar") as selection_bar
+    ):
+        selected_label = ui.label().classes("text-weight-bold").mark("selected-count")
+        hidden_label = ui.label().mark("selected-hidden")
+        with (
+            ui.button(_("Add to rule"), icon="playlist_add", color="white")
+            .props("outline no-caps icon-right=arrow_drop_down")
+            .mark("bulk-add"),
+            ui.menu().mark("bulk-add-menu") as bulk_menu,
+        ):
+            bulk_menu_view()
+        ui.button(_("Clear selection"), icon="close", color="white", on_click=clear_selection).props(
+            "outline no-caps"
+        ).mark("clear-selection")
 
     with ui.card().classes("w-full"):
         ui.label(_("Find a channel on YouTube")).classes("text-h6")
@@ -630,7 +906,7 @@ async def subscriptions_page(services: Services) -> None:
         ui.label(
             _(
                 "The subscriptions of the account from the last refresh, and each channel that a rule reads. "
-                "A click on the title of a channel opens the channel on YouTube."
+                "A click on a row selects the channel. A click on the title of a channel opens the channel on YouTube."
             )
         ).classes("text-grey-7")
         with ui.row().classes("w-full items-center gap-4"):
@@ -652,6 +928,7 @@ async def subscriptions_page(services: Services) -> None:
                 .classes("w-48")
                 .mark("filter-rules")
             )
+            only_selected = ui.switch(_("Only selected"), on_change=show_channels).mark("filter-selected")
         summary = ui.label().mark("channels-summary")
         no_channels = ui.label().mark("no-channels")
         # The result of the last action of a row, in both tables.
@@ -665,5 +942,6 @@ async def subscriptions_page(services: Services) -> None:
         channels_table.add_slot("body-cell-title", TITLE_CELL)
         channels_table.add_slot("body-cell-last_video", last_video_cell())
         add_keyboard_sort(channels_table, CHANNELS_SCOPE)
+        add_selection(channels_table, CHANNELS_SCOPE, toggle_channel, toggle_shown_channels)
         add_actions(channels_table, CHANNELS_SCOPE, subscribe_row, unsubscribe_row, add_row_to_rule)
     show_channels()
