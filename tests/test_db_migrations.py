@@ -32,6 +32,7 @@ TABLES = {
     "run_action",
     "notification_target",
     "setting",
+    "request_budget",
 }
 
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
@@ -170,7 +171,7 @@ def test_check_constraints_of_models_and_migrations_agree(sqlite_url, tmp_path):
     migrated = check_constraints(sqlite_url)
 
     assert migrated == check_constraints(created_url)
-    assert len(migrated) == 9
+    assert len(migrated) == 10
 
 
 def test_upgrade_keeps_stored_cookies_as_the_first_cookie_version_and_downgrade_keeps_them_in_the_account(
@@ -293,6 +294,38 @@ def test_the_catch_up_day_of_a_rule_keeps_the_rules_and_their_channels_in_both_d
             assert connection.execute(text("SELECT rule_id, channel_id FROM rule_channel")).all() == [(1, "UCa")]
     finally:
         engine.dispose()
+
+
+BEFORE_REQUEST_BUDGET = "c41e7a9d3b58"
+
+
+def test_the_request_budget_table_starts_empty_with_one_row_at_most_and_downgrade_removes_it(database_url):
+    config = alembic_config(database_url)
+    command.upgrade(config, BEFORE_REQUEST_BUDGET)
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(database_url)
+    try:
+        columns = {column["name"]: column["nullable"] for column in inspect(engine).get_columns("request_budget")}
+        assert columns == {"id": False, "tokens": False, "refilled_at": False, "last_answer_at": True}
+        with engine.begin() as connection:
+            assert connection.execute(text("SELECT COUNT(*) FROM request_budget")).scalar_one() == 0
+            connection.execute(
+                text("INSERT INTO request_budget (id, tokens, refilled_at) VALUES (1, 14.5, CURRENT_TIMESTAMP)")
+            )
+            assert connection.execute(text("SELECT tokens FROM request_budget")).scalar_one() == 14.5
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(
+                text("INSERT INTO request_budget (id, tokens, refilled_at) VALUES (2, 15, CURRENT_TIMESTAMP)")
+            )
+
+        command.downgrade(config, BEFORE_REQUEST_BUDGET)
+    finally:
+        engine.dispose()
+
+    assert "request_budget" not in table_names(database_url)
+    assert current_revision(database_url) == BEFORE_REQUEST_BUDGET
 
 
 def test_comparison_finds_a_column_that_the_migrations_lack(sqlite_url):

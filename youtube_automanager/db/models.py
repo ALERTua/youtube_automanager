@@ -274,6 +274,24 @@ class Schedule(Base):
     timezone: Mapped[str]
 
 
+class RequestBudgetState(Base):
+    """The state of the shared budget of the requests with the cookies of the account. The table holds one row, and its
+    id is always 1.
+
+    ``tokens`` is the number of requests that can go without a wait at the time ``refilled_at``. ``last_answer_at`` is
+    the end of the last answer to such a request, or None before the first answer. Both times come from the wall clock
+    in UTC, so each process that works with the database reads them the same way.
+    """
+
+    __tablename__ = "request_budget"
+    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=False, default=1)
+    tokens: Mapped[float]
+    refilled_at: Mapped[datetime]
+    last_answer_at: Mapped[datetime | None]
+
+
 class Run(Base):
     __tablename__ = "run"
 
