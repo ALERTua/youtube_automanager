@@ -122,13 +122,18 @@ def add_row_button(
     table.on(ROW_BUTTON_EVENT, on_press, js_handler=ROW_BUTTON_JS_HANDLER)
 
 
-def row_button_template(icon: str, label: str) -> str:
-    """Return the Vue template of the cell of ``add_row_button``.
+def template_text(text: str) -> str:
+    """Return ``text`` as a safe part of a Vue template, as a text or as the value of an attribute.
 
-    A template of Vue runs ``{{ ... }}`` as an expression, also in the text of a tooltip. So the label goes in with each
-    ``{`` as a character reference, and a label cannot run code.
+    A template of Vue runs ``{{ ... }}`` as an expression, also in the text of a tooltip. So the text goes in with each
+    ``{`` as a character reference, and a text, for example a translation, cannot run code.
     """
-    text = html.escape(label).replace("{", "&#123;")
+    return html.escape(text).replace("{", "&#123;")
+
+
+def row_button_template(icon: str, label: str) -> str:
+    """Return the Vue template of the cell of ``add_row_button``. The label goes in through ``template_text``."""
+    text = template_text(label)
     return f"""
 <q-td :props="props" auto-width>
   <q-btn flat round dense icon="{icon}" aria-label="{text}" :data-row-button="props.row.id" \

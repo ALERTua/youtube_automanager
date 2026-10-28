@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 21:43+0200\n"
+"POT-Creation-Date: 2026-10-28 21:49+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -114,8 +114,8 @@ msgid "Add the channel to a rule"
 msgstr "Додати канал до правила"
 
 #: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Add to rule…"
-msgstr "Додати до правила…"
+msgid "Add to rule"
+msgstr "Додати до правила"
 
 #: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
@@ -201,10 +201,6 @@ msgid ""
 "service."
 msgstr "Apprise не приймає цей URL. За посиланням нижче є URL кожного сервісу."
 
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Back"
-msgstr "Назад"
-
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Back to the rules"
 msgstr "Назад до правил"
@@ -213,6 +209,7 @@ msgstr "Назад до правил"
 #: youtube_automanager/web/ui/notifications_section.py
 #: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Cancel"
 msgstr "Скасувати"
 
@@ -303,7 +300,6 @@ msgstr "Виберіть, чи відео є Short."
 
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rule_editor.py
-#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Close"
 msgstr "Закрити"
 
@@ -445,10 +441,6 @@ msgstr "Дублювати"
 msgid "Duration"
 msgstr "Тривалість"
 
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Each rule already reads this channel."
-msgstr "Кожне правило вже читає цей канал."
-
 #: youtube_automanager/web/ui/rule_editor.py
 msgid ""
 "Each run adds the new videos that the rule matches. The videos that are "
@@ -502,7 +494,6 @@ msgid "Earliest cookie expiry"
 msgstr "Найближчий термін дії cookies"
 
 #: youtube_automanager/web/ui/rules_page.py
-#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Edit"
 msgstr "Редагувати"
 
@@ -869,10 +860,6 @@ msgstr "Без дати"
 msgid "No expiry date"
 msgstr "Без терміну дії"
 
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "No handle"
-msgstr "Без @handle"
-
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "No longer matches"
 msgstr "Більше не підходить"
@@ -901,10 +888,6 @@ msgstr "Правила з id {id} немає. Його могла видалит
 #: youtube_automanager/web/ui/rules_page.py
 msgid "No rule matches the filters."
 msgstr "Жодне правило не підходить під фільтри."
-
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "No rule reads this channel."
-msgstr "Жодне правило не читає цей канал."
 
 #: youtube_automanager/web/ui/rules_page.py
 msgid "No rule yet. The button New rule creates one."
@@ -972,10 +955,6 @@ msgid ""
 msgstr ""
 "Відкрийте нове приватне вікно й увійдіть там у YouTube з акаунтом, який "
 "використовує сервіс."
-
-#: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Open on YouTube"
-msgstr "Відкрити на YouTube"
 
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Operator"
@@ -1075,7 +1054,6 @@ msgid "Rotate the cookie session"
 msgstr "Оновити сесію cookies"
 
 #: youtube_automanager/web/ui/history_page.py
-#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Rule"
 msgstr "Правило"
 
@@ -1138,7 +1116,6 @@ msgstr "Запуски {first}–{last} із {total}"
 #: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/scheduler_page.py
 #: youtube_automanager/web/ui/settings_draft.py
-#: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Save"
 msgstr "Зберегти"
 
@@ -1756,10 +1733,11 @@ msgstr "Підписка не змінилася. {reason}"
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid ""
 "The subscriptions of the account from the last refresh, and each channel "
-"that a rule reads. Click a channel to see its actions."
+"that a rule reads. A click on the title of a channel opens the channel on"
+" YouTube."
 msgstr ""
 "Підписки акаунта з останнього оновлення й кожен канал, який читає "
-"правило. Натисніть канал, щоб побачити його дії."
+"правило. Клік по назві каналу відкриває канал на YouTube."
 
 #: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
@@ -1911,8 +1889,9 @@ msgid "Unsubscribe"
 msgstr "Відписатися"
 
 #: youtube_automanager/web/ui/subscriptions_page.py
-msgid "Unsubscribe the YouTube account from this channel?"
-msgstr "Відписати акаунт YouTube від цього каналу?"
+#, python-brace-format
+msgid "Unsubscribe the YouTube account from {title}?"
+msgstr "Відписати акаунт YouTube від каналу «{title}»?"
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
@@ -2136,6 +2115,10 @@ msgstr "трансляція, що щойно завершилася"
 #: youtube_automanager/web/ui/rule_form.py
 msgid "a past live stream"
 msgstr "завершена трансляція"
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "already reads"
+msgstr "уже читає"
 
 #. Translators: the word between two conditions that must both match.
 #: youtube_automanager/web/ui/rule_form.py

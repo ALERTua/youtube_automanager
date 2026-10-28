@@ -16,7 +16,6 @@ from pydantic import SecretStr
 from sqlalchemy import select
 from ui_support import (
     Held,
-    client_of,
     collect_deleted_elements,
     element_of,
     elements_of,
@@ -48,7 +47,7 @@ from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
 from youtube_automanager.web.ui import subscriptions_page
-from youtube_automanager.web.ui.common import format_time, iso_time
+from youtube_automanager.web.ui.common import format_time, iso_time, template_text
 from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -131,6 +130,18 @@ def rows_of(user, marker: str) -> list[dict]:
     return element_of(user, marker).rows
 
 
+def row_of(user, channel_id: str, marker: str = "channels-table") -> dict:
+    return next(row for row in rows_of(user, marker) if row["id"] == channel_id)
+
+
+# The fields of a row that its cells show. The other fields serve the cell of the actions.
+SHOWN_FIELDS = ("id", "title", "url", "thumbnail", "handle", "subscribers", "subscribed", "rules")
+
+
+def shown(row: dict) -> dict:
+    return {name: value for name, value in row.items() if name in SHOWN_FIELDS}
+
+
 def channel_ids(user) -> list[str]:
     return [row["id"] for row in rows_of(user, "channels-table")]
 
@@ -139,14 +150,39 @@ async def channels_are(user, expected: list[str]) -> None:
     await eventually(lambda: channel_ids(user) == expected, f"The table of the channels with {expected}")
 
 
-def dialog_shows(user, channel_id: str) -> bool:
-    links = elements_of(user, "channel-link")
-    return element_of(user, "channel-dialog").value and len(links) == 1 and links[0].props["href"].endswith(channel_id)
+def template_of(user, marker: str, slot: str) -> str:
+    """Return the template of a cell slot. The user simulation does not render it, so a test reads it."""
+    template = element_of(user, marker).slots[slot].template
+    assert template is not None
+    return template
 
 
-async def open_channel(user, channel_id: str, marker: str = "channels-table") -> None:
-    user.find(marker=marker).trigger("rowClick", args=channel_id)
-    await eventually(lambda: dialog_shows(user, channel_id), f"The open dialog of channel {channel_id}")
+def actions_of(user, marker: str = "channels-table") -> str:
+    return template_of(user, marker, "body-cell-actions")
+
+
+def subscribe_row(user, channel_id: str, marker: str = "channels-table") -> None:
+    user.find(marker=marker).trigger("subscribeChannel", args=channel_id)
+
+
+def unsubscribe_row(user, channel_id: str, marker: str = "channels-table") -> None:
+    """Press Unsubscribe in the menu of the row: the template sends the event only from that button."""
+    user.find(marker=marker).trigger("unsubscribeChannel", args=channel_id)
+
+
+def add_row_to_rule(user, channel_id: str, rule_id: int, marker: str = "channels-table") -> None:
+    user.find(marker=marker).trigger("addChannelToRule", args=[channel_id, rule_id])
+
+
+def result_of(user) -> str:
+    return text_of(user, "channel-result")
+
+
+def choices_of(user, channel_id: str, marker: str = "channels-table") -> list[tuple[int, str, bool, bool]]:
+    return [
+        (choice["id"], choice["label"], choice["reads"], choice["feed"])
+        for choice in row_of(user, channel_id, marker)["choices"]
+    ]
 
 
 # The cookies of the account for the real body of a child, and the text of a pause on the page.
@@ -198,10 +234,11 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
 
     table = element_of(user, "channels-table")
     assert [column["label"] for column in table.columns] == ["Channel", "Handle", "Subscribed", "Rules", "Actions"]
-    assert table.rows == [
+    assert [shown(row) for row in table.rows] == [
         {
             "id": ALPHA,
             "title": "alpha news",
+            "url": f"https://www.youtube.com/channel/{ALPHA}",
             "thumbnail": "",
             "handle": "@AlphaNews",
             "subscribed": "Yes",
@@ -210,6 +247,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
         {
             "id": BRAVO,
             "title": "Bravo Cooking",
+            "url": f"https://www.youtube.com/channel/{BRAVO}",
             "thumbnail": "",
             "handle": "",
             "subscribed": "No",
@@ -218,6 +256,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
         {
             "id": CHARLIE,
             "title": "Charlie",
+            "url": f"https://www.youtube.com/channel/{CHARLIE}",
             "thumbnail": "",
             "handle": "@charlie_tv",
             "subscribed": "Yes",
@@ -226,6 +265,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
         {
             "id": DELTA,
             "title": "Delta Science",
+            "url": f"https://www.youtube.com/channel/{DELTA}",
             "thumbnail": "",
             "handle": "@deltascience",
             "subscribed": "No",
@@ -234,6 +274,7 @@ async def test_the_stored_channels_come_by_title_with_their_state_and_their_rule
     ]
     assert text_of(user, "channels-summary") == "4 of 4 channels"
     await user.should_not_see(marker="no-channels")
+    assert result_of(user) == ""
 
 
 async def test_the_time_of_the_last_refresh_shows_in_the_time_zone_of_the_schedule(
@@ -416,7 +457,7 @@ async def test_a_refresh_of_the_lists_during_a_run_starts_nothing_and_says_so(us
 # The search.
 
 
-async def test_a_search_shows_the_found_channels_with_their_stored_state(user, stored_channels, fake_starter, scripts):
+async def test_a_search_shows_the_found_channels_with_their_stored_state(user, stored_channels, fake_starter):
     fake_starter.plan.append(
         {
             "stderr": stderr_line(
@@ -442,10 +483,11 @@ async def test_a_search_shows_the_found_channels_with_their_stored_state(user, s
         "Subscribed",
         "Actions",
     ]
-    assert table.rows == [
+    assert [shown(row) for row in table.rows] == [
         {
             "id": FOUND,
             "title": "Found Channel",
+            "url": f"https://www.youtube.com/channel/{FOUND}",
             "thumbnail": "https://yt3.example/found.jpg",
             "handle": "@found",
             "subscribers": "6,320,000",
@@ -454,28 +496,30 @@ async def test_a_search_shows_the_found_channels_with_their_stored_state(user, s
         {
             "id": CHARLIE,
             "title": "Charlie on YouTube",
+            "url": f"https://www.youtube.com/channel/{CHARLIE}",
             "thumbnail": "",
             "handle": "@charlie_tv",
             "subscribers": "",
             "subscribed": "Yes",
         },
-        {"id": BRAVO, "title": "Bravo", "thumbnail": "", "handle": "", "subscribers": "12", "subscribed": "No"},
+        {
+            "id": BRAVO,
+            "title": "Bravo",
+            "url": f"https://www.youtube.com/channel/{BRAVO}",
+            "thumbnail": "",
+            "handle": "",
+            "subscribers": "12",
+            "subscribed": "No",
+        },
     ]
+    # The stored state decides the button of a found channel.
+    assert [row["is_subscribed"] for row in table.rows] == [False, True, False]
     assert commands(fake_starter) == [["find-channels", "--query=cooking & co"]]
-    # Each row has the Edit button, which gives the keyboard the way of a click on the row.
-    assert table.slots["body-cell-actions"].template.count('aria-label="Edit"') == 1
-    assert table.slots["body-cell-actions"].template.count('icon="edit"') == 1
-    # The page has two tables of rows, so the focus finds the table of the row by its scope.
+    # The page has two tables of rows, so the head script finds the button of a row by the scope of its table.
     assert table.props["data-row-scope"] == "found"
-    user.find(marker="found-table").trigger("rowButton", args=FOUND)
-    await eventually(lambda: dialog_shows(user, FOUND), "The open dialog of the found channel")
-    scripts.clear()
-    with client_of(user):
-        element_of(user, "channel-dialog").close()
-    await eventually(lambda: scripts, "The move of the focus")
-    # The row of a found channel can go with the next search, so the search field is the second choice.
-    assert json.dumps(f'[data-row-scope="found"] [data-row-button="{FOUND}"]') in scripts[0]
-    assert json.dumps(f"#{element_of(user, 'search-input').html_id}") in scripts[0]
+    assert element_of(user, "channels-table").props["data-row-scope"] == "channels"
+    assert "'found-add-' + props.row.id" in actions_of(user, "found-table")
+    assert "'channels-add-' + props.row.id" in actions_of(user)
 
 
 async def test_the_enter_key_starts_the_search(user, fake_starter):
@@ -554,60 +598,110 @@ async def search_for(user, fake_starter, *channels: dict) -> None:
     await eventually(lambda: elements_of(user, "found-table"), "The table of the found channels")
 
 
-# The dialog of a channel.
+# The actions of a row.
 
 
-async def test_a_click_on_a_stored_channel_opens_its_dialog(user, stored_channels):
+async def test_the_title_of_a_channel_is_a_link_to_youtube_and_a_row_opens_nothing(user, stored_channels, fake_starter):
     await user.open("/subscriptions")
-    assert element_of(user, "channel-dialog").value is False
+    await search_for(user, fake_starter, found(FOUND, "Found Channel", "@found", 1, "https://yt3.example/f.jpg"))
 
-    await open_channel(user, BRAVO)
+    for marker in ("channels-table", "found-table"):
+        table = element_of(user, marker)
+        template = template_of(user, marker, "body-cell-title")
+        # The avatar stays in front of the title, and the title opens the channel in a new tab.
+        assert template.index("<q-avatar") < template.index('<a :href="props.row.url" target="_blank"')
+        assert 'rel="noopener noreferrer"' in template
+        # The click on the link does not reach the row.
+        assert "@click.stop" in template
+        # A click on a row opens nothing, and a row does not look like a button.
+        events = {listener.type for listener in table._event_listeners.values()}
+        assert {"subscribeChannel", "unsubscribeChannel", "addChannelToRule"} <= events
+        assert {"rowClick", "rowButton"} & events == set()
+        assert "cursor-pointer" not in table.classes
+    assert row_of(user, FOUND, "found-table")["url"] == f"https://www.youtube.com/channel/{FOUND}"
+    assert row_of(user, ALPHA)["url"] == f"https://www.youtube.com/channel/{ALPHA}"
 
-    assert text_of(user, "channel-title") == "Bravo Cooking"
-    assert text_of(user, "channel-handle") == "No handle"
-    assert text_of(user, "channel-subscribed") == "No"
-    assert text_of(user, "channel-rules") == "Science, Cooking (off)"
-    assert element_of(user, "channel-link").props["href"] == f"https://www.youtube.com/channel/{BRAVO}"
-    assert elements_of(user, "channel-subscribe")
-    assert elements_of(user, "channel-unsubscribe") == []
-    assert elements_of(user, "channel-subscribers") == []
 
-    await open_channel(user, ALPHA)
-    assert (text_of(user, "channel-title"), text_of(user, "channel-handle")) == ("alpha news", "@AlphaNews")
-    assert text_of(user, "channel-rules") == "No rule reads this channel."
-    assert elements_of(user, "channel-unsubscribe")
-
-
-async def test_a_click_on_a_found_channel_opens_its_dialog_with_the_found_data(user, stored_channels, fake_starter):
+async def test_the_cell_of_the_actions_has_a_button_for_each_action(user, stored_channels):
     await user.open("/subscriptions")
-    await search_for(user, fake_starter, found(FOUND, "Found Channel", "@found", 1234, "https://yt3.example/a.jpg"))
 
-    await open_channel(user, FOUND, "found-table")
+    template = actions_of(user)
 
-    assert text_of(user, "channel-title") == "Found Channel"
-    assert text_of(user, "channel-handle") == "@found"
-    assert text_of(user, "channel-subscribers") == "1,234"
-    assert text_of(user, "channel-subscribed") == "No"
-    assert element_of(user, "channel-thumbnail").props["src"] == "https://yt3.example/a.jpg"
+    # Subscribe or Unsubscribe by the stored state, and both are off while a change runs.
+    assert 'v-if="props.row.is_subscribed"' in template
+    assert template.count(':disable="props.row.locked"') == 2
+    assert template.count(':data-row-button="props.row.id"') == 2
+    assert "$parent.$emit('subscribeChannel', props.row.id)" in template
+    # Unsubscribe opens a menu with the question, and only its own Unsubscribe button sends the event. Cancel only
+    # closes the menu.
+    question = template.index("props.row.unsubscribe_question")
+    assert template.index("<q-menu") < question < template.index("$parent.$emit('unsubscribeChannel', props.row.id)")
+    cancel = next(line for line in template.splitlines() if 'label="Cancel"' in line)
+    assert "v-close-popup" in cancel
+    assert "$emit" not in cancel
+    # The rules come from the row. A rule that reads the channel already cannot be chosen.
+    assert 'v-for="choice in props.row.choices"' in template
+    assert ':disable="choice.reads"' in template
+    assert "$parent.$emit('addChannelToRule', props.row.id, choice.id)" in template
+    assert "already reads" in template
+    assert 'v-if="choice.feed"' in template
+    assert (
+        "This rule has no channels now, so it reads the subscriptions feed. After this change, it reads only its "
+        "channels, and not the subscriptions feed." in template
+    )
+    assert (
+        "The next run adds the videos of this channel from the last 7 days that the rule matches. After that, the "
+        "rule adds each new video of the channel. To add older videos, open the rule and change Also add videos from."
+        in template
+    )
+    assert "No rule exists yet. Create a rule first." in template
+    # A row whose change runs shows a spinner and a note instead of the buttons.
+    assert '<div v-if="props.row.working"' in template
+    assert "<q-spinner" in template
+    assert "The service works with YouTube. This takes up to a minute." in template
+    # The texts of a channel and of a rule come as values of the row, and no such text runs in the template.
+    assert "{{ props.row.unsubscribe_question }}" in template
+    assert "{{ choice.label }}" in template
 
 
-async def test_the_close_button_closes_the_dialog(user, stored_channels):
+def test_a_text_of_the_cell_of_the_actions_cannot_run_code():
+    assert template_text('{{ a }} <b> "c"') == "&#123;&#123; a }} &lt;b&gt; &quot;c&quot;"
+
+
+async def test_the_fields_of_the_actions_follow_the_state_and_the_rules_of_a_channel(user, stored_channels, sessions):
+    store(sessions, rule(3, "Feed rule"))
     await user.open("/subscriptions")
-    await open_channel(user, ALPHA)
 
-    user.find(marker="channel-close").click()
+    bravo = row_of(user, BRAVO)
+    assert (bravo["is_subscribed"], bravo["working"], bravo["locked"]) == (False, False, False)
+    assert bravo["unsubscribe_question"] == "Unsubscribe the YouTube account from Bravo Cooking?"
+    assert bravo["unsubscribe_note"] == "The rules that name this channel still read its videos."
+    # Rules 1 and 2 read Bravo already. Rule 3 has no channels, so it reads the subscriptions feed.
+    assert choices_of(user, BRAVO) == [
+        (1, "Science", True, False),
+        (2, "Cooking (off)", True, False),
+        (3, "Feed rule", False, True),
+    ]
+    alpha = row_of(user, ALPHA)
+    assert alpha["is_subscribed"] is True
+    # A channel without rules needs no note about rules before the unsubscribe.
+    assert alpha["unsubscribe_note"] == ""
+    assert choices_of(user, ALPHA) == [
+        (1, "Science", False, False),
+        (2, "Cooking (off)", False, False),
+        (3, "Feed rule", False, True),
+    ]
 
-    await eventually(lambda: element_of(user, "channel-dialog").value is False, "The closed dialog")
+
+async def test_without_rules_a_row_offers_no_rule(user, sessions):
+    store(sessions, channel(ALPHA, "Alpha"))
+    await user.open("/subscriptions")
+
+    assert row_of(user, ALPHA)["choices"] == []
+    assert '<q-item v-if="!props.row.choices.length">' in actions_of(user)
 
 
 # Add to rule.
-
-
-async def choose_rule(user, rule_id: int) -> None:
-    user.find(marker="channel-add-to-rule").click()
-    await eventually(lambda: elements_of(user, "rule-select"), "The choice of a rule")
-    set_value(user, "rule-select", rule_id)
-    await eventually(lambda: element_of(user, "rule-save").enabled, "The save button")
 
 
 async def test_a_found_channel_goes_into_a_rule_with_a_new_channel_row(user, sessions, fake_starter):
@@ -615,16 +709,10 @@ async def test_a_found_channel_goes_into_a_rule_with_a_new_channel_row(user, ses
     store(sessions, RuleChannel(rule_id=1, channel_id=ALPHA))
     await user.open("/subscriptions")
     await search_for(user, fake_starter, found(FOUND, "Found Channel", "@found", 99, "https://yt3.example/f.jpg"))
-    await open_channel(user, FOUND, "found-table")
+    # The rule has a channel, so it does not read the subscriptions feed.
+    assert choices_of(user, FOUND, "found-table") == [(1, "Science", False, False)]
 
-    await choose_rule(user, 1)
-    # The rule has a channel, so it does not read the subscriptions feed, and only the fact of the older videos shows.
-    assert text_of(user, "fact-catch-up") == (
-        "The next run adds the videos of this channel from the last 7 days that the rule matches. After that, the "
-        "rule adds each new video of the channel. To add older videos, open the rule and change Also add videos from."
-    )
-    assert elements_of(user, "fact-feed") == []
-    user.find(marker="rule-save").click()
+    add_row_to_rule(user, FOUND, 1, "found-table")
 
     await eventually(lambda: (1, FOUND) in rule_links(sessions), "The link of the rule and the channel")
     with sessions() as session:
@@ -638,10 +726,13 @@ async def test_a_found_channel_goes_into_a_rule_with_a_new_channel_row(user, ses
     )
     assert (row.mark_date, row.last_checked_at) == (None, None)
     await user.should_see("Rule Science now reads Found Channel.")
+    assert result_of(user) == "Rule Science now reads Found Channel."
     await channels_are(user, [ALPHA, FOUND])
     assert rows_of(user, "channels-table")[1]["rules"] == "Science"
-    # The dialog rebuilds a moment after the table, so the test waits for its text.
-    await eventually(lambda: text_of(user, "channel-rules") == "Science", "The rules of the channel in the dialog")
+    # The found table reloads too, and the rule now reads the channel.
+    await eventually(
+        lambda: choices_of(user, FOUND, "found-table") == [(1, "Science", True, False)], "The rule in the found row"
+    )
     # The page writes the database itself, and starts no child for it.
     assert commands(fake_starter) == [["find-channels", "--query=query"]]
 
@@ -650,99 +741,83 @@ async def test_a_rule_without_channels_tells_that_it_stops_to_read_the_feed(user
     store(sessions, watch_later(), rule(1, "Feed rule"))
     await user.open("/subscriptions")
     await search_for(user, fake_starter, found(FOUND, "Found Channel"))
-    await open_channel(user, FOUND, "found-table")
-    user.find(marker="channel-add-to-rule").click()
-    await eventually(lambda: elements_of(user, "rule-select"), "The choice of a rule")
-    # Before a choice, the save is off, and the feed fact does not show.
-    assert element_of(user, "rule-save").enabled is False
-    assert elements_of(user, "fact-feed") == []
-    assert elements_of(user, "fact-catch-up")
+    assert choices_of(user, FOUND, "found-table") == [(1, "Feed rule", False, True)]
 
-    set_value(user, "rule-select", 1)
+    add_row_to_rule(user, FOUND, 1, "found-table")
 
-    await eventually(lambda: elements_of(user, "fact-feed"), "The fact about the subscriptions feed")
-    assert text_of(user, "fact-feed") == (
-        "This rule has no channels now, so it reads the subscriptions feed. After this change, it reads only its "
-        "channels, and not the subscriptions feed."
-    )
-    user.find(marker="rule-save").click()
     await eventually(lambda: rule_links(sessions) == {(1, FOUND)}, "The link of the rule and the channel")
+    await eventually(
+        lambda: choices_of(user, FOUND, "found-table") == [(1, "Feed rule", True, False)], "The rule in the found row"
+    )
 
 
 async def test_a_found_channel_that_is_stored_keeps_its_row(user, stored_channels, sessions, fake_starter):
     await user.open("/subscriptions")
     await search_for(user, fake_starter, found(ALPHA, "A new title", "@new", 5, "https://yt3.example/new.jpg"))
-    await open_channel(user, ALPHA, "found-table")
 
-    await choose_rule(user, 1)
-    user.find(marker="rule-save").click()
+    add_row_to_rule(user, ALPHA, 1, "found-table")
 
     await eventually(lambda: (1, ALPHA) in rule_links(sessions), "The link of the rule and the channel")
     row = stored_channel(sessions, ALPHA)
     assert (row.title, row.handle, row.thumbnail_url, row.is_subscribed) == ("alpha news", "@AlphaNews", None, True)
+    await user.should_see("Rule Science now reads alpha news.")
 
 
-async def test_a_stored_channel_goes_into_a_rule_and_the_rules_that_read_it_are_not_offered(
-    user, stored_channels, sessions
-):
+async def test_a_stored_channel_goes_into_a_rule(user, stored_channels, sessions):
     store(sessions, rule(3, "Third"))
     await user.open("/subscriptions")
-    await open_channel(user, BRAVO)
-    user.find(marker="channel-add-to-rule").click()
-    await eventually(lambda: elements_of(user, "rule-select"), "The choice of a rule")
 
-    # Rules 1 and 2 already read Bravo.
-    assert element_of(user, "rule-select").options == {3: "Third"}
-    set_value(user, "rule-select", 3)
-    await eventually(lambda: elements_of(user, "fact-feed"), "The fact about the subscriptions feed")
-    user.find(marker="rule-save").click()
+    add_row_to_rule(user, BRAVO, 3)
 
     await eventually(lambda: (3, BRAVO) in rule_links(sessions), "The link of the rule and the channel")
-    await eventually(lambda: text_of(user, "channel-rules") == "Science, Cooking (off), Third", "The new rules")
+    await eventually(lambda: row_of(user, BRAVO)["rules"] == "Science, Cooking (off), Third", "The new rules")
+    assert [reads for _id, _label, reads, _feed in choices_of(user, BRAVO)] == [True, True, True]
+    assert "text-negative" not in element_of(user, "channel-result").classes
+
+
+async def test_a_rule_that_reads_the_channel_already_adds_nothing(user, stored_channels, sessions):
     await user.open("/subscriptions")
-    await open_channel(user, BRAVO)
-    user.find(marker="channel-add-to-rule").click()
-    await eventually(lambda: elements_of(user, "no-rule-choice"), "The message that each rule reads the channel")
-    assert text_of(user, "no-rule-choice") == "Each rule already reads this channel."
+
+    # The menu offers no such rule, but a page that is older than the database can send it.
+    add_row_to_rule(user, BRAVO, 1)
+
+    await eventually(lambda: result_of(user) == "Rule Science already reads Bravo Cooking.", "The result")
+    await user.should_see("Rule Science already reads Bravo Cooking.")
 
 
 async def test_a_disabled_rule_is_offered_with_its_mark(user, sessions):
     store(sessions, watch_later(), rule(1, "Paused rule", enabled=False), channel(ALPHA, "Alpha"))
+
     await user.open("/subscriptions")
-    await open_channel(user, ALPHA)
 
-    user.find(marker="channel-add-to-rule").click()
-
-    await eventually(lambda: elements_of(user, "rule-select"), "The choice of a rule")
-    assert element_of(user, "rule-select").options == {1: "Paused rule (off)"}
-
-
-async def test_without_rules_the_dialog_says_to_create_one(user, sessions):
-    store(sessions, channel(ALPHA, "Alpha"))
-    await user.open("/subscriptions")
-    await open_channel(user, ALPHA)
-
-    user.find(marker="channel-add-to-rule").click()
-
-    await eventually(lambda: elements_of(user, "no-rule-choice"), "The message without rules")
-    assert text_of(user, "no-rule-choice") == "No rule exists yet. Create a rule first."
-    assert element_of(user, "rule-save").enabled is False
-    user.find(marker="rule-back").click()
-    await eventually(lambda: elements_of(user, "channel-add-to-rule"), "The details of the channel")
+    assert choices_of(user, ALPHA) == [(1, "Paused rule (off)", False, True)]
 
 
 async def test_a_rule_that_was_deleted_after_the_page_showed_it_adds_nothing(user, stored_channels, sessions):
     await user.open("/subscriptions")
-    await open_channel(user, ALPHA)
-    await choose_rule(user, 1)
 
     with sessions.begin() as session:
         session.delete(session.get(Rule, 1))
-    user.find(marker="rule-save").click()
+    add_row_to_rule(user, ALPHA, 1)
 
     await user.should_see("Rule Science does not exist any more.")
+    assert result_of(user) == "Rule Science does not exist any more."
+    assert "text-negative" in element_of(user, "channel-result").classes
     assert {link for link in rule_links(sessions) if link[1] == ALPHA} == set()
-    await eventually(lambda: text_of(user, "channel-rules") == "No rule reads this channel.", "The fresh rules")
+    await eventually(lambda: [choice[0] for choice in choices_of(user, ALPHA)] == [2], "The fresh rules")
+
+
+async def test_an_unknown_channel_or_rule_adds_nothing(user, stored_channels, sessions):
+    await user.open("/subscriptions")
+    links = rule_links(sessions)
+
+    add_row_to_rule(user, FOUND, 1)
+    add_row_to_rule(user, ALPHA, 99)
+    subscribe_row(user, FOUND)
+
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert rule_links(sessions) == links
+    assert result_of(user) == ""
 
 
 # Subscribe and unsubscribe.
@@ -750,68 +825,45 @@ async def test_a_rule_that_was_deleted_after_the_page_showed_it_adds_nothing(use
 
 async def test_subscribe_runs_the_child_and_shows_the_new_state(user, stored_channels, sessions, fake_starter):
     await user.open("/subscriptions")
-    await open_channel(user, BRAVO)
     fake_starter.plan.append({"stderr": stderr_line({"channel_id": BRAVO, "subscribed": True})})
     # The child writes the database. The fake child does not, so the test writes what the child would write.
     with sessions.begin() as session:
         session.get(Channel, BRAVO).is_subscribed = True
 
-    user.find(marker="channel-subscribe").click()
+    subscribe_row(user, BRAVO)
 
     await user.should_see("Subscribed to Bravo Cooking.")
     assert commands(fake_starter) == [["subscribe", f"--channel-id={BRAVO}", "--title=Bravo Cooking"]]
-    await eventually(lambda: text_of(user, "channel-subscribed") == "Yes", "The new state in the dialog")
-    assert elements_of(user, "channel-unsubscribe")
-    assert rows_of(user, "channels-table")[1]["subscribed"] == "Yes"
+    assert result_of(user) == "Subscribed to Bravo Cooking."
+    assert "text-negative" not in element_of(user, "channel-result").classes
+    await eventually(lambda: row_of(user, BRAVO)["subscribed"] == "Yes", "The new state in the table")
+    assert row_of(user, BRAVO)["is_subscribed"] is True
 
 
 async def test_subscribe_to_a_found_channel_gives_its_title_to_the_child(user, fake_starter):
     await user.open("/subscriptions")
     await search_for(user, fake_starter, found(FOUND, "Found Channel", "@found"))
-    await open_channel(user, FOUND, "found-table")
     fake_starter.plan.append({"stderr": stderr_line({"channel_id": FOUND, "subscribed": True})})
 
-    user.find(marker="channel-subscribe").click()
+    subscribe_row(user, FOUND, "found-table")
 
     await user.should_see("Subscribed to Found Channel.")
     assert commands(fake_starter)[-1] == ["subscribe", f"--channel-id={FOUND}", "--title=Found Channel"]
 
 
-async def test_unsubscribe_asks_first_and_then_runs_the_child(user, stored_channels, sessions, fake_starter):
-    store(sessions, RuleChannel(rule_id=1, channel_id=ALPHA))
+async def test_unsubscribe_runs_the_child_and_shows_the_new_state(user, stored_channels, sessions, fake_starter):
     await user.open("/subscriptions")
-    await open_channel(user, ALPHA)
-
-    user.find(marker="channel-unsubscribe").click()
-    await eventually(lambda: elements_of(user, "confirm-unsubscribe"), "The question before the unsubscribe")
-    assert text_of(user, "confirm-text") == "Unsubscribe the YouTube account from this channel?"
-    assert text_of(user, "confirm-rules") == "The rules that name this channel still read its videos."
-    assert fake_starter.calls == []
-
-    user.find(marker="confirm-back").click()
-    await eventually(lambda: elements_of(user, "channel-unsubscribe"), "The details after the back button")
-    assert fake_starter.calls == []
-
     fake_starter.plan.append({"stderr": stderr_line({"channel_id": ALPHA, "subscribed": False})})
     with sessions.begin() as session:
         session.get(Channel, ALPHA).is_subscribed = False
-    user.find(marker="channel-unsubscribe").click()
-    await eventually(lambda: elements_of(user, "confirm-unsubscribe"), "The question before the unsubscribe")
-    user.find(marker="confirm-unsubscribe").click()
+
+    unsubscribe_row(user, ALPHA)
 
     await user.should_see("Unsubscribed from alpha news.")
     assert commands(fake_starter) == [["unsubscribe", f"--channel-id={ALPHA}"]]
-    await eventually(lambda: text_of(user, "channel-subscribed") == "No", "The new state in the dialog")
-
-
-async def test_a_channel_without_rules_needs_no_note_about_rules_before_the_unsubscribe(user, stored_channels):
-    await user.open("/subscriptions")
-    await open_channel(user, CHARLIE)
-
-    user.find(marker="channel-unsubscribe").click()
-
-    await eventually(lambda: elements_of(user, "confirm-unsubscribe"), "The question before the unsubscribe")
-    assert elements_of(user, "confirm-rules") == []
+    assert result_of(user) == "Unsubscribed from alpha news."
+    await eventually(lambda: row_of(user, ALPHA)["is_subscribed"] is False, "The new state in the table")
+    assert row_of(user, ALPHA)["subscribed"] == "No"
 
 
 @pytest.mark.parametrize(
@@ -844,23 +896,22 @@ async def test_a_channel_without_rules_needs_no_note_about_rules_before_the_unsu
         ),
     ],
 )
-async def test_a_failed_subscribe_shows_its_cause_in_the_dialog(user, stored_channels, fake_starter, child, expected):
+async def test_a_failed_subscribe_shows_its_cause_above_the_table(user, stored_channels, fake_starter, child, expected):
     await user.open("/subscriptions")
-    await open_channel(user, BRAVO)
     fake_starter.plan.append(child)
 
-    user.find(marker="channel-subscribe").click()
+    subscribe_row(user, BRAVO)
 
-    await eventually(lambda: elements_of(user, "channel-error"), "The cause of the failure")
-    assert text_of(user, "channel-error") == expected
-    assert text_of(user, "channel-subscribed") == "No"
+    await eventually(lambda: result_of(user) == expected, "The cause of the failure")
+    assert "text-negative" in element_of(user, "channel-result").classes
+    assert row_of(user, BRAVO)["subscribed"] == "No"
     assert not user.notify.contains("Subscribed to Bravo Cooking.")
 
 
 async def test_a_subscribe_during_the_pause_of_the_requests_shows_the_end_of_the_pause(
     user, settings, sessions, stored_channels, fake_starter, monkeypatch
 ):
-    """From the real body of the child to the text of the dialog: the browser writes the end of the pause."""
+    """From the real body of the child to the text above the table: the browser writes the end of the pause."""
     key = generate_key()
     with sessions.begin() as session:
         save_cookies(session, CookieCipher(key), PAUSE_COOKIES)
@@ -873,18 +924,31 @@ async def test_a_subscribe_during_the_pause_of_the_requests_shows_the_end_of_the
         code = change_subscription_once(child_settings, BRAVO, subscribe=True)
     assert requests == []
     await user.open("/subscriptions")
-    await open_channel(user, BRAVO)
     fake_starter.plan.append({"exit_code": code, "stderr": stderr.getvalue()})
 
-    user.find(marker="channel-subscribe").click()
+    subscribe_row(user, BRAVO)
 
-    await eventually(lambda: elements_of(user, "channel-error"), "The cause of the failure")
     template = "The subscription did not change. " + PAUSE_TEMPLATE
     zone = ZoneInfo(settings.tz)
-    assert text_of(user, "channel-error") == template.format(time=format_time(paused.pause.until, zone))
-    assert moment_of(user, "channel-error") == (iso_time(paused.pause.until, zone), settings.tz)
-    assert element_of(user, "channel-error").props["data-time-template"] == template
-    assert text_of(user, "channel-subscribed") == "No"
+    expected = template.format(time=format_time(paused.pause.until, zone))
+    await eventually(lambda: result_of(user) == expected, "The cause of the failure")
+    assert moment_of(user, "channel-result") == (iso_time(paused.pause.until, zone), settings.tz)
+    assert element_of(user, "channel-result").props["data-time-template"] == template
+    assert row_of(user, BRAVO)["subscribed"] == "No"
+
+
+async def test_the_next_result_forgets_the_end_of_the_pause(user, stored_channels, sessions, fake_starter):
+    pause = RequestPause(BreakerReason.BOT_CHECK, datetime(2026, 10, 28, 13, 0, tzinfo=UTC), "Europe/Kyiv")
+    await user.open("/subscriptions")
+    fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": pause.to_line() + "\n"})
+    subscribe_row(user, BRAVO)
+    await eventually(lambda: moment_of(user, "channel-result")[0] is not None, "The end of the pause")
+
+    add_row_to_rule(user, ALPHA, 1)
+
+    await eventually(lambda: result_of(user) == "Rule Science now reads alpha news.", "The next result")
+    assert moment_of(user, "channel-result") == (None, None)
+    assert "text-negative" not in element_of(user, "channel-result").classes
 
 
 async def test_a_refresh_of_the_lists_during_the_pause_shows_the_end_of_the_pause(user, fake_starter):
@@ -906,87 +970,86 @@ async def test_a_refresh_of_the_lists_during_the_pause_shows_the_end_of_the_paus
 
 async def test_a_subscribe_during_a_run_starts_nothing_and_says_so(user, stored_channels, fake_starter):
     await user.open("/subscriptions")
-    await open_channel(user, BRAVO)
 
     with sync_lock_held():
-        user.find(marker="channel-subscribe").click()
-        await eventually(lambda: elements_of(user, "channel-error"), "The busy text")
+        subscribe_row(user, BRAVO)
+        await eventually(lambda: result_of(user), "The busy text")
 
-    assert text_of(user, "channel-error").startswith(f"The subscription did not change. {BUSY_TEXT}")
+    assert result_of(user).startswith(f"The subscription did not change. {BUSY_TEXT}")
     assert fake_starter.calls == []
 
 
-async def test_the_buttons_of_the_dialog_are_off_while_the_child_works(user, stored_channels, fake_starter):
+async def test_the_row_of_a_running_change_is_busy_and_the_other_buttons_are_off(user, stored_channels, fake_starter):
     await user.open("/subscriptions")
-    await open_channel(user, BRAVO)
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"))
     fake_starter.plan.append({"blocking": True, "stderr": stderr_line({"channel_id": BRAVO, "subscribed": True})})
 
-    user.find(marker="channel-subscribe").click()
+    subscribe_row(user, BRAVO)
 
-    await eventually(lambda: elements_of(user, "channel-working"), "The note that the service works")
-    assert element_of(user, "channel-subscribe").enabled is False
-    # A second click starts no second child.
-    user.find(marker="channel-subscribe").click()
+    await eventually(lambda: row_of(user, BRAVO)["working"], "The busy row")
+    assert [row["id"] for row in rows_of(user, "channels-table") if row["working"]] == [BRAVO]
+    assert all(row["locked"] for row in rows_of(user, "channels-table"))
+    await eventually(lambda: row_of(user, FOUND, "found-table")["locked"], "The found row with its buttons off")
+    assert row_of(user, FOUND, "found-table")["working"] is False
+    # A second action starts no second child: the sync lock lets one child run at a time.
+    subscribe_row(user, FOUND, "found-table")
+    unsubscribe_row(user, ALPHA)
     await asyncio.sleep(SETTLE_SECONDS)
-    assert len(fake_starter.calls) == 1
-    fake_starter.children[0].finish(0)
+    assert len(fake_starter.calls) == 2
+    fake_starter.children[-1].finish(0)
     await user.should_see("Subscribed to Bravo Cooking.")
-    await eventually(lambda: not elements_of(user, "channel-working"), "The end of the note")
+    await eventually(lambda: not row_of(user, BRAVO)["working"], "The end of the busy row")
+    assert not any(row["locked"] for row in rows_of(user, "channels-table"))
+    await eventually(lambda: not row_of(user, FOUND, "found-table")["locked"], "The found row with its buttons on")
 
 
 @pytest.mark.parametrize("subscribe", [True, False], ids=["subscribe", "unsubscribe"])
-async def test_the_result_shows_when_the_dialog_redraws_itself_while_the_child_works(
+async def test_the_result_shows_when_the_found_table_redraws_itself_while_the_child_works(
     user, stored_channels, sessions, fake_starter, subscribe
 ):
     channel_id, title = (BRAVO, "Bravo Cooking") if subscribe else (ALPHA, "alpha news")
     message = f"Subscribed to {title}." if subscribe else f"Unsubscribed from {title}."
     await user.open("/subscriptions")
-    await open_channel(user, channel_id)
+    await search_for(user, fake_starter, found(channel_id, "A found title"))
     fake_starter.plan.append(
         {"blocking": True, "stderr": stderr_line({"channel_id": channel_id, "subscribed": subscribe})}
     )
     # The child writes the database. The fake child does not, so the test writes what the child would write.
     with sessions.begin() as session:
         session.get(Channel, channel_id).is_subscribed = subscribe
-    if not subscribe:
-        user.find(marker="channel-unsubscribe").click()
-        await eventually(lambda: elements_of(user, "confirm-unsubscribe"), "The question before the unsubscribe")
 
-    user.find(marker="channel-subscribe" if subscribe else "confirm-unsubscribe").click()
+    # The busy row redraws the found table and deletes the table of this handler.
+    (subscribe_row if subscribe else unsubscribe_row)(user, channel_id, "found-table")
 
-    await eventually(lambda: elements_of(user, "channel-working"), "The note that the service works")
+    await eventually(lambda: row_of(user, channel_id, "found-table")["working"], "The busy row")
     await collect_deleted_elements()
-    fake_starter.children[0].finish(0)
+    fake_starter.children[-1].finish(0)
     await user.should_see(message)
+    assert result_of(user) == message
     new_state = "Yes" if subscribe else "No"
-    await eventually(lambda: text_of(user, "channel-subscribed") == new_state, "The new state in the dialog")
-    await eventually(lambda: not elements_of(user, "channel-working"), "The end of the note")
-    assert elements_of(user, "channel-unsubscribe" if subscribe else "channel-subscribe")
-    rows = {row["id"]: row["subscribed"] for row in rows_of(user, "channels-table")}
-    assert rows[channel_id] == new_state
+    await eventually(lambda: row_of(user, channel_id, "found-table")["subscribed"] == new_state, "The found row")
+    assert row_of(user, channel_id, "found-table")["working"] is False
+    assert row_of(user, channel_id)["subscribed"] == new_state
 
 
-async def test_the_result_of_the_save_to_a_rule_shows_when_the_dialog_redraws_itself_while_the_save_runs(
-    user, stored_channels, sessions, monkeypatch
+async def test_the_result_of_an_add_to_a_rule_shows_when_the_found_table_redraws_itself_while_the_save_runs(
+    user, stored_channels, sessions, fake_starter, monkeypatch
 ):
     save = Held(subscriptions_page.add_to_rule)
     monkeypatch.setattr(subscriptions_page, "add_to_rule", save)
     await user.open("/subscriptions")
-    await open_channel(user, ALPHA)
-    await choose_rule(user, 2)
-    user.find(marker="rule-save").click()
+    await search_for(user, fake_starter, found(ALPHA, "A found title"))
+    add_row_to_rule(user, ALPHA, 2, "found-table")
     await eventually(save.entered.is_set, "The start of the save")
 
-    # Back redraws the dialog and deletes the button of the save, which still waits for the database.
-    user.find(marker="rule-back").click()
-    await eventually(lambda: elements_of(user, "channel-unsubscribe"), "The details after the back button")
+    # A new search redraws the found table and deletes the table of the save, which still waits for the database.
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"))
     await collect_deleted_elements()
     save.gate.set()
 
     await user.should_see("Rule Cooking now reads alpha news.")
     assert (2, ALPHA) in rule_links(sessions)
     await eventually(lambda: rows_of(user, "channels-table")[0]["rules"].startswith("Cooking"), "The table reloads")
-    await eventually(lambda: text_of(user, "channel-rules").startswith("Cooking"), "The rules in the dialog")
 
 
 # The translation.
@@ -1011,9 +1074,9 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
     fake_starter.plan.append({"stderr": stderr_line([found(FOUND, "Found title", "@found", 1000)])})
     data = {"Alpha title", "Bravo title", "Found title", "@alpha", "@found", "1,000"}
     texts = []
-    # The columns of each table, by the id of the table, because the test collects the texts of the page three times.
+    # The columns of each table, by the id of the table.
     columns = {}
-    row_buttons = set()
+    cells = set()
 
     def collect() -> None:
         for element in user.client.elements.values():
@@ -1025,33 +1088,48 @@ async def test_each_text_of_the_subscriptions_page_goes_through_the_translation(
                 texts.extend(element.options.values() if isinstance(element.options, dict) else [])
             if isinstance(element, ui.table):
                 columns[element.id] = [column["label"] for column in element.columns]
-                row_buttons.update(slot.template for name, slot in element.slots.items() if name == "body-cell-actions")
+                cells.update(slot.template for name, slot in element.slots.items() if name == "body-cell-actions")
                 for row in element.rows:
-                    texts.extend(str(row[name]) for name in ("subscribed", "rules") if row.get(name))
+                    names = ("subscribed", "rules", "unsubscribe_question", "unsubscribe_note")
+                    texts.extend(str(row[name]) for name in names if row.get(name))
+                    texts.extend(choice["label"] for choice in row["choices"])
 
     async with running_service(settings, fake_starter) as user:
         await user.open("/subscriptions")
         set_value(user, "search-input", "found")
         user.find(marker="search").click()
         await eventually(lambda: elements_of(user, "found-table"), "The found channels")
-        await open_channel(user, ALPHA)
-        collect()
-        user.find(marker="channel-add-to-rule").click()
-        await eventually(lambda: elements_of(user, "no-rule-choice"), "The add to rule view")
-        collect()
-        await open_channel(user, FOUND, "found-table")
-        user.find(marker="channel-add-to-rule").click()
-        await eventually(lambda: elements_of(user, "rule-select"), "The choice of a rule")
+        add_row_to_rule(user, BRAVO, 1)
+        await eventually(lambda: result_of(user), "The result of the add to a rule")
+        await eventually(lambda: row_of(user, BRAVO)["unsubscribe_note"], "The rows after the add")
         collect()
 
     assert "<<Subscriptions>>" in texts
     assert "<<Lists refreshed: {time}>>" not in texts
     assert "<<The lists were never refreshed.>>" in texts
+    assert "<<Rule Rule one now reads Bravo title.>>" in texts
+    assert "<<Rule one (off)>>" in texts
     column_labels = [label for labels in columns.values() for label in labels]
     assert len(column_labels) == 10
-    assert len(row_buttons) == 1
-    assert all('aria-label="&lt;&lt;Edit&gt;&gt;"' in template for template in row_buttons)
     assert [label for label in column_labels if not (label.startswith("<<") and label.endswith(">>"))] == []
+    # Both tables have the same texts in the cell of their actions, and each such text is marked.
+    assert len(cells) == 2
+    english = (
+        "Subscribe",
+        "Unsubscribe",
+        "Cancel",
+        "Add to rule",
+        "Add the channel",
+        "already reads",
+        "The service works",
+        "No rule exists",
+        "This rule has no channels",
+        "The next run adds",
+    )
+    for template in cells:
+        assert "&lt;&lt;Add to rule&gt;&gt;" in template
+        unmarked = re.sub(r"&lt;&lt;.*?&gt;&gt;", "", template, flags=re.DOTALL)
+        assert [text for text in english if text in unmarked] == []
     untranslated = [
         text
         for text in texts
