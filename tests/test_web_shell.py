@@ -328,6 +328,23 @@ async def test_the_address_followers_of_the_pages_end_with_their_content(nicegui
         assert [follower.path for follower in layout._FOLLOWERS[client]] == ["/history"]
 
 
+async def test_the_leave_check_of_the_editor_ends_with_its_content(nicegui_globals, settings, fake_starter):
+    async with running_service(settings, fake_starter) as user:
+        client = await user.open("/rules")
+
+        for _round in range(3):
+            user.find(marker="new-rule").click()
+            await eventually(lambda: elements_of(user, "editor"), "The editor")
+            assert len(layout._LEAVE_CHECKS[client]) == 1
+            # The editor has no changes, so a click in the drawer leaves at once.
+            user.find(marker="nav:/history").click()
+            await user.should_see(marker="refresh")
+            # The check of the closed editor is gone, so the checks do not pile up in a tab that stays open.
+            assert layout._LEAVE_CHECKS[client] == []
+            user.find(marker="nav:/rules").click()
+            await user.should_see(marker="new-rule")
+
+
 async def test_the_first_html_holds_the_content_that_an_async_builder_shows_after_an_await(
     nicegui_globals, settings, fake_starter, monkeypatch
 ):
