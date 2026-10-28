@@ -8,7 +8,16 @@ import pytest
 from nicegui import ui
 from nicegui.elements.mixins.text_element import TextElement
 from sqlalchemy import select
-from ui_support import element_of, elements_of, eventually, running_service, store, text_of
+from ui_support import (
+    collect_deleted_elements,
+    element_of,
+    elements_of,
+    eventually,
+    running_service,
+    service_with_pages,
+    store,
+    text_of,
+)
 
 from youtube_automanager import i18n
 from youtube_automanager.db.models import (
@@ -224,7 +233,7 @@ async def test_the_dashboard_button_is_disabled_while_the_start_of_the_run_waits
     release = asyncio.Event()
     entered = asyncio.Event()
 
-    async def slow_run_now(services):
+    async def slow_run_now(services, client):
         entered.set()
         await release.wait()
 
@@ -239,6 +248,34 @@ async def test_the_dashboard_button_is_disabled_while_the_start_of_the_run_waits
 
     release.set()
     await eventually(lambda: button.enabled and "loading" not in button.props, "The end of the action")
+
+
+async def test_the_result_of_run_now_shows_when_the_dashboard_draws_its_cards_again_while_the_start_waits(
+    nicegui_globals, settings, fake_starter, monkeypatch
+):
+    release = asyncio.Event()
+    entered = asyncio.Event()
+    real_run_now = common.run_now
+
+    async def slow_run_now(services, client):
+        entered.set()
+        await release.wait()
+        await real_run_now(services, client)
+
+    monkeypatch.setattr(common, "run_now", slow_run_now)
+    async with service_with_pages(settings, fake_starter) as (user, services):
+        await user.open("/")
+        user.find(marker="dashboard-run-now").click()
+        await eventually(entered.is_set, "The start of the action")
+
+        # An event of a run, or the timer, draws the cards again and deletes the button that still waits.
+        old = element_of(user, "dashboard-run-now").id
+        services.run_events.started.emit(99, RunTrigger.SCHEDULE)
+        await eventually(lambda: element_of(user, "dashboard-run-now").id != old, "The new button")
+        await collect_deleted_elements()
+        release.set()
+
+        await user.should_see("Run 1 started.")
 
 
 async def test_the_last_run_title_links_to_that_run_in_history(user, sessions):

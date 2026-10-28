@@ -41,6 +41,7 @@ from youtube_automanager.web.ui.common import (
     busy,
     column,
     focus_when_drawn,
+    notify_in,
     read_timezone,
     row_button_selector,
 )
@@ -397,10 +398,11 @@ async def subscriptions_page(services: Services) -> None:
             LOG.warning("The subscription of channel %s did not change: %s", channel.channel_id, error)
             state.error = _("The subscription did not change. {reason}").format(reason=child_error_text(error))
         else:
+            # The redraw of the dialog deleted the button of this handler, so the message goes through the client.
             if subscribe:
-                ui.notify(_("Subscribed to {title}.").format(title=channel.title), type="positive")
+                notify_in(client, _("Subscribed to {title}.").format(title=channel.title), type="positive")
             else:
-                ui.notify(_("Unsubscribed from {title}.").format(title=channel.title), type="positive")
+                notify_in(client, _("Unsubscribed from {title}.").format(title=channel.title), type="positive")
         finally:
             state.working = False
             state.view = DialogView.DETAILS
@@ -412,12 +414,15 @@ async def subscriptions_page(services: Services) -> None:
         if channel is None or rule is None:
             return
         outcome = await asyncio.to_thread(add_to_rule, services.sessions, services.settings.tz, rule.id, channel)
+        # A click on Back while the save runs redraws the dialog and deletes the button of this handler.
         if outcome is AddOutcome.ADDED:
-            ui.notify(_("Rule {rule} now reads {title}.").format(rule=rule.name, title=channel.title), type="positive")
+            notify_in(
+                client, _("Rule {rule} now reads {title}.").format(rule=rule.name, title=channel.title), type="positive"
+            )
         elif outcome is AddOutcome.ALREADY_IN_RULE:
-            ui.notify(_("Rule {rule} already reads {title}.").format(rule=rule.name, title=channel.title))
+            notify_in(client, _("Rule {rule} already reads {title}.").format(rule=rule.name, title=channel.title))
         else:
-            ui.notify(_("Rule {rule} does not exist any more.").format(rule=rule.name), type="warning")
+            notify_in(client, _("Rule {rule} does not exist any more.").format(rule=rule.name), type="warning")
         state.view = DialogView.DETAILS
         state.rule_id = None
         await reload()

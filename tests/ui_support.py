@@ -1,7 +1,9 @@
 """Helpers of the tests that run the whole service with its pages. The fixtures of these tests are in ``conftest.py``."""
 
 import asyncio
+import gc
 import shutil
+import threading
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -13,8 +15,10 @@ from nicegui import ElementFilter, ui
 from nicegui import app as nicegui_app
 from nicegui.app.app import State as NiceGUIState
 from nicegui.client import Client
+from nicegui.functions.notify import notify
 from nicegui.testing import User
 from nicegui.testing.general import nicegui_reset_globals
+from nicegui.testing.user_notify import UserNotify
 from sqlalchemy import make_url
 
 from youtube_automanager.web.app import create_app
@@ -35,14 +39,60 @@ def store(sessions, *rows):
         session.add_all(rows)
 
 
+class RealNotify(UserNotify):
+    """Replaces the ``ui.notify`` of the user simulation, which only records the message and reads no context.
+
+    The real ``ui.notify`` takes the client from the current slot, and it raises when the element of that slot is gone.
+    A page that calls it from a handler of a deleted element must fail in a test as it fails in the service.
+    """
+
+    def __call__(self, message: str, **kwargs) -> None:
+        notify(message, **kwargs)
+        super().__call__(message, **kwargs)
+
+
 class PatientUser(User):
-    """A simulated browser whose ``should_see`` waits up to WAIT_SECONDS for an element."""
+    """A simulated browser whose ``should_see`` waits up to WAIT_SECONDS for an element.
+
+    Its ``ui.notify`` is the real one, and the message shows in ``notify.messages`` only when the real one took it.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.notify = RealNotify()
 
     async def should_see(self, target=None, *, kind=None, marker=None, content=None, retries=SEE_RETRIES) -> None:
         if target is None:
             await super().should_see(kind=kind, marker=marker, content=content, retries=retries)
         else:
             await super().should_see(target, retries=retries)
+
+
+async def collect_deleted_elements() -> None:
+    """Free the elements that a redraw of the page deleted.
+
+    A slot keeps its parent by a weak reference, and an element sits in reference cycles, so a deleted button is gone
+    only after the garbage collector ran. In the service this happens some time after the click. A test of a handler
+    that tells its result after the redraw of its own button collects at once, so the test does not depend on the
+    moment of the collector.
+    """
+    await asyncio.sleep(SEE_PAUSE_SECONDS)
+    gc.collect()
+
+
+class Held:
+    """A function that waits for ``gate`` before it runs. A page calls it in a thread, so the test can change the page
+    while the call waits. ``entered`` is set when the call starts, and the call ends after ``gate.set()``."""
+
+    def __init__(self, function: Callable[..., Any]) -> None:
+        self.function = function
+        self.entered = threading.Event()
+        self.gate = threading.Event()
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.entered.set()
+        self.gate.wait(WAIT_SECONDS)
+        return self.function(*args, **kwargs)
 
 
 def client_of(user: User) -> Client:

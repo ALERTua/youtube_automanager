@@ -23,7 +23,18 @@ from nicegui.elements.mixins.text_element import TextElement
 from nicegui.elements.upload_files import SmallFileUpload
 from pydantic import SecretStr
 from sqlalchemy import select
-from ui_support import element_of, elements_of, eventually, running_service, set_value, store, text_of, texts_of
+from ui_support import (
+    Held,
+    collect_deleted_elements,
+    element_of,
+    elements_of,
+    eventually,
+    running_service,
+    set_value,
+    store,
+    text_of,
+    texts_of,
+)
 
 from youtube_automanager import i18n
 from youtube_automanager.cookie_upload_check import check_upload_once
@@ -52,6 +63,7 @@ from youtube_automanager.short_child import (
     ChildUnavailable,
     ChildYouTubeError,
 )
+from youtube_automanager.web.ui import notifications_section
 from youtube_automanager.web.ui.cookie_upload import COMPOSE_KEY_COMMAND, KEY_COMMAND, MAX_FILE_BYTES
 from youtube_automanager.web.ui.notification_targets import EVENT_LABELS, LEVEL_LABELS
 from youtube_automanager.web.ui.settings_page import expired_text, upload_error_text
@@ -1339,6 +1351,94 @@ async def test_the_test_of_a_target_that_went_tells_so(user, sessions, sent):
 
     await user.should_see("The target does not exist any more.")
     assert sent == []
+
+
+async def redraw_the_cards(user, marker: str) -> None:
+    """Change a card and press Discard, which draws the cards again and deletes the old buttons of the cards.
+
+    ``marker`` is the marker of a button of the first card.
+    """
+    old = element_of(user, marker).id
+    user.find(marker="target-1-enabled").click()
+    await eventually(lambda: draft_shown(user), "The buttons of the draft")
+    user.find(marker="settings-discard").click()
+    await eventually(lambda: element_of(user, marker).id != old, "The new card")
+    await collect_deleted_elements()
+
+
+async def test_the_result_of_a_test_notification_shows_when_the_cards_are_drawn_again_while_the_send_runs(
+    user, sessions, sent
+):
+    store(sessions, target(1, "Slow", url="settingsslow://host"))
+    await user.open("/settings")
+    user.find(marker="target-1-test").click()
+    await eventually(lambda: "loading" in element_of(user, "target-1-test").props, "The spinner")
+
+    await redraw_the_cards(user, "target-1-test")
+    SLOW_SEND.set()
+
+    await user.should_see("The test notification went to Slow.")
+    await eventually(lambda: "loading" not in element_of(user, "target-1-test").props, "The end of the spinner")
+
+
+async def test_the_result_of_the_delete_of_a_target_shows_when_the_cards_are_drawn_again_while_the_delete_runs(
+    user, sessions, monkeypatch
+):
+    store(sessions, target(1, "Phone"))
+    delete = Held(notifications_section.delete_target)
+    monkeypatch.setattr(notifications_section, "delete_target", delete)
+    await user.open("/settings")
+    user.find(marker="target-1-delete").click()
+    await eventually(lambda: elements_of(user, "target-delete-confirm"), "The question")
+    user.find(marker="target-delete-confirm").click()
+    await eventually(delete.entered.is_set, "The start of the delete")
+
+    await redraw_the_cards(user, "target-1-delete")
+    delete.gate.set()
+
+    await user.should_see("The target Phone is deleted.")
+    await eventually(lambda: not elements_of(user, "target-1"), "The card of the deleted target goes")
+
+
+async def test_the_message_of_the_editor_of_a_target_that_went_shows_when_the_cards_are_drawn_again(
+    user, sessions, monkeypatch
+):
+    store(sessions, target(1, "Phone"))
+    load = Held(notifications_section.load_target)
+    monkeypatch.setattr(notifications_section, "load_target", load)
+    await user.open("/settings")
+    with sessions.begin() as session:
+        session.delete(session.get(NotificationTarget, 1))
+    user.find(marker="target-1-edit").click()
+    await eventually(load.entered.is_set, "The start of the read")
+
+    await redraw_the_cards(user, "target-1-edit")
+    load.gate.set()
+
+    await user.should_see(GONE_TEXT)
+    await eventually(lambda: not elements_of(user, "target-1"), "The card of the gone target goes")
+
+
+async def test_the_result_of_the_save_of_a_target_shows_when_the_editor_closes_while_the_save_runs(
+    user, sessions, monkeypatch
+):
+    store(sessions, target(1, "Phone"))
+    save = Held(notifications_section.save_target)
+    monkeypatch.setattr(notifications_section, "save_target", save)
+    await user.open("/settings")
+    await open_editor(user, "target-1-edit")
+    user.find(marker="target-name").type(" 2")
+    user.find(marker="target-save").click()
+    await eventually(save.entered.is_set, "The start of the save")
+
+    # Cancel closes the editor and draws its form again, which deletes the Save button that waits for the database.
+    user.find(marker="target-cancel").click()
+    await eventually(lambda: not elements_of(user, "target-save"), "The form goes")
+    await collect_deleted_elements()
+    save.gate.set()
+
+    await user.should_see("The target Phone 2 is saved.")
+    await eventually(lambda: text_of(user, "target-1-name") == "Phone 2", "The new name in the card")
 
 
 async def test_only_the_edit_form_shows_a_target_url_and_no_log_line_holds_one(user, sessions, sent, caplog):
