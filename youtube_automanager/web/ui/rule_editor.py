@@ -53,6 +53,7 @@ from youtube_automanager.web.ui.common import (
     focus_when_drawn,
     icon_button,
     named,
+    notify_in,
     set_loading,
     whole_number,
 )
@@ -447,6 +448,9 @@ class RuleEditor:
         self.catch_up_cleared = False
 
     def build(self) -> None:
+        # Cancel stays on while a save or a delete runs, and a confirmed Cancel leaves the editor and deletes the button
+        # of the click. So the result of the save or the delete goes through the client.
+        self.client = context.client
         rule = self.source
         ui.label(_("Change the rule") if self.rule else _("New rule")).classes("text-h6").mark("editor-title")
         self.name_input = (
@@ -1009,9 +1013,9 @@ class RuleEditor:
             self.saving = False
             self.save_button.enable()
         if rule_id is None:
-            ui.notify(_("The rule does not exist any more, so the page did not save it."), type="warning")
+            notify_in(self.client, _("The rule does not exist any more, so the page did not save it."), type="warning")
         else:
-            ui.notify(_("The rule is saved."), type="positive")
+            notify_in(self.client, _("The rule is saved."), type="positive")
         self._leave_once()
 
     def _leave_once(self) -> None:
@@ -1061,12 +1065,13 @@ class RuleEditor:
         try:
             await asyncio.to_thread(delete_rule, self.services.sessions, self.services.runner, rule.id)
         except RunAlreadyActive:
-            ui.notify(
+            notify_in(
+                self.client,
                 _("A sync run or another task with YouTube is active now. Delete the rule when it ends."),
                 type="warning",
             )
             return
-        ui.notify(_("The rule is deleted."), type="positive")
+        notify_in(self.client, _("The rule is deleted."), type="positive")
         self._leave_once()
 
 
@@ -1092,6 +1097,9 @@ class ApplyDialog:
         self.run_id: int | None = None
         self.count = 0
         self.ended = False
+        # The end of an apply comes through an event, and the tab can close while the dialog reads the end. So the end
+        # goes through the client, which skips a closed tab.
+        self.client = context.client
         with ui.dialog().mark("apply-dialog") as self.dialog:
             self.card = ui.card().classes("gap-2").style("width: min(56rem, 95vw); max-width: 95vw")
         # The subscriptions end with the content of the page: at a click in the drawer, and when the tab closes.
@@ -1274,7 +1282,7 @@ class ApplyDialog:
             else:
                 kind = "positive"
         self._status(text, error=kind == "negative")
-        ui.notify(text, type=kind)
+        notify_in(self.client, text, type=kind)
 
 
 class ApplyBanner:
