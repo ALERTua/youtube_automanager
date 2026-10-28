@@ -254,9 +254,11 @@ class SyncRunner:
         self._child_timeout_s = child_timeout_s
         self._start = start
         self._lock = lock
-        # Guards `_child` and `_stopping` between the job thread and `stop`.
+        # Guards `_child`, `_child_owner` and `_stopping` between the job thread, `stop` and `kill_short_child`.
         self._state_lock = threading.Lock()
         self._child: ChildProcess | None = None
+        # The owner that the caller of `run_short_child` gave for the active child, or None.
+        self._child_owner: object | None = None
         self._stopping = False
 
     def claim(self, trigger: RunTrigger, wait_s: float = 0) -> int | None:
@@ -417,20 +419,43 @@ class SyncRunner:
         )
 
     def run_short_child(
-        self, command: Sequence[str], name: str, timeout_s: float, input_text: str | None = None
+        self,
+        command: Sequence[str],
+        name: str,
+        timeout_s: float,
+        input_text: str | None = None,
+        *,
+        owner: object | None = None,
     ) -> ChildEnd | None:
         """Run a child that works with the cookies, and tell how it ended. The call blocks until the child ends.
 
         The child holds the sync lock, so a run never works on the cookies at the same time, and ``stop`` stops the
         child. ``input_text`` goes to the standard input of the child, never to its command line or its environment.
-        Return None and start nothing when a run, a session check, another child or a yt-dlp update holds the lock.
+        With ``owner``, ``kill_short_child(owner)`` kills the child. Return None and start nothing when a run, a session
+        check, another child or a yt-dlp update holds the lock.
         """
         if not self._lock.acquire(blocking=False):
             return None
         try:
-            return self._run_process(command, name, timeout_s, input_text)
+            return self._run_process(command, name, timeout_s, input_text, owner=owner)
         finally:
             self._lock.release()
+
+    def kill_short_child(self, owner: object) -> bool:
+        """Kill the short child that ``run_short_child`` runs for ``owner``, at once. Return True when it killed one.
+
+        A sync run, a session check and the child of another owner go on, because the caller owns only its own child.
+        The child gets no time to end its work, so the work that it confirmed before stays, and the rest does not happen.
+        """
+        if owner is None:
+            return False
+        with self._state_lock:
+            child = self._child if self._child_owner is owner else None
+            if child is None or child.poll() is not None:
+                return False
+            LOG.info("Killing the short child process at the request of its owner")
+            child.kill()
+        return True
 
     def run_child_in_lock(
         self, command: Sequence[str], name: str, timeout_s: float, ytdlp_dir: Path, input_text: str | None = None
@@ -464,11 +489,13 @@ class SyncRunner:
         input_text: str | None = None,
         *,
         ytdlp_dir: Path | None = None,
+        owner: object | None = None,
     ) -> ChildEnd:
         """Start a child, copy its stderr, wait up to ``timeout_s`` seconds, and tell how it ended.
 
         The child gets ``input_text`` on its standard input, and yt-dlp from ``ytdlp_dir``, by default from the yt-dlp
-        folder of the runner. ``stop`` terminates the child. A child that does not end in time gets killed.
+        folder of the runner. ``stop`` terminates the child, and ``kill_short_child(owner)`` kills it. A child that does
+        not end in time gets killed.
         """
         env = child_environment(ytdlp_dir or self._ytdlp_dir, self._database_url)
         with self._state_lock:
@@ -481,6 +508,7 @@ class SyncRunner:
                 LOG.error("%s: cannot start the child process: %s", name, error)
                 return ChildEnd(start_error=str(error))
             self._child = child
+            self._child_owner = owner
 
         tail: collections.deque[str] = collections.deque(maxlen=ERROR_TAIL_LINES)
         reader = None
@@ -504,6 +532,7 @@ class SyncRunner:
         finally:
             with self._state_lock:
                 self._child = None
+                self._child_owner = None
                 stopped = self._stopping
         if reader is not None:
             # A grandchild can keep the pipe open after the child ends, so the wait has a limit.

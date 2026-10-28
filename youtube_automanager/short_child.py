@@ -156,14 +156,21 @@ def work_with_account(settings: Settings, what: str, work: AccountWork) -> int:
 
 
 def run_child(
-    runner: SyncRunner, command: Sequence[str], noun: str, timeout_s: float, input_text: str | None = None
+    runner: SyncRunner,
+    command: Sequence[str],
+    noun: str,
+    timeout_s: float,
+    input_text: str | None = None,
+    *,
+    owner: object | None = None,
 ) -> str:
     """Run a child of ``runner`` and wait for it. Return the last line of its stderr after a success.
 
     ``noun`` names the work in the error texts, for example "refresh". ``input_text`` goes to the standard input of
-    the child. Raise a ``ChildError`` when the child fails. The caller reads its result from the returned line.
+    the child. With ``owner``, ``runner.kill_short_child(owner)`` kills the child, and the call raises ``ChildFailed``.
+    Raise a ``ChildError`` when the child fails. The caller reads its result from the returned line.
     """
-    end = runner.run_short_child(command, f"The {noun}", timeout_s, input_text)
+    end = runner.run_short_child(command, f"The {noun}", timeout_s, input_text, owner=owner)
     if end is None:
         raise ChildBusy(BUSY_TEXT)
     return child_result(end, noun, timeout_s)

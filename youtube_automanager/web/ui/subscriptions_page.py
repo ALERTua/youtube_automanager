@@ -12,7 +12,13 @@ Each row of both tables has a checkbox, and a click on the row outside the link 
 too. One selection covers both tables, by the channel id. The page keeps it until the page loads again, so it stays when
 the filters or the search change. The checkbox of a header selects each row of its table, also the rows on the other
 pages, and a second click clears them. When the selection is not empty, a bar above the tables shows its size, the
-number of selected stored channels that the filters hide, the bulk "Add to rule" and "Clear selection".
+number of selected stored channels that the filters hide, the bulk Subscribe and Unsubscribe, the bulk "Add to rule"
+and "Clear selection".
+
+The bulk Subscribe and Unsubscribe change each selected channel that the action fits, by its stored state, in one child
+process. Unsubscribe asks first, with the shortest time that the request budget allows. While the batch runs, the bar
+shows how many channels have the new stored state, and Stop kills the child. After the batch, the channels that changed
+leave the selection, and a list under the stored table names each other channel.
 
 The search, the subscribe and the unsubscribe run in child processes of the runner, and the page waits for them in a
 thread, so the web process never imports yt-dlp. While a run, a session check or another child holds the sync lock,
@@ -21,6 +27,7 @@ they start nothing, and the page says so. The page reads and writes the database
 
 import asyncio
 import logging
+import math
 from collections import defaultdict
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
@@ -35,17 +42,21 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.channel_actions import (
     AddOutcome,
+    BatchChannel,
     ChannelForRule,
     FoundChannel,
+    OutcomeKind,
     add_channel_to_rule,
     add_channels_to_rule,
+    change_subscriptions_in_child,
     find_channels_in_child,
     subscribe_in_child,
     unsubscribe_in_child,
 )
 from youtube_automanager.db.models import Channel, Rule, RuleChannel, SeenVideo
 from youtube_automanager.i18n import N_, _
-from youtube_automanager.short_child import ChildError
+from youtube_automanager.pacing import minimum_seconds
+from youtube_automanager.short_child import ChildError, ChildFailed
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text, child_pause, show_pause_end
 from youtube_automanager.web.ui.common import (
@@ -103,6 +114,11 @@ SELECTED_ROW_CLASS = "(row) => (row.selected ? 'selected' : '')"
 # The bar of the selection stays at the top of the window, below the header, while the page scrolls. The fixed header
 # of the layout is 74 px high, measured in Firefox.
 SELECTION_BAR_STYLE = "position: sticky; top: 74px; z-index: 10"
+# How often the page reads the stored states of the channels of a running batch for its counter. The child gives no
+# progress before it ends, but it stores each confirmed change at once.
+BATCH_POLL_SECONDS = 2.0
+# A batch sends a session check and a read of the page config before its changes, one request each.
+BATCH_EXTRA_REQUESTS = 2
 
 type OnRowEvent = Callable[[GenericEventArguments], Any]
 
@@ -192,6 +208,34 @@ class ShownChannel:
         return None if self.found is None else self.found.thumbnail_url
 
 
+@dataclass(eq=False)
+class Batch:
+    """A subscribe or an unsubscribe of many channels that the page runs in one child process.
+
+    The batch is also the owner of its child, so Stop kills only the child of this batch. ``done`` is the number of its
+    channels whose stored state was the target at the last read.
+    """
+
+    subscribe: bool
+    channels: list[ShownChannel]
+    done: int = 0
+    # True after Stop killed the child.
+    killed: bool = False
+
+    @property
+    def channel_ids(self) -> list[str]:
+        return [channel.channel_id for channel in self.channels]
+
+
+@dataclass(frozen=True)
+class UnchangedChannel:
+    """A channel of the last batch that did not change. ``cause`` is the answer of YouTube, or None when the page does
+    not know it."""
+
+    title: str
+    cause: str | None = None
+
+
 @dataclass
 class PageState:
     lists: StoredLists
@@ -206,6 +250,15 @@ class PageState:
     # The selected channels of both tables, by their id, in the order of the selection. Each one keeps the channel of
     # its row, so a found channel that is not stored can go into a rule after a new search.
     selected: dict[str, ShownChannel] = field(default_factory=dict)
+    # The batch of this page that runs. The page starts no other subscription change while it runs.
+    batch: Batch | None = None
+    # The channels of the last batch that did not change, in the order of the batch.
+    unchanged: list[UnchangedChannel] = field(default_factory=list)
+
+    @property
+    def changing(self) -> bool:
+        """True while a subscription change of this page runs, for one channel or for a batch."""
+        return self.working_id is not None or self.batch is not None
 
 
 def read_lists(sessions: sessionmaker[Session]) -> StoredLists:
@@ -285,6 +338,71 @@ def add_many_to_rule(
     )
 
 
+def read_states(sessions: sessionmaker[Session], channel_ids: Collection[str]) -> dict[str, bool]:
+    """Read the stored subscription state of each of ``channel_ids`` that has a ``channel`` row. This call blocks."""
+    query = select(Channel.channel_id, Channel.is_subscribed).where(Channel.channel_id.in_(list(channel_ids)))
+    with sessions() as session:
+        return {channel_id: subscribed for channel_id, subscribed in session.execute(query)}
+
+
+def changed_channels(states: dict[str, bool], channel_ids: Collection[str], subscribe: bool) -> set[str]:
+    """Return each of ``channel_ids`` whose stored state in ``states`` is the target. A channel without a row is not
+    subscribed."""
+    return {channel_id for channel_id in channel_ids if states.get(channel_id, False) is subscribe}
+
+
+def fitting_channels(lists: StoredLists, channel_ids: Collection[str], subscribe: bool) -> list[str]:
+    """Return each of ``channel_ids`` whose stored state is not the target, in their order.
+
+    A subscribe fits each channel that is not subscribed, also a found channel that is not stored, and an unsubscribe
+    fits each subscribed channel.
+    """
+    subscribed = {channel.channel_id for channel in lists.channels if channel.is_subscribed}
+    return [channel_id for channel_id in channel_ids if (channel_id in subscribed) is not subscribe]
+
+
+def duration_text(seconds: float) -> str:
+    """Return ``seconds``, rounded up to a whole second, as minutes and seconds."""
+    minutes, rest = divmod(math.ceil(seconds), 60)
+    if not minutes:
+        # Translators: a time in seconds.
+        return _("{seconds} s").format(seconds=rest)
+    if not rest:
+        # Translators: a time in minutes.
+        return _("{minutes} min").format(minutes=minutes)
+    # Translators: a time in minutes and seconds.
+    return _("{minutes} min {seconds} s").format(minutes=minutes, seconds=rest)
+
+
+def batch_time_text(count: int) -> str:
+    """Return the shortest time of a batch of ``count`` channels that the request budget allows."""
+    duration = duration_text(minimum_seconds(count + BATCH_EXTRA_REQUESTS))
+    # Translators: {duration} is a time, for example "2 min 12 s".
+    return _(
+        "This takes at least {duration}, because the service sends the requests with cookies at a limited rate."
+    ).format(duration=duration)
+
+
+def progress_text(subscribe: bool, done: int, total: int) -> str:
+    """Return the counter of a running batch: the channels with the new stored state, of each channel of the batch."""
+    if subscribe:
+        return _("Subscribing: {done} of {total}").format(done=done, total=total)
+    return _("Unsubscribing: {done} of {total}").format(done=done, total=total)
+
+
+def batch_result_text(subscribe: bool, done: int, total: int) -> str:
+    if subscribe:
+        return _("Subscribed to channels: {done} of {total}.").format(done=done, total=total)
+    return _("Unsubscribed from channels: {done} of {total}.").format(done=done, total=total)
+
+
+def unchanged_text(channel: UnchangedChannel) -> str:
+    if channel.cause is None:
+        return channel.title
+    # Translators: {cause} is the English answer of YouTube.
+    return _("{title}: YouTube did not confirm the change: {cause}").format(title=channel.title, cause=channel.cause)
+
+
 def filter_channels(lists: StoredLists, channel_filter: ChannelFilter) -> list[ChannelRecord]:
     """Return the stored channels that match the filter, in the order of the list."""
     needle = channel_filter.text.strip().casefold().removeprefix("@")
@@ -322,11 +440,14 @@ def format_count(count: int | None) -> str:
     return "" if count is None else f"{count:,}"
 
 
-def action_fields(channel_id: str, title: str, is_subscribed: bool, lists: StoredLists, working_id: str | None) -> dict:
+def action_fields(
+    channel_id: str, title: str, is_subscribed: bool, lists: StoredLists, working_id: str | None, locked: bool = False
+) -> dict:
     """Return the fields of a row that the cell of the actions reads.
 
     The texts with the title of the channel or the name of a rule come as values of the row, so no such text runs in
-    the template. ``working_id`` is the channel whose subscription change runs, or None.
+    the template. ``working_id`` is the channel whose subscription change runs, or None. ``locked`` turns the
+    subscription buttons off also without such a channel, for example while a batch runs.
     """
     return {
         "is_subscribed": is_subscribed,
@@ -345,11 +466,13 @@ def action_fields(channel_id: str, title: str, is_subscribed: bool, lists: Store
             for rule in lists.rules
         ],
         "working": channel_id == working_id,
-        "locked": working_id is not None,
+        "locked": locked or working_id is not None,
     }
 
 
-def channel_row(channel: ChannelRecord, lists: StoredLists, working_id: str | None, selected: bool = False) -> dict:
+def channel_row(
+    channel: ChannelRecord, lists: StoredLists, working_id: str | None, selected: bool = False, locked: bool = False
+) -> dict:
     return {
         "id": channel.channel_id,
         "selected": selected,
@@ -361,11 +484,13 @@ def channel_row(channel: ChannelRecord, lists: StoredLists, working_id: str | No
         "rules": ", ".join(rule_label(rule) for rule in lists.rules_of(channel.channel_id)),
         # The day as ``YYYY-MM-DD``, or an empty text. The browser shows the day in its own form, see ``day_column``.
         "last_video": "" if channel.last_video is None else channel.last_video.isoformat(),
-        **action_fields(channel.channel_id, channel.title, channel.is_subscribed, lists, working_id),
+        **action_fields(channel.channel_id, channel.title, channel.is_subscribed, lists, working_id, locked),
     }
 
 
-def found_row(found: FoundChannel, lists: StoredLists, working_id: str | None, selected: bool = False) -> dict:
+def found_row(
+    found: FoundChannel, lists: StoredLists, working_id: str | None, selected: bool = False, locked: bool = False
+) -> dict:
     stored = lists.channel(found.channel_id)
     is_subscribed = stored is not None and stored.is_subscribed
     return {
@@ -377,7 +502,7 @@ def found_row(found: FoundChannel, lists: StoredLists, working_id: str | None, s
         "handle": found.handle or "",
         "subscribers": format_count(found.subscriber_count),
         "subscribed": _(YES_NO[is_subscribed]),
-        **action_fields(found.channel_id, found.title, is_subscribed, lists, working_id),
+        **action_fields(found.channel_id, found.title, is_subscribed, lists, working_id, locked),
     }
 
 
@@ -658,7 +783,8 @@ async def subscriptions_page(services: Services) -> None:
         shown_ids = [channel.channel_id for channel in channels]
         channels_table.columns = channel_columns(shown_ids, state.selected)
         channels_table.rows = [
-            channel_row(channel, lists, state.working_id, channel.channel_id in state.selected) for channel in channels
+            channel_row(channel, lists, state.working_id, channel.channel_id in state.selected, state.changing)
+            for channel in channels
         ]
         summary.set_text(_("{shown} of {total} channels").format(shown=len(channels), total=len(lists.channels)))
         # A filter that matches nothing and a service without stored channels need different next steps.
@@ -674,12 +800,32 @@ async def subscriptions_page(services: Services) -> None:
         count = len(state.selected)
         stored_ids = {channel.channel_id for channel in state.lists.channels}
         hidden = sum(channel_id in stored_ids and channel_id not in shown_ids for channel_id in state.selected)
-        selection_bar.set_visibility(count > 0)
+        selection_bar.set_visibility(count > 0 or state.batch is not None)
         selected_label.set_text(_("Selected: {count}").format(count=count))
         # Translators: {count} is the number of the selected stored channels that the filters do not show.
         hidden_label.set_text(_("({count} hidden by the filters)").format(count=hidden))
         hidden_label.set_visibility(hidden > 0)
+        to_subscribe = len(fitting_channels(state.lists, state.selected, subscribe=True))
+        to_unsubscribe = len(fitting_channels(state.lists, state.selected, subscribe=False))
+        # Translators: {count} is the number of the selected channels that the account is not subscribed to.
+        bulk_subscribe_button.set_text(_("Subscribe ({count})").format(count=to_subscribe))
+        bulk_subscribe_button.set_enabled(to_subscribe > 0 and not state.changing)
+        # Translators: {count} is the number of the selected channels that the account is subscribed to.
+        bulk_unsubscribe_button.set_text(_("Unsubscribe ({count})").format(count=to_unsubscribe))
+        bulk_unsubscribe_button.set_enabled(to_unsubscribe > 0 and not state.changing)
+        show_progress()
         bulk_menu_view.refresh()
+        bulk_unsubscribe_view.refresh()
+
+    def show_progress() -> None:
+        """Show the counter and Stop of the running batch instead of the actions of the bar, or the actions again."""
+        batch = state.batch
+        selection_actions.set_visibility(batch is None)
+        progress_row.set_visibility(batch is not None)
+        if batch is None:
+            return
+        progress_label.set_text(progress_text(batch.subscribe, batch.done, len(batch.channels)))
+        stop_button.set_enabled(not batch.killed)
 
     def show_found() -> None:
         if found_table is None or state.found is None:
@@ -687,7 +833,7 @@ async def subscriptions_page(services: Services) -> None:
         found_ids = [channel.channel_id for channel in state.found]
         found_table.columns = found_columns(found_ids, state.selected)
         found_table.rows = [
-            found_row(channel, state.lists, state.working_id, channel.channel_id in state.selected)
+            found_row(channel, state.lists, state.working_id, channel.channel_id in state.selected, state.changing)
             for channel in state.found
         ]
 
@@ -762,10 +908,12 @@ async def subscriptions_page(services: Services) -> None:
 
     async def change_subscription(channel_id: str, subscribe: bool) -> None:
         channel = shown_channel(channel_id)
-        if channel is None or state.working_id is not None:
+        if channel is None or state.changing:
             return
         state.working_id = channel_id
         result_label.ok("")
+        state.unchanged = []
+        unchanged_view.refresh()
         show_rows()
         try:
             if subscribe:
@@ -787,6 +935,102 @@ async def subscriptions_page(services: Services) -> None:
         finally:
             state.working_id = None
         await reload()
+
+    async def change_selected(subscribe: bool) -> None:
+        """Subscribe or unsubscribe each selected channel that the action fits, in one child process.
+
+        While the child runs, the timer of the batch counts the channels with the new stored state. After the child,
+        each channel that changed leaves the selection, and the list under the table names each other channel.
+        """
+        if state.changing:
+            return
+        # The stored row of a channel is newer than the row that the selection keeps.
+        channels = [
+            shown_channel(channel_id) or state.selected[channel_id]
+            for channel_id in fitting_channels(state.lists, state.selected, subscribe)
+        ]
+        bulk_unsubscribe_menu.close()
+        if not channels:
+            return
+        batch = Batch(subscribe, channels)
+        state.batch = batch
+        state.unchanged = []
+        result_label.ok("")
+        unchanged_view.refresh()
+        show_rows()
+        batch_timer.active = True
+        ids = batch.channel_ids
+        error: ChildError | None = None
+        causes: dict[str, str | None] = {}
+        try:
+            result = await asyncio.to_thread(
+                change_subscriptions_in_child,
+                services.runner,
+                subscribe,
+                [BatchChannel(channel.channel_id, channel.title) for channel in channels],
+                owner=batch,
+            )
+        except ChildError as caught:
+            error = caught
+            # A batch that stopped gives the page no outcomes, but each change that YouTube confirmed is stored.
+            changed = changed_channels(await asyncio.to_thread(read_states, services.sessions, ids), ids, subscribe)
+        else:
+            changed = {outcome.channel_id for outcome in result.outcomes if outcome.outcome is OutcomeKind.CONFIRMED}
+            causes = {outcome.channel_id: outcome.cause for outcome in result.outcomes}
+        finally:
+            batch_timer.active = False
+            state.batch = None
+        for channel_id in changed:
+            state.selected.pop(channel_id, None)
+        state.unchanged = [
+            UnchangedChannel(channel.title, causes.get(channel.channel_id))
+            for channel in channels
+            if channel.channel_id not in changed
+        ]
+        counts = batch_result_text(subscribe, len(changed), len(ids))
+        if error is None:
+            if state.unchanged:
+                result_label.problem(counts)
+                notify_in(client, counts, type="warning")
+            else:
+                result_label.ok(counts)
+                notify_in(client, counts, type="positive")
+        elif batch.killed and isinstance(error, ChildFailed):
+            text = _("The change of the channels stopped at your request. {result}").format(result=counts)
+            result_label.ok(text)
+            notify_in(client, text)
+        else:
+            LOG.warning("The subscription batch stopped: %s", error)
+            text = f"{counts} {child_error_text(error)}"
+            result_label.problem(text)
+            show_pause_end(result_label, text, child_pause(error))
+        unchanged_view.refresh()
+        await reload()
+
+    async def subscribe_selected() -> None:
+        await change_selected(subscribe=True)
+
+    async def unsubscribe_selected() -> None:
+        await change_selected(subscribe=False)
+
+    async def count_batch() -> None:
+        """Count the channels of the running batch whose stored state is the target now."""
+        batch = state.batch
+        if batch is None:
+            return
+        states = await asyncio.to_thread(read_states, services.sessions, batch.channel_ids)
+        if state.batch is not batch:
+            return
+        batch.done = len(changed_channels(states, batch.channel_ids, batch.subscribe))
+        show_progress()
+
+    def stop_batch() -> None:
+        """Kill the child of the running batch at once. The changes that YouTube confirmed before stay stored."""
+        batch = state.batch
+        if batch is None or batch.killed:
+            return
+        batch.killed = services.runner.kill_short_child(batch)
+        show_progress()
 
     async def subscribe_row(event: GenericEventArguments) -> None:
         await change_subscription(str(event.args), subscribe=True)
@@ -865,28 +1109,85 @@ async def subscriptions_page(services: Services) -> None:
     def bulk_menu_view() -> None:
         rule_menu(state.lists, state.selected, add_selected_to_rule)
 
+    @ui.refreshable
+    def bulk_unsubscribe_view() -> None:
+        """The question before the bulk Unsubscribe, with the note about the rules and the shortest time."""
+        channel_ids = fitting_channels(state.lists, state.selected, subscribe=False)
+        with ui.card().props("flat").classes("q-pa-md column q-gutter-sm").style("max-width: 24rem"):
+            # Translators: {count} is the number of the channels.
+            question = _("Unsubscribe the YouTube account from these channels: {count}?")
+            ui.label(question.format(count=len(channel_ids))).classes("text-subtitle1").mark(
+                "bulk-unsubscribe-question"
+            )
+            read = sum(bool(state.lists.rules_of(channel_id)) for channel_id in channel_ids)
+            if read:
+                # Translators: {count} is the number of the channels that a rule reads.
+                note = _("Rules read some of these channels: {count}. The rules still read their videos.")
+                ui.label(note.format(count=read)).mark("bulk-unsubscribe-note")
+            ui.label(batch_time_text(len(channel_ids))).mark("bulk-unsubscribe-time")
+            with ui.row().classes("q-gutter-sm"):
+                ui.button(_("Unsubscribe"), icon="remove_circle", color="negative", on_click=unsubscribe_selected).mark(
+                    "bulk-unsubscribe-confirm"
+                )
+                ui.button(_("Cancel"), on_click=bulk_unsubscribe_menu.close).props("flat").mark(
+                    "bulk-unsubscribe-cancel"
+                )
+
+    @ui.refreshable
+    def unchanged_view() -> None:
+        """The list of the channels of the last batch that did not change."""
+        if not state.unchanged:
+            return
+        with ui.column().classes("gap-1").mark("batch-unchanged"):
+            ui.label(_("These channels did not change:")).classes("text-weight-bold").mark("batch-unchanged-title")
+            for channel in state.unchanged:
+                ui.label(unchanged_text(channel)).mark("batch-unchanged-channel")
+
     ui.label(_("Subscriptions")).classes("text-h5")
     await account_lists(services, on_refreshed=reload)
 
-    # The bar of the selection, above both tables. U5 puts Subscribe and Unsubscribe of the selected channels here.
+    # The bar of the selection, above both tables. While a batch runs, its counter and Stop replace the actions.
     with (
         ui.row()
         .classes("w-full items-center gap-4 q-px-md q-py-sm bg-primary text-white rounded-borders shadow-2")
         .style(SELECTION_BAR_STYLE)
         .mark("selection-bar") as selection_bar
     ):
-        selected_label = ui.label().classes("text-weight-bold").mark("selected-count")
-        hidden_label = ui.label().mark("selected-hidden")
-        with (
-            ui.button(_("Add to rule"), icon="playlist_add", color="white")
-            .props("outline no-caps icon-right=arrow_drop_down")
-            .mark("bulk-add"),
-            ui.menu().mark("bulk-add-menu") as bulk_menu,
-        ):
-            bulk_menu_view()
-        ui.button(_("Clear selection"), icon="close", color="white", on_click=clear_selection).props(
-            "outline no-caps"
-        ).mark("clear-selection")
+        with ui.row().classes("items-center gap-4").mark("selection-actions") as selection_actions:
+            selected_label = ui.label().classes("text-weight-bold").mark("selected-count")
+            hidden_label = ui.label().mark("selected-hidden")
+            bulk_subscribe_button = (
+                ui.button(icon="add_circle", color="white", on_click=subscribe_selected)
+                .props("outline no-caps")
+                .mark("bulk-subscribe")
+            )
+            with (
+                ui.button(icon="remove_circle", color="white")
+                .props("outline no-caps")
+                .mark("bulk-unsubscribe") as bulk_unsubscribe_button,
+                ui.menu().mark("bulk-unsubscribe-menu") as bulk_unsubscribe_menu,
+            ):
+                bulk_unsubscribe_view()
+            with (
+                ui.button(_("Add to rule"), icon="playlist_add", color="white")
+                .props("outline no-caps icon-right=arrow_drop_down")
+                .mark("bulk-add"),
+                ui.menu().mark("bulk-add-menu") as bulk_menu,
+            ):
+                bulk_menu_view()
+            ui.button(_("Clear selection"), icon="close", color="white", on_click=clear_selection).props(
+                "outline no-caps"
+            ).mark("clear-selection")
+        # The counter of a running batch. A progress bar of the request budget can join this row.
+        with ui.row().classes("items-center gap-4").mark("batch-progress") as progress_row:
+            ui.spinner(color="white")
+            progress_label = ui.label().classes("text-weight-bold").mark("batch-progress-text")
+            stop_button = (
+                ui.button(_("Stop"), icon="stop", color="white", on_click=stop_batch)
+                .props("outline no-caps")
+                .mark("batch-stop")
+            )
+    batch_timer = ui.timer(BATCH_POLL_SECONDS, count_batch, active=False, immediate=False)
 
     with ui.card().classes("w-full"):
         ui.label(_("Find a channel on YouTube")).classes("text-h6")
@@ -944,4 +1245,5 @@ async def subscriptions_page(services: Services) -> None:
         add_keyboard_sort(channels_table, CHANNELS_SCOPE)
         add_selection(channels_table, CHANNELS_SCOPE, toggle_channel, toggle_shown_channels)
         add_actions(channels_table, CHANNELS_SCOPE, subscribe_row, unsubscribe_row, add_row_to_rule)
+        unchanged_view()
     show_channels()

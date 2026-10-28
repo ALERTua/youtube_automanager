@@ -411,14 +411,15 @@ def batch_timeout_seconds(channels: int) -> float:
 
 
 def change_subscriptions_in_child(
-    runner: SyncRunner, subscribe: bool, channels: Sequence[BatchChannel]
+    runner: SyncRunner, subscribe: bool, channels: Sequence[BatchChannel], *, owner: object | None = None
 ) -> SubscriptionBatchResult:
     """Subscribe or unsubscribe many channels in one child process of ``runner``, and wait for it.
 
     Each channel goes once, in the order of ``channels``. Return the outcome of each channel. An empty list starts no
     child. Raise a ``ChildError`` when the batch stops: ``ChildPaused`` at a pause of the requests, ``ChildLoggedOut``
     when the session died, and ``ChildYouTubeError`` after the last retry of a failed connection, or at another error.
-    The changes that YouTube confirmed before the stop are stored, and the log of the service gets the outcomes so far.
+    With ``owner``, ``runner.kill_short_child(owner)`` kills the child, and the call raises ``ChildFailed``. The changes
+    that YouTube confirmed before the stop are stored, and the log of the service gets the outcomes so far.
     """
     unique = _unique_channels(channels)
     if not unique:
@@ -429,6 +430,7 @@ def change_subscriptions_in_child(
         "subscription batch",
         batch_timeout_seconds(len(unique)),
         batch_request(subscribe, unique),
+        owner=owner,
     )
     result = _batch_result_from_line(line, subscribe, [channel.channel_id for channel in unique])
     if result is None:
