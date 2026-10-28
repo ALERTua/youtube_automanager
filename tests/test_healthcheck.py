@@ -56,7 +56,9 @@ def test_main_gives_the_exit_code_of_the_answer(settings_env, status, code):
         server.server_close()
 
 
-def test_main_gives_1_when_nothing_listens(settings_env, capsys):
+def test_main_gives_1_when_nothing_listens(settings_env, capsys, monkeypatch):
+    # Windows refuses a connection to a closed local port only after about 2 s, and Linux at once.
+    monkeypatch.setattr(healthcheck, "TIMEOUT_SECONDS", 0.5)
     server = serve(200)
     port = server.server_address[1]
     server.shutdown()
