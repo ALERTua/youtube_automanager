@@ -1751,3 +1751,18 @@ async def test_each_text_of_the_preview_and_the_apply_goes_through_the_translati
         and not time_text.fullmatch(text)
     ]
     assert untranslated == []
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    [
+        # 7 adds are 14 requests, and the bucket lets them go with only the shortest pauses, so no time shows.
+        (7, "The apply runs. The History page shows the apply as a run."),
+        # 23 adds are 46 requests: (46 - 15) * 4 s is 124 s, so 2 min or more.
+        (23, "The apply runs and takes 2 min or more. The History page shows the apply as a run."),
+        # 100 adds are 200 requests: (200 - 15) * 4 s is 740 s, so 12 min or more.
+        (100, "The apply runs and takes 12 min or more. The History page shows the apply as a run."),
+    ],
+)
+def test_the_status_of_an_apply_gives_the_shortest_time_that_the_budget_allows(count, expected):
+    assert rule_editor.apply_status(count) == expected

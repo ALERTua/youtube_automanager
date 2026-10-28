@@ -28,6 +28,7 @@ from nicegui import context, ui
 from youtube_automanager.db.models import RunStatus
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, READ_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.i18n import N_, _
+from youtube_automanager.pacing import minimum_seconds
 from youtube_automanager.rule_actions import AppliedRun, preview_in_child, read_applied
 from youtube_automanager.rules_store import (
     MAX_DAYS_BACK,
@@ -107,8 +108,8 @@ CLEAR_SEARCH_HANDLER = "() => {{ runMethod({id}, 'updateInputValue', ['', true])
 
 # The table of a preview shows this many videos on one page.
 PREVIEW_PAGE_SIZE = 20
-# Each add sends two requests with the cookies of the account, 5 s or more apart.
-SECONDS_PER_ADD = 10
+# Each add sends two requests with the cookies of the account, and each request takes a token of the budget.
+REQUESTS_PER_ADD = 2
 
 # The label and the color of each result of a preview, in the order of the counts.
 MARKS = {
@@ -161,6 +162,19 @@ def copy_name(name: str) -> str:
     """Return the name of a copy of the rule with the name ``name``."""
     # Translators: the name of a new rule that the button Duplicate makes from the rule {name}.
     return _("Copy of {name}").format(name=name)
+
+
+def apply_status(count: int) -> str:
+    """Return the status text of an apply of ``count`` adds, with the shortest time that the request budget allows.
+
+    An apply shorter than one minute gets no time, because the answers of YouTube make up most of it.
+    """
+    minutes = math.floor(minimum_seconds(count * REQUESTS_PER_ADD) / 60)
+    if minutes < 1:
+        return _("The apply runs. The History page shows the apply as a run.")
+    return _("The apply runs and takes {minutes} min or more. The History page shows the apply as a run.").format(
+        minutes=minutes
+    )
 
 
 def channel_options(stored: Stored, extra: list[str]) -> dict[str, str]:
@@ -1221,12 +1235,7 @@ class ApplyDialog:
         count = min(self.preview.count(Mark.WILL_ADD), APPLY_LIMIT)
         self._set_working(True)
         self.add_button.set_visibility(False)
-        self._status(
-            _(
-                "The apply runs. Each add takes {seconds} s or more, so the apply takes {minutes} min or more. The "
-                "History page shows the apply as a run."
-            ).format(seconds=SECONDS_PER_ADD, minutes=math.ceil(count * SECONDS_PER_ADD / 60))
-        )
+        self._status(apply_status(count))
         try:
             run_id = await self.services.applies.start(rule.id, since)
         except ChildError as error:

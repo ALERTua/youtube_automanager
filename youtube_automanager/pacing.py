@@ -60,6 +60,18 @@ def refilled_tokens(tokens: float, refilled_at: datetime.datetime, now: datetime
     return min(float(BUCKET_SIZE), tokens + elapsed_s / REFILL_S)
 
 
+def minimum_seconds(requests: int) -> float:
+    """Return the shortest time from the first to the last of ``requests`` requests that the budget allows.
+
+    A full bucket lets the first ``BUCKET_SIZE`` requests go without a wait for a token, and each later request waits
+    for a new one. Each request after the first also waits for the shortest pause. The answers and the requests of the
+    other processes only make the time longer.
+    """
+    if requests < 2:
+        return 0.0
+    return max((requests - BUCKET_SIZE) * REFILL_S, (requests - 1) * (PAUSE_S - PAUSE_JITTER_S))
+
+
 def _locked_row(session: Session, clock: Clock) -> tuple[RequestBudgetState, datetime.datetime]:
     """Read and lock the row of the budget, and return it with the current time. Make the row with a full bucket at
     the first use.
