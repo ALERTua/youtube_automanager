@@ -25,9 +25,11 @@ from test_run_events import service_with_pages
 from test_sync import LONG, A, B, entry, feed_video, upcoming
 from ui_support import (
     WAIT_SECONDS,
+    Held,
     PatientUser,
     channel_remove_button,
     click_on,
+    collect_deleted_elements,
     element_of,
     elements_of,
     eventually,
@@ -1299,6 +1301,61 @@ async def test_an_apply_whose_claim_fails_tells_the_user_and_can_start_again(
     assert "the database is gone" in caplog.text
     # The error of the click is the subject of this test.
     caplog.clear()
+
+
+async def end_an_apply_while_its_end_is_read(user, sessions, settings, youtube, children, monkeypatch) -> Held:
+    """Start an apply, let its child end, and hold the read of the end in the dialog. Return the held read."""
+    await preview_a_saved_rule(user, sessions, settings, youtube)
+    read = Held(rule_editor.read_applied)
+    monkeypatch.setattr(rule_editor, "read_applied", read)
+    gate = await start_held_apply(user, children)
+    gate.release()
+    await eventually(read.entered.is_set, "The read of the end of the apply")
+    return read
+
+
+async def test_the_end_of_an_apply_shows_when_the_user_left_the_editor_while_the_dialog_reads_the_end(
+    user, sessions, settings, account_copy, youtube, children, monkeypatch
+):
+    read = await end_an_apply_while_its_end_is_read(user, sessions, settings, youtube, children, monkeypatch)
+
+    # Cancel leaves the editor, which deletes the dialog and its elements. The tab stays, so the message shows there.
+    user.find(marker="apply-close").click()
+    await eventually(lambda: not element_of(user, "apply-dialog").value, "The close of the dialog")
+    user.find(marker="editor-cancel").click()
+    await eventually(lambda: not elements_of(user, "editor"), "The close of the editor")
+    await collect_deleted_elements()
+    read.gate.set()
+
+    (run,) = runs(sessions)
+    await user.should_see(f"The apply is done. Videos added: 1. The History page shows it as run {run.id}.")
+
+
+async def test_the_end_of_an_apply_that_ends_after_its_tab_closed_logs_no_error(
+    user, sessions, settings, account_copy, youtube, children, monkeypatch
+):
+    read = await end_an_apply_while_its_end_is_read(user, sessions, settings, youtube, children, monkeypatch)
+    finished = threading.Event()
+    real_read = read.function
+
+    def read_and_tell(*arguments):
+        try:
+            return real_read(*arguments)
+        finally:
+            finished.set()
+
+    read.function = read_and_tell
+
+    messages = len(user.notify.messages)
+    # The tab closes while the dialog reads the end: NiceGUI deletes the client and each element of the page.
+    user.client.delete()
+    await collect_deleted_elements()
+    read.gate.set()
+
+    # The fixture no_logged_errors fails the test when the dialog tells the end to the deleted page.
+    assert await asyncio.to_thread(finished.wait, WAIT_SECONDS)
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert len(user.notify.messages) == messages
 
 
 async def test_an_apply_whose_run_is_gone_at_its_end_says_so(

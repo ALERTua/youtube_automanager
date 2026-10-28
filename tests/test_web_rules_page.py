@@ -22,9 +22,11 @@ from test_live_rules import (
 )
 from test_sync import entry, feed_video
 from ui_support import (
+    Held,
     channel_remove_button,
     click_on,
     client_of,
+    collect_deleted_elements,
     element_of,
     elements_of,
     eventually,
@@ -1275,6 +1277,51 @@ async def test_a_delete_while_a_run_holds_the_sync_lock_keeps_the_rule(user, ses
 
     assert stored_rule(sessions, 1) is not None
     await user.should_see(marker="editor")
+
+
+async def test_the_result_of_a_save_shows_when_the_user_left_the_editor_while_the_save_runs(
+    user, sessions, account_copy, monkeypatch
+):
+    save_rule = Held(rule_editor.save_rule)
+    monkeypatch.setattr(rule_editor, "save_rule", save_rule)
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-name", "Saved late")
+    set_value(user, "rule-playlist", "WL")
+    user.find(marker="editor-save").click()
+    await eventually(save_rule.entered.is_set, "The start of the save")
+
+    # Cancel stays on while the save runs, and Discard leaves the editor, which deletes the Save button of the click.
+    user.find(marker="editor-cancel").click()
+    await discard(user)
+    await collect_deleted_elements()
+    save_rule.gate.set()
+
+    await user.should_see("The rule is saved.")
+    assert [stored.name for stored in stored_rules(sessions)] == ["Saved late"]
+
+
+async def test_the_result_of_a_delete_shows_when_the_user_left_the_editor_while_the_delete_runs(
+    user, sessions, account_copy, monkeypatch
+):
+    store(sessions, rule(1, "Doomed"), rule(2, "Stays"))
+    delete_rule = Held(rule_editor.delete_rule)
+    monkeypatch.setattr(rule_editor, "delete_rule", delete_rule)
+    await user.open("/rules")
+    await open_editor(user, 1)
+    user.find(marker="editor-delete").click()
+    await eventually(lambda: elements_of(user, "delete-confirm"), "The question")
+    user.find(marker="delete-confirm").click()
+    await eventually(delete_rule.entered.is_set, "The start of the delete")
+
+    # The form has no changes, so Cancel leaves the editor at once and deletes the Delete button of the click.
+    user.find(marker="editor-cancel").click()
+    await eventually(lambda: not elements_of(user, "editor"), "The close of the editor")
+    await collect_deleted_elements()
+    delete_rule.gate.set()
+
+    await user.should_see("The rule is deleted.")
+    assert stored_rule(sessions, 1) is None
 
 
 async def test_a_save_of_a_rule_that_is_gone_creates_nothing(user, sessions, account_copy):
