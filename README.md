@@ -78,19 +78,33 @@ After you upload the cookies, take these first steps:
 
 The default schedule runs once a day at 18:00 in the time zone of `TZ`.
 
-**Dashboard.** The Dashboard shows four cards: the cookie session, the scheduler, the last run and yt-dlp. The scheduler card has the button "Run now", and the title of the last run card opens that run in the History page. If the cookies are dead or expire soon, the cookie card links to the Settings page with "Upload new cookies".
+### Dashboard
 
-**Rules.** The Rules page lists the rules in a table, with the filters "Search", "Playlist" and "State" and the button "New rule". The switch in the column "Enabled" turns a rule on or off at once. A click on a column header sorts the table. The column "Added 7 d / 30 d" counts the videos that each rule added in the last 7 and the last 30 days. The filters stay in the address, for example `/rules?state=enabled`, so a reload or a shared link shows the same rules. While an apply runs, a line above the table names its rule and shows the count of added videos.
+The Dashboard shows four cards: the cookie session, the scheduler, the last run and yt-dlp. The scheduler card has the button "Run now", and the title of the last run card opens that run in the History page. If the cookies are dead or expire soon, the cookie card links to the Settings page with "Upload new cookies".
 
-**The rule editor.** A click on a row, or on its button "Edit", opens the rule editor. The editor is a page of its own: `/rules/new` for a new rule and `/rules/<id>` for a saved rule. It has the name, the channels, the target playlist, the condition, the switch "No Shorts", the field "Also add videos from", the switch "Enabled" and the button "Preview". A new rule starts with "Also add videos from" set to 7 days back, so the next run also adds the matching videos of these days. Clear the field to add only new videos. A saved rule also has the buttons "Duplicate", "Apply to videos from a date" and "Delete". The button "Duplicate" opens a new rule with a copy of the saved rule. The copy has the name "Copy of" and the old name. If the form has changes that you did not save, the editor asks "Discard the changes?" before you leave it, and the browser warns before a reload. The Back button of the browser leaves without this question.
+### Rules
 
-**Subscriptions.** The Subscriptions page has the button "Refresh lists", a search for channels on YouTube, and a table of the stored channels with the filters "Name or @handle", "Subscription" and "Rules". The table shows the lists of the last refresh, so a load of the page sends no request to YouTube. A click on a channel opens a dialog, where you subscribe or unsubscribe, add the channel to a rule, or open the channel on YouTube.
+The Rules page lists the rules in a table, with the filters "Search", "Playlist" and "State" and the button "New rule". The switch in the column "Enabled" turns a rule on or off at once. A click on a column header sorts the table. The column "Added 7 d / 30 d" counts the videos that each rule added in the last 7 and the last 30 days. The filters stay in the address, for example `/rules?state=enabled`, so a reload or a shared link shows the same rules. While an apply runs, a line above the table names its rule and shows the count of added videos.
 
-**Scheduler.** The Scheduler page shows the state of the schedule and its next 5 runs, with the buttons "Pause", "Resume" and "Run now". The form "Schedule" sets a "Cron" or an "Interval" schedule, the time zone and the switch "Enabled". The form shows the next runs of the edited schedule before you click "Save".
+### The rule editor
 
-**History.** The History page lists the runs, 50 on a page and the newest first, with the filters "Status", "Trigger", "From" and "To". A click on a run opens its actions below the table, one line for each decision about a video, and the filter "Action" narrows them. The filters, the page and the open run stay in the address, for example `/history?run=12`. A run that is in progress shows its new counts and actions as they come. The card "Retention" sets how many days the service keeps the history.
+A click on a row, or on its button "Edit", opens the rule editor. The editor is a page of its own: `/rules/new` for a new rule and `/rules/<id>` for a saved rule. It has the name, the channels, the target playlist, the condition, the switch "No Shorts", the field "Also add videos from", the switch "Enabled" and the button "Preview". A new rule starts with "Also add videos from" set to 7 days back, so the next run also adds the matching videos of these days. Clear the field to add only new videos. A saved rule also has the buttons "Duplicate", "Apply to videos from a date" and "Delete". The button "Duplicate" opens a new rule with a copy of the saved rule. The copy has the name "Copy of" and the old name. If the form has changes that you did not save, the editor asks "Discard the changes?" before you leave it, and the browser warns before a reload. The Back button of the browser leaves without this question.
 
-**Settings.** The Settings page has a block for each of these: the YouTube cookies, the cookie rotation, the processing mode, yt-dlp and the notification targets. A change of the rotation, the processing mode or the yt-dlp settings waits until you click "Save" at the bottom right of the page, and "Discard" drops it. The cookie upload, the session check, "Update now" and the buttons of the notification targets act at once.
+### Subscriptions
+
+The Subscriptions page has the button "Refresh lists", a search for channels on YouTube, and a table of the stored channels with the filters "Name or @handle", "Subscription" and "Rules". The table shows the lists of the last refresh, so a load of the page sends no request to YouTube. A click on a channel opens a dialog, where you subscribe or unsubscribe, add the channel to a rule, or open the channel on YouTube.
+
+### Scheduler
+
+The Scheduler page shows the state of the schedule and its next 5 runs, with the buttons "Pause", "Resume" and "Run now". The form "Schedule" sets a "Cron" or an "Interval" schedule, the time zone and the switch "Enabled". The form shows the next runs of the edited schedule before you click "Save".
+
+### History
+
+The History page lists the runs, 50 on a page and the newest first, with the filters "Status", "Trigger", "From" and "To". A click on a run opens its actions below the table, one line for each decision about a video, and the filter "Action" narrows them. The filters, the page and the open run stay in the address, for example `/history?run=12`. A run that is in progress shows its new counts and actions as they come. The card "Retention" sets how many days the service keeps the history.
+
+### Settings
+
+The Settings page has a block for each of these: the YouTube cookies, the cookie rotation, the processing mode, yt-dlp and the notification targets. A change of the rotation, the processing mode or the yt-dlp settings waits until you click "Save" at the bottom right of the page, and "Discard" drops it. The cookie upload, the session check, "Update now" and the buttons of the notification targets act at once.
 
 ## REST API
 
