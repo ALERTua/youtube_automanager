@@ -48,6 +48,7 @@ from youtube_automanager.runner import RunAlreadyActive
 from youtube_automanager.short_child import ChildError
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text, child_pause, show_pause_end
+from youtube_automanager.web.ui.budget_progress import BulkProgress
 from youtube_automanager.web.ui.common import (
     busy,
     column,
@@ -177,6 +178,11 @@ def apply_status(count: int) -> str:
     return _("The apply runs and takes {minutes} min or more. The History page shows the apply as a run.").format(
         minutes=minutes
     )
+
+
+def apply_progress_text(added: int, count: int) -> str:
+    """Return the title of the progress block of an apply: the added videos of the videos that the apply plans."""
+    return _("Adding videos: {added} of {count}").format(added=added, count=count)
 
 
 def channel_options(stored: Stored, extra: list[str]) -> dict[str, str]:
@@ -1083,7 +1089,8 @@ class ApplyDialog:
     The apply reads and evaluates the videos again, because the preview can be old. It is a run of the history with
     the trigger ``rule_apply``, and it adds at most APPLY_LIMIT videos, the oldest first. The apply runs in a task of
     the service, so it goes on after the close of the dialog, of the editor and of the tab. The dialog follows its run
-    through the events of the runs.
+    through the events of the runs. While the apply runs, ``BulkProgress`` shows the added count of the videos that the
+    apply plans, with the state of the request budget.
     """
 
     def __init__(self, services: Services) -> None:
@@ -1151,6 +1158,7 @@ class ApplyDialog:
             self.limit_label.set_visibility(False)
             self.status_label = ui.label().classes("whitespace-pre-wrap").mark("apply-status")
             self.status_label.set_visibility(False)
+            self.progress = BulkProgress(self.services.sessions, self.services.settings.tz)
             with ui.row().classes("w-full items-center gap-2"):
                 self.add_button = ui.button(icon="playlist_add", on_click=self.run_apply).mark("apply-run")
                 self.add_button.set_visibility(False)
@@ -1243,9 +1251,18 @@ class ApplyDialog:
             self.add_button.set_visibility(True)
             raise
         self.run_id, self.count, self.ended = run_id, count, False
+        self._show_progress(0)
         # The preview is old now, so a new apply needs a new preview.
         self.preview, self.preview_day = None, None
         self.limit_label.set_visibility(False)
+
+    def _show_progress(self, added: int) -> None:
+        """Show ``added`` of the planned count in the progress block, with the rest of the requests."""
+        title, rest = apply_progress_text(added, self.count), max(0, self.count - added) * REQUESTS_PER_ADD
+        if self.progress.running:
+            self.progress.update(title, added, self.count, rest)
+        else:
+            self.progress.start(title, added, self.count, rest)
 
     def _on_progress(self, run_id: int, added: int, seen: int, actions: tuple[ActionItem, ...]) -> None:
         if run_id != self.run_id or self.ended:
@@ -1255,6 +1272,7 @@ class ApplyDialog:
                 "The apply runs. Videos added: {added} of {count}. The History page shows the apply as run {run}."
             ).format(added=added, count=self.count, run=run_id)
         )
+        self._show_progress(added)
 
     async def _on_finished(self, run_id: int, status: RunStatus) -> None:
         if run_id == self.run_id:
@@ -1271,6 +1289,7 @@ class ApplyDialog:
         if self.ended:
             return
         self.ended = True
+        self.progress.stop()
         applied = await asyncio.to_thread(read_applied, self.services.sessions, run_id)
         self._set_working(False)
         if applied is None:

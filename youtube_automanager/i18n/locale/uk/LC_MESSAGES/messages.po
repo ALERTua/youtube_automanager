@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 23:13+0200\n"
+"POT-Creation-Date: 2026-10-28 23:36+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -23,6 +23,11 @@ msgstr ""
 #, python-brace-format
 msgid "({count} hidden by the filters)"
 msgstr "(приховано фільтрами: {count})"
+
+#. Translators: the decimal mark of a number, for example in "7.4 of 15".
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "."
+msgstr ","
 
 #: youtube_automanager/web/ui/service_settings.py
 msgid "A fixed number of the newest videos"
@@ -142,6 +147,11 @@ msgstr "Додано"
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Added 7 d / 30 d"
 msgstr "Додано за 7 дн. / 30 дн."
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Adding videos: {added} of {count}"
+msgstr "Додавання відео: {added} з {count}"
 
 #: youtube_automanager/web/ui/history_page.py
 #: youtube_automanager/web/ui/rules_page.py
@@ -827,6 +837,10 @@ msgstr "Нове правило"
 msgid "New target"
 msgstr "Новий адресат"
 
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "Next request"
+msgstr "Наступний запит"
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Next run"
 msgstr "Наступний запуск"
@@ -995,6 +1009,18 @@ msgstr "Шаблон"
 msgid "Pause"
 msgstr "Призупинити"
 
+#. Translators: {time} is the end of the pause, which the browser writes in its
+#. own form. {left} is the rest of the
+#. pause, for example "55 min left".
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "Pause of requests until {time} ({left})"
+msgstr "Пауза запитів до {time} ({left})"
+
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "Pause of the requests with cookies"
+msgstr "Пауза запитів з cookies"
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Paused"
 msgstr "Призупинено"
@@ -1058,6 +1084,10 @@ msgstr "Прибрати {channel}"
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Requests with cookies paused or resumed"
 msgstr "Запити з cookies призупинено або відновлено"
+
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "Requests without a wait"
+msgstr "Запити без чекання"
 
 #: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/ytdlp_section.py
@@ -1790,6 +1820,15 @@ msgstr ""
 msgid "The service reads the videos on YouTube. This takes up to a few minutes."
 msgstr "Сервіс читає відео на YouTube. Читання триває до кількох хвилин."
 
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid ""
+"The service sends at most one request with cookies each {seconds} s, so "
+"that YouTube does not limit the requests."
+msgstr ""
+"Сервіс надсилає не більше одного запиту з cookies кожні {seconds} с, щоб "
+"YouTube не обмежив запити."
+
 #: youtube_automanager/web/ui/settings_page.py
 #, python-brace-format
 msgid "The service stored nothing. {reason}"
@@ -2272,6 +2311,23 @@ msgstr "уже читає"
 msgid "and"
 msgstr "і"
 
+#. Translators: {time} is a time in minutes and seconds, for example "0:27".
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "at least ~{time} left"
+msgstr "лишилось щонайменше ~{time}"
+
+#. Translators: the next request goes without a wait.
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "at once"
+msgstr "одразу"
+
+#. Translators: the wait for the next request, for example "in 1.6 s".
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "in {seconds} s"
+msgstr "через {seconds} с"
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "is"
 msgstr "є"
@@ -2428,11 +2484,21 @@ msgstr "{field} {operator} {value}"
 msgid "{field}: {error}"
 msgstr "{field}: {error}"
 
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "{hours} h {minutes} min left"
+msgstr "ще {hours} год {minutes} хв"
+
 #. Translators: a time in minutes.
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "{minutes} min"
 msgstr "{minutes} хв"
+
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "{minutes} min left"
+msgstr "ще {minutes} хв"
 
 #. Translators: a time in minutes and seconds.
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -2482,6 +2548,13 @@ msgstr "Канали: {shown} із {total}"
 #, python-brace-format
 msgid "{title}: YouTube did not confirm the change: {cause}"
 msgstr "{title}: YouTube не підтвердив зміну: {cause}"
+
+#. Translators: the requests that can go without a wait, of the most that the
+#. budget holds, for example "7.4 of 15".
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "{tokens} of {size}"
+msgstr "{tokens} з {size}"
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 #, python-brace-format

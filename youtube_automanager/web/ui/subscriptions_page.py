@@ -17,8 +17,9 @@ and "Clear selection".
 
 The bulk Subscribe and Unsubscribe change each selected channel that the action fits, by its stored state, in one child
 process. Unsubscribe asks first, with the shortest time that the request budget allows. While the batch runs, the bar
-shows how many channels have the new stored state, and Stop kills the child. After the batch, the channels that changed
-leave the selection, and a list under the stored table names each other channel.
+shows how many channels have the new stored state with the state of the request budget (``BulkProgress``), and Stop
+kills the child. After the batch, the channels that changed leave the selection, and a list under the stored table names
+each other channel.
 
 The search, the subscribe and the unsubscribe run in child processes of the runner, and the page waits for them in a
 thread, so the web process never imports yt-dlp. While a run, a session check or another child holds the sync lock,
@@ -59,6 +60,7 @@ from youtube_automanager.pacing import minimum_seconds
 from youtube_automanager.short_child import ChildError, ChildFailed
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists, child_error_text, child_pause, show_pause_end
+from youtube_automanager.web.ui.budget_progress import BulkProgress
 from youtube_automanager.web.ui.common import (
     FOCUS_KEY_ATTRIBUTE,
     ROW_BUTTON_COLUMN,
@@ -818,13 +820,24 @@ async def subscriptions_page(services: Services) -> None:
         bulk_unsubscribe_view.refresh()
 
     def show_progress() -> None:
-        """Show the counter and Stop of the running batch instead of the actions of the bar, or the actions again."""
+        """Show the progress block and Stop of the running batch instead of the actions of the bar, or the actions
+        again.
+
+        The rest of a batch sends one change request for each channel that did not change yet. The session check and
+        the read of the page config before the first change are not in the rest, because the page cannot tell when
+        they end.
+        """
         batch = state.batch
         selection_actions.set_visibility(batch is None)
-        progress_row.set_visibility(batch is not None)
         if batch is None:
+            progress.stop()
             return
-        progress_label.set_text(progress_text(batch.subscribe, batch.done, len(batch.channels)))
+        total = len(batch.channels)
+        title = progress_text(batch.subscribe, batch.done, total)
+        if progress.running:
+            progress.update(title, batch.done, total, total - batch.done)
+        else:
+            progress.start(title, batch.done, total, total - batch.done)
         stop_button.set_enabled(not batch.killed)
 
     def show_found() -> None:
@@ -1178,10 +1191,9 @@ async def subscriptions_page(services: Services) -> None:
             ui.button(_("Clear selection"), icon="close", color="white", on_click=clear_selection).props(
                 "outline no-caps"
             ).mark("clear-selection")
-        # The counter of a running batch. A progress bar of the request budget can join this row.
-        with ui.row().classes("items-center gap-4").mark("batch-progress") as progress_row:
-            ui.spinner(color="white")
-            progress_label = ui.label().classes("text-weight-bold").mark("batch-progress-text")
+        # The counter of a running batch, with the state of the request budget.
+        progress = BulkProgress(services.sessions, services.settings.tz, color="white")
+        with progress.actions:
             stop_button = (
                 ui.button(_("Stop"), icon="stop", color="white", on_click=stop_batch)
                 .props("outline no-caps")

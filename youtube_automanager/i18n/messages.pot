@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 23:13+0200\n"
+"POT-Creation-Date: 2026-10-28 23:36+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -22,6 +22,11 @@ msgstr ""
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "({count} hidden by the filters)"
+msgstr ""
+
+#. Translators: the decimal mark of a number, for example in "7.4 of 15".
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "."
 msgstr ""
 
 #: youtube_automanager/web/ui/service_settings.py
@@ -126,6 +131,11 @@ msgstr ""
 #. and in the last 30 days.
 #: youtube_automanager/web/ui/rules_page.py
 msgid "Added 7 d / 30 d"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Adding videos: {added} of {count}"
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -776,6 +786,10 @@ msgstr ""
 msgid "New target"
 msgstr ""
 
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "Next request"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Next run"
 msgstr ""
@@ -938,6 +952,18 @@ msgstr ""
 msgid "Pause"
 msgstr ""
 
+#. Translators: {time} is the end of the pause, which the browser writes in its
+#. own form. {left} is the rest of the
+#. pause, for example "55 min left".
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "Pause of requests until {time} ({left})"
+msgstr ""
+
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "Pause of the requests with cookies"
+msgstr ""
+
 #: youtube_automanager/web/ui/dashboard.py
 msgid "Paused"
 msgstr ""
@@ -1000,6 +1026,10 @@ msgstr ""
 
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Requests with cookies paused or resumed"
+msgstr ""
+
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "Requests without a wait"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
@@ -1660,6 +1690,13 @@ msgstr ""
 msgid "The service reads the videos on YouTube. This takes up to a few minutes."
 msgstr ""
 
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid ""
+"The service sends at most one request with cookies each {seconds} s, so "
+"that YouTube does not limit the requests."
+msgstr ""
+
 #: youtube_automanager/web/ui/settings_page.py
 #, python-brace-format
 msgid "The service stored nothing. {reason}"
@@ -2110,6 +2147,23 @@ msgstr ""
 msgid "and"
 msgstr ""
 
+#. Translators: {time} is a time in minutes and seconds, for example "0:27".
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "at least ~{time} left"
+msgstr ""
+
+#. Translators: the next request goes without a wait.
+#: youtube_automanager/web/ui/budget_progress.py
+msgid "at once"
+msgstr ""
+
+#. Translators: the wait for the next request, for example "in 1.6 s".
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "in {seconds} s"
+msgstr ""
+
 #: youtube_automanager/web/ui/rule_form.py
 msgid "is"
 msgstr ""
@@ -2266,10 +2320,20 @@ msgstr ""
 msgid "{field}: {error}"
 msgstr ""
 
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "{hours} h {minutes} min left"
+msgstr ""
+
 #. Translators: a time in minutes.
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "{minutes} min"
+msgstr ""
+
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "{minutes} min left"
 msgstr ""
 
 #. Translators: a time in minutes and seconds.
@@ -2319,6 +2383,13 @@ msgstr ""
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "{title}: YouTube did not confirm the change: {cause}"
+msgstr ""
+
+#. Translators: the requests that can go without a wait, of the most that the
+#. budget holds, for example "7.4 of 15".
+#: youtube_automanager/web/ui/budget_progress.py
+#, python-brace-format
+msgid "{tokens} of {size}"
 msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
