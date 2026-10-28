@@ -1,4 +1,5 @@
 import datetime
+import gc
 import io
 import itertools
 import logging
@@ -388,6 +389,16 @@ ON_POSTGRES = pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "sqlite_only: the test assumes SQLite, so its PostgreSQL case is not collected")
+
+
+def pytest_collection_finish(session):
+    """Move each object that exists after the collection into the permanent generation of the garbage collector.
+
+    The reset of NiceGUI runs ``gc.collect`` twice for each test of the pages, and NiceGUI searches ``gc.get_objects``
+    at each start of the service. Both then skip the modules and the collected tests, which never become garbage.
+    """
+    gc.collect()
+    gc.freeze()
 
 
 def pytest_collection_modifyitems(config, items):
