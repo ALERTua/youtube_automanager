@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-27 20:42+0200\n"
+"POT-Creation-Date: 2026-10-28 14:35+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -975,6 +975,13 @@ msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "Remove the group"
+msgstr ""
+
+#. Translators: the name of the button that removes the channel {channel} from
+#. the rule.
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Remove {channel}"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py

@@ -19,6 +19,7 @@ from nicegui.functions.notify import notify
 from nicegui.testing import User
 from nicegui.testing.general import nicegui_reset_globals
 from nicegui.testing.user_notify import UserNotify
+from nicegui.testing.user_interaction import UserInteraction
 from sqlalchemy import make_url
 
 from youtube_automanager.web.app import create_app
@@ -219,6 +220,21 @@ def set_value(user: User, marker: str, value) -> None:
     element = element_of(user, marker)
     with client_of(user):
         element.value = value
+
+
+def channel_remove_button(user: User, channel_id: str) -> ui.element:
+    """Return the remove button of the channel ``channel_id`` in the list of the rule editor."""
+    (button,) = [
+        element
+        for element in elements_of(user, "rule-channel-remove")
+        if element.props["data-channel-remove"] == channel_id
+    ]
+    return button
+
+
+def click_on(user: User, element: ui.element) -> None:
+    """Click only ``element``, as the user does, when other elements have the same marker."""
+    UserInteraction(user, {element}, None).click()
 
 
 def text_of(user: User, marker: str) -> str:
