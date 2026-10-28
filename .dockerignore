@@ -3,6 +3,8 @@
 !pyproject.toml
 !uv.lock
 !youtube_automanager/
+# Docker already includes the catalogs through the line above, but the linter droast (DF077) needs this line.
+!youtube_automanager/i18n/locale/
 # The image compiles the code and the catalogs itself, so the bytecode and a .mo file of the host stay out.
 **/__pycache__/
 **/*.mo
