@@ -369,12 +369,6 @@ class PreviewView:
             label = ui.label(text).classes("text-negative whitespace-pre-wrap").mark(f"{self.marker}-failed")
             show_pause_end(label, text, pause)
 
-    def note(self, text: str) -> None:
-        """Show only a note, for example that the result is old."""
-        self.container.clear()
-        with self.container:
-            ui.label(text).classes("text-warning").mark(f"{self.marker}-note")
-
     def show(self, preview: Preview, notes: Sequence[tuple[str, str]] = (), footer: str | None = None) -> None:
         """Show the result. Each of ``notes`` is a text and the end of its marker, and it comes before the list, for
         example that the rule is off. ``footer`` comes under the list."""
@@ -461,8 +455,6 @@ class RuleEditor:
         self.root: Group | None = from_tree(self.source.condition) if self.source else Group()
         self.saving = False
         self.previewing = False
-        # The number of the changes of the form. A preview that ends after a change shows no old result.
-        self.changes = 0
         # True after the user cleared the field Also add videos from. A change of the rule then does not fill it again.
         self.catch_up_cleared = False
 
@@ -558,7 +550,7 @@ class RuleEditor:
             current = None
         if (current is None and not self.catch_up_cleared) or (current is not None and first < current):
             self.catch_up_input.set_value(first.isoformat())
-        self._preview_old()
+        self._form_changed()
 
     def _catch_up_changed(self) -> None:
         """Take a change of the field Also add videos from. An empty field after a change is a clear by the user.
@@ -566,13 +558,6 @@ class RuleEditor:
         The fill of ``_rule_changed`` always gives a day, so it never counts as a clear. A day in the field ends the clear.
         """
         self.catch_up_cleared = not (self.catch_up_input.value or "").strip()
-        self._preview_old()
-
-    def _preview_old(self) -> None:
-        """Remove the preview after a change of the form, because the preview no longer shows what a save stores."""
-        self.changes += 1
-        if not self.previewing:
-            self.preview_view.clear()
         self._form_changed()
 
     def _form_changed(self) -> None:
@@ -620,7 +605,7 @@ class RuleEditor:
                 label=_("Target playlist"),
                 value=rule.playlist_id if rule else None,
                 with_input=True,
-                on_change=self._preview_old,
+                on_change=self._form_changed,
             )
             .props("outlined dense")
             .classes("w-full")
@@ -677,7 +662,7 @@ class RuleEditor:
         rule = self.rule
         source = self.source
         self.enabled_switch = ui.switch(
-            _("Enabled"), value=source.enabled if source else True, on_change=self._preview_old
+            _("Enabled"), value=source.enabled if source else True, on_change=self._form_changed
         ).mark("rule-enabled")
         ui.label(
             _(
@@ -981,7 +966,6 @@ class RuleEditor:
         except ValueError as error:
             self.preview_view.failed(str(error))
             return
-        changes = self.changes
         self.previewing = True
         with busy(self.preview_button):
             self.preview_view.working()
@@ -998,9 +982,6 @@ class RuleEditor:
                 self.previewing = False
         # The user can close the editor while the child runs.
         if self.preview_button.is_deleted:
-            return
-        if changes != self.changes:
-            self.preview_view.note(_("The form changed while the preview ran. Press Preview again."))
             return
         if isinstance(result, str):
             self.preview_view.failed(result, pause)

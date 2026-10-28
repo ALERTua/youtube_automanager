@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 22:40+0200\n"
+"POT-Creation-Date: 2026-10-28 22:56+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -1473,12 +1473,6 @@ msgstr "Файл більший за 1 МБ, тому це не файл cookies
 #: youtube_automanager/web/ui/settings_page.py
 msgid "The file is no text in UTF-8, so it is no cookie file."
 msgstr "Файл не є текстом у UTF-8, тому це не файл cookies."
-
-#: youtube_automanager/web/ui/rule_editor.py
-msgid "The form changed while the preview ran. Press Preview again."
-msgstr ""
-"Форма змінилася, поки йшов перегляд. Натисніть «Попередній перегляд» ще "
-"раз."
 
 #: youtube_automanager/web/ui/rule_editor.py
 msgid "The history keeps the actions of the rule."

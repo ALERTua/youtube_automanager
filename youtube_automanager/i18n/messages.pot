@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 22:40+0200\n"
+"POT-Creation-Date: 2026-10-28 22:56+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1390,10 +1390,6 @@ msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
 msgid "The file is no text in UTF-8, so it is no cookie file."
-msgstr ""
-
-#: youtube_automanager/web/ui/rule_editor.py
-msgid "The form changed while the preview ran. Press Preview again."
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
