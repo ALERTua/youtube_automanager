@@ -29,6 +29,7 @@ from ui_support import (
     element_of,
     elements_of,
     eventually,
+    moment_of,
     running_service,
     set_value,
     store,
@@ -520,6 +521,17 @@ async def test_an_export_whose_login_cookies_expired_names_the_date_and_starts_n
     assert "text-negative" in element_of(user, "cookie-result").classes
     assert fake_starter.calls == []
     assert account(sessions) is None
+    # The browser puts its form of the expiry time into the translated sentence.
+    assert moment_of(user, "cookie-result") == ("2026-01-01T02:00:00+02:00", "Europe/Kyiv")
+    assert element_of(user, "cookie-result").props["data-time-template"] == (
+        "The login cookies of this export expired on {time}. Export new cookies and upload them."
+    )
+
+    # The next result has no time, so the browser leaves its text as it is.
+    await paste(user, "")
+    await result_is(user, "The text is empty. Upload the cookie file, or paste its text.")
+    assert moment_of(user, "cookie-result") == (None, None)
+    assert "data-time-template" not in element_of(user, "cookie-result").props
 
 
 async def test_a_text_without_some_login_cookies_names_them_and_stores_nothing(user, sessions, fake_starter):
@@ -660,12 +672,15 @@ async def test_the_session_check_button_checks_the_stored_cookies(user, sessions
     await user.open("/settings")
     assert (text_of(user, "session-state"), text_of(user, "session-checked")) == ("Unknown", "Never")
     assert text_of(user, "session-expiry") == "2027-01-01 00:00 EET"
+    assert moment_of(user, "session-checked") == (None, None)
+    assert moment_of(user, "session-expiry") == ("2027-01-01T00:00:00+02:00", "Europe/Kyiv")
 
     user.find(marker="check-session").click()
 
     await result_is(user, "YouTube does not accept the cookies. Export new cookies and upload them.")
     await eventually(lambda: text_of(user, "session-state") == "Dead", "The new state")
     assert text_of(user, "session-checked") == "2026-10-12 18:30 EEST"
+    assert moment_of(user, "session-checked") == ("2026-10-12T18:30:00+03:00", "Europe/Kyiv")
     assert commands(fake_starter) == [["check-session"]]
 
 

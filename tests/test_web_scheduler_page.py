@@ -12,6 +12,7 @@ from nicegui.elements.mixins.text_element import TextElement
 from sqlalchemy import select
 from ui_support import (
     element_of,
+    elements_of,
     eventually,
     running_service,
     set_value,
@@ -109,6 +110,12 @@ async def test_page_shows_the_state_the_next_runs_and_the_form_of_the_default_sc
     assert text_of(user, "scheduler-state") == "Running"
     assert text_of(user, "timezone") == "Europe/Kyiv"
     assert texts_of(user, "next-run") == next_evenings(5)
+    # The browser shows each next run in its own form, in the time zone of the schedule.
+    moments = [(element.props["data-time"], element.props["data-zone"]) for element in elements_of(user, "next-run")]
+    assert [
+        (datetime.fromisoformat(moment).astimezone(ZoneInfo(zone)).strftime(TIME_FORMAT), zone)
+        for moment, zone in moments
+    ] == [(text, "Europe/Kyiv") for text in next_evenings(5)]
     assert element_of(user, "schedule-kind").value is ScheduleKind.CRON
     assert element_of(user, "schedule-cron").value == "0 18 * * *"
     assert element_of(user, "schedule-timezone").value == "Europe/Kyiv"

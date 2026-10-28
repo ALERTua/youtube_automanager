@@ -6,8 +6,10 @@ import shutil
 import threading
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import fastapi.dependencies.models as fastapi_models
 import httpx
@@ -24,6 +26,7 @@ from sqlalchemy import make_url
 
 from youtube_automanager.web.app import create_app
 from youtube_automanager.web.ui import mount_ui
+from youtube_automanager.web.ui.common import TIME_FORMAT
 
 WAIT_SECONDS = 10
 # The pause of NiceGUI between two tries of ``User.should_see``.
@@ -240,6 +243,21 @@ def click_on(user: User, element: ui.element) -> None:
 def text_of(user: User, marker: str) -> str:
     (element,) = user.find(marker=marker).elements
     return element.text
+
+
+def moment_of(user: User, marker: str) -> tuple[str | None, str | None]:
+    """Return the moment and the time zone that the element with ``marker`` gives the browser to format, see
+    ``show_time``. Both are None for an element that shows no moment."""
+    props = element_of(user, marker).props
+    return props.get("data-time"), props.get("data-zone")
+
+
+def moment_text_of(user: User, marker: str) -> str:
+    """Return the moment that the element with ``marker`` gives the browser, in the form of the service and in its time
+    zone. A test compares it with the text of the server, the text before the browser formats it."""
+    moment, zone = moment_of(user, marker)
+    assert moment is not None and zone is not None, f"The element {marker} shows no moment"
+    return datetime.fromisoformat(moment).astimezone(ZoneInfo(zone)).strftime(TIME_FORMAT)
 
 
 def texts_of(user: User, marker: str) -> list[str]:

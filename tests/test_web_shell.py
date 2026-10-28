@@ -24,7 +24,7 @@ from ui_support import (
 from youtube_automanager.db.models import RunTrigger
 from youtube_automanager.i18n import N_
 from youtube_automanager.web.ui import dashboard, history_page, layout
-from youtube_automanager.web.ui.common import accessibility_script
+from youtube_automanager.web.ui.common import accessibility_script, time_script
 from youtube_automanager.web.ui.live_runs import RunFollower
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
@@ -54,6 +54,7 @@ async def test_a_click_in_the_drawer_changes_the_content_in_the_same_client(user
 
     # The frame and its head are made once: a change of the content adds nothing to the head.
     assert client.head_html.count(accessibility_script()) == 1
+    assert client.head_html.count(time_script()) == 1
     assert len(elements_of(user, "navigation")) == 1
 
 

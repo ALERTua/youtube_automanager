@@ -41,13 +41,15 @@ from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import account_lists
 from youtube_automanager.web.ui.common import (
     FOCUS_KEY_ATTRIBUTE,
+    ZONE_FIELD,
     actions_column,
     add_keyboard_sort,
     add_row_button,
     column,
     focus_when_drawn,
-    format_time,
+    iso_time,
     row_button_selector,
+    time_column,
 )
 from youtube_automanager.web.ui.layout import (
     AddressFollower,
@@ -143,7 +145,8 @@ def rule_row(rule: RuleRecord, stored: Stored, zone: ZoneInfo, added: AddedCount
         "condition": describe(rule.condition, titles),
         "added": f"{added.week} / {added.month}",
         "added_month": added.month,
-        "updated": format_time(rule.updated_at, zone),
+        "updated": iso_time(rule.updated_at, zone),
+        ZONE_FIELD: zone.key,
     }
 
 
@@ -157,7 +160,7 @@ def rule_columns() -> list[dict]:
         column("condition", _("Condition"), sortable=True),
         # Translators: the column of the videos that the rule added in the last 7 days and in the last 30 days.
         {**column("added", _("Added 7 d / 30 d"), sortable=True), ":sort": ADDED_SORT},
-        column("updated", _("Changed"), sortable=True),
+        time_column("updated", _("Changed"), sortable=True),
         actions_column(),
     ]
 

@@ -23,9 +23,9 @@ from youtube_automanager.web.ui.common import (
     RUN_TRIGGERS,
     SESSION_STATES,
     focus_key,
-    format_time,
     run_now_button,
     stored_timezone,
+    time_label,
 )
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.live_runs import RunFollower
@@ -151,6 +151,14 @@ def _value(text: str, marker: str) -> None:
     ui.label(text).mark(marker)
 
 
+def _time_value(value: datetime | None, zone: ZoneInfo, empty_text: str, marker: str) -> None:
+    """Add the moment ``value`` in the form of the browser, or ``empty_text`` when there is none."""
+    if value is None:
+        _value(empty_text, marker)
+    else:
+        time_label(value, zone).mark(marker)
+
+
 def _badge(label_and_color: tuple[str, str], marker: str) -> None:
     label, color = label_and_color
     ui.badge(_(label), color=color).mark(marker)
@@ -167,10 +175,10 @@ def _session_card(session: CookieSession | None, zone: ZoneInfo) -> None:
                 _badge(SESSION_STATES[session.state], "session-state")
             with _field(_("Last check")):
                 checked = session.last_checked_at
-                _value(format_time(checked, zone) if checked else _("Never"), "session-checked")
+                _time_value(checked, zone, _("Never"), "session-checked")
             with _field(_("Earliest cookie expiry")):
                 expiry = session.earliest_cookie_expiry
-                _value(format_time(expiry, zone) if expiry else _("No expiry date"), "session-expiry")
+                _time_value(expiry, zone, _("No expiry date"), "session-expiry")
         if session.state in NEEDS_NEW_COOKIES:
             focus_key(ui.link(_("Upload new cookies"), SETTINGS_PATH), COOKIES_FOCUS_KEY).mark("cookies-link")
 
@@ -182,7 +190,7 @@ def _scheduler_card(services: Services, state: SchedulerState, next_run_at: date
             with _field(_("State")):
                 _badge(SCHEDULER_STATES[state], "scheduler-state")
             with _field(_("Next run")):
-                _value(format_time(next_run_at, zone) if next_run_at else _("No run is planned"), "next-run")
+                _time_value(next_run_at, zone, _("No run is planned"), "next-run")
             with _field(_("Time zone")):
                 _value(zone.key, "timezone")
         focus_key(run_now_button(services, "dashboard-run-now"), RUN_NOW_FOCUS_KEY)
@@ -199,7 +207,7 @@ def _last_run_card(last_run: LastRun | None, zone: ZoneInfo) -> None:
         focus_key(link, LAST_RUN_FOCUS_KEY)
         with ui.grid(columns="auto 1fr").classes("gap-x-4 gap-y-1 items-center"):
             with _field(_("Started")):
-                _value(format_time(last_run.started_at, zone), "run-started")
+                time_label(last_run.started_at, zone).mark("run-started")
             with _field(_("Status")):
                 _badge(RUN_STATUSES[last_run.status], "run-status")
             with _field(_("Trigger")):

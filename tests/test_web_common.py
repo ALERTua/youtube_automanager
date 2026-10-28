@@ -11,15 +11,20 @@ from youtube_automanager.db.models import Schedule, ScheduleKind
 from youtube_automanager.i18n import N_
 from youtube_automanager.web.ui import layout
 from youtube_automanager.web.ui.common import (
+    DAY_CELL_FORMAT,
+    TIME_CELL_FORMAT,
+    TIME_CELL_SORT,
     ResultLabel,
     actions_column,
     add_row_button,
     busy,
     column,
     confirm,
+    day_column,
     focus_when_drawn,
     format_time,
     icon_button,
+    iso_time,
     keyboard_sort_template,
     named,
     notify_in,
@@ -27,10 +32,16 @@ from youtube_automanager.web.ui.common import (
     row_button_selector,
     row_button_template,
     set_loading,
+    show_time,
     stored_timezone,
+    time_column,
+    time_script,
 )
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
+
+
+KYIV = ZoneInfo("Europe/Kyiv")
 
 
 class HelperPages:
@@ -66,6 +77,9 @@ def helper_pages(nicegui_globals, monkeypatch):
         label = ResultLabel().mark("result")
         ui.button("Problem", on_click=lambda: label.problem("It failed")).mark("result-problem")
         ui.button("Ok", on_click=lambda: label.ok("It worked")).mark("result-ok")
+        ui.button(
+            "Time", on_click=lambda: show_time(label, datetime(2026, 10, 1, 12, 0, tzinfo=UTC), KYIV, "Since {time}.")
+        ).mark("result-time")
 
     @layout.register_page("/busy", label=N_("Busy"), icon="help")
     async def busy_page(services):
@@ -122,6 +136,99 @@ def test_time_shows_in_the_zone_with_its_name():
     moment = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 
     assert format_time(moment, ZoneInfo("Europe/Kyiv")) == "2026-10-01 15:00 EEST"
+
+
+def test_the_browser_gets_a_moment_as_iso_text_with_the_offset_of_the_zone():
+    moment = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
+
+    assert iso_time(moment, ZoneInfo("Europe/Kyiv")) == "2026-10-01T15:00:00+03:00"
+    assert iso_time(moment, ZoneInfo("America/New_York")) == "2026-10-01T08:00:00-04:00"
+
+
+def test_a_time_column_lets_the_browser_format_each_cell_and_sorts_by_the_moment():
+    assert time_column("at", "Time") == {
+        "name": "at",
+        "label": "Time",
+        "field": "at",
+        "align": "left",
+        ":format": TIME_CELL_FORMAT,
+    }
+    assert time_column("at", "Time", sortable=True) == {
+        "name": "at",
+        "label": "Time",
+        "field": "at",
+        "align": "left",
+        "sortable": True,
+        ":format": TIME_CELL_FORMAT,
+        ":sort": TIME_CELL_SORT,
+    }
+    # The cell shows the moment of the row in the form of the browser, in the time zone of the row. An empty field, for
+    # example the end of a run that still runs, stays empty, and a browser without the script shows the ISO text.
+    assert TIME_CELL_FORMAT == "(value, row) => (value && window.browserDates?.moment(value, row.zone)) || value"
+    # The sort compares the moments, not the texts, and an empty field comes first.
+    assert TIME_CELL_SORT == "(a, b) => (Date.parse(a) || 0) - (Date.parse(b) || 0)"
+
+
+def test_a_day_column_lets_the_browser_format_each_day_and_keeps_another_text():
+    assert day_column("date", "Date") == {
+        "name": "date",
+        "label": "Date",
+        "field": "date",
+        "align": "left",
+        ":format": DAY_CELL_FORMAT,
+    }
+    assert DAY_CELL_FORMAT == "(value) => window.browserDates?.day(value) || value"
+
+
+def test_the_time_script_formats_each_moment_in_the_form_of_the_browser_and_in_the_zone_of_the_service():
+    script = time_script()
+
+    # The language is the one of the browser, and the time zone is the one of the element, the zone of the service.
+    assert "new Intl.DateTimeFormat(undefined, options)" in script
+    assert (
+        "{year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: zone, "
+        "timeZoneName: 'short'}" in script
+    )
+    # A day has no time zone, so the browser formats the day of the text as a day in UTC.
+    assert r"if (!/^\d{4}-\d{2}-\d{2}$/.test(text || '')) return null;" in script
+    assert "const date = new Date(text + 'T00:00:00Z');" in script
+    assert "{year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC'}" in script
+    # A moment that the browser cannot read or format keeps the text of the server.
+    assert "if (!iso || !zone || Number.isNaN(date.getTime())) return null;" in script
+    assert "if (formatted === null) return;" in script
+    # The cells of the tables use the same functions.
+    assert "window.browserDates = {moment, day};" in script
+
+
+def test_the_time_script_writes_the_text_node_once_for_each_moment_and_text():
+    script = time_script()
+
+    # It writes the text node that Vue keeps, so the next text of the server replaces the formatted text.
+    assert "const node = [...element.childNodes].find((child) => child.nodeType === Node.TEXT_NODE);" in script
+    assert "if (node.nodeValue !== text) node.nodeValue = text;" in script
+    # A sentence gets the formatted moment in place of each {time}.
+    assert "const text = template === null ? formatted : template.split('{time}').join(formatted);" in script
+    # It leaves an element alone when its moment, its zone, its sentence and its text did not change, so its own
+    # write does not start it again.
+    assert (
+        "const source = JSON.stringify([element.getAttribute('data-time'), element.getAttribute('data-zone'), "
+        "template]);" in script
+    )
+    assert (
+        "if (element.getAttribute('data-time-source') === source && node.nodeValue === "
+        "element.getAttribute('data-time-shown')) return;" in script
+    )
+    assert "element.setAttribute('data-time-source', source);" in script
+    assert "element.setAttribute('data-time-shown', text);" in script
+    # It runs at the load and after each change of the page: a new element, a new text, a new moment. The attributes of
+    # its own writes are not in the filter.
+    assert "const showAll = () => document.querySelectorAll('[data-time]').forEach(show);" in script
+    assert (
+        "new MutationObserver(showAll).observe(document.documentElement, {childList: true, subtree: true, "
+        "characterData: true, attributes: true, attributeFilter: ['data-time', 'data-zone', 'data-time-template']});"
+        in script
+    )
+    assert "document.addEventListener('DOMContentLoaded', showAll);" in script
 
 
 def test_busy_button_loads_and_is_off_during_the_block_and_back_to_normal_after_it():
@@ -237,6 +344,25 @@ async def test_result_label_shows_a_problem_in_the_color_of_an_error_and_an_ok_w
     user.find(marker="result-ok").click()
     await eventually(lambda: label.text == "It worked", "The ok text")
     assert "text-negative" not in label.classes
+
+
+@pytest.mark.parametrize("next_result", ["result-ok", "result-problem"])
+async def test_result_label_forgets_its_time_at_the_next_result(helper_pages, user, next_result):
+    await user.open("/result")
+    label = element_of(user, "result")
+
+    user.find(marker="result-time").click()
+    await eventually(lambda: label.text == "Since 2026-10-01 15:00 EEST.", "The text with the time")
+    assert (label.props["data-time"], label.props["data-zone"], label.props["data-time-template"]) == (
+        "2026-10-01T15:00:00+03:00",
+        "Europe/Kyiv",
+        "Since {time}.",
+    )
+
+    user.find(marker=next_result).click()
+    await eventually(lambda: label.text in {"It worked", "It failed"}, "The next result")
+    # The browser leaves the next text as it is.
+    assert not {"data-time", "data-zone", "data-time-template"} & set(label.props)
 
 
 async def test_busy_button_keeps_its_name_for_a_screen_reader_while_it_loads(helper_pages, user):

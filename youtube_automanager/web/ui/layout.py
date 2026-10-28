@@ -28,7 +28,7 @@ from nicegui.client import Client
 from youtube_automanager.i18n import _, language, set_language
 from youtube_automanager.i18n.setting import NAMES, NEXT_LANGUAGE, save_language
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import accessibility_script, icon_button
+from youtube_automanager.web.ui.common import accessibility_script, icon_button, time_script
 from youtube_automanager.web.ui.theme import (
     DARK_MODE,
     ICONS,
@@ -309,6 +309,7 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
     if style := first_paint_style(theme):
         ui.add_head_html(style)
     ui.add_head_html(accessibility_script())
+    ui.add_head_html(time_script())
     ui.add_head_html(unload_warning_script())
     dark = ui.dark_mode(DARK_MODE[theme]).mark("dark-mode")
     chosen = [theme]

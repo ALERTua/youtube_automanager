@@ -17,6 +17,7 @@ from ui_support import (
     element_of,
     elements_of,
     eventually,
+    moment_of,
     running_service,
     set_value,
     store,
@@ -334,6 +335,9 @@ async def test_the_refresh_of_the_lists_shows_the_counts_the_new_time_and_the_ne
     )
     # Kyiv is at UTC+3 until 25 October 2026.
     assert text_of(user, "lists-refreshed") == "Lists refreshed: 2026-10-02 18:05 EEST"
+    # The browser puts its form of the time into the translated sentence.
+    assert moment_of(user, "lists-refreshed") == ("2026-10-02T18:05:00+03:00", "Europe/Kyiv")
+    assert element_of(user, "lists-refreshed").props["data-time-template"] == "Lists refreshed: {time}"
     assert commands(fake_starter) == [["refresh-account"]]
 
 

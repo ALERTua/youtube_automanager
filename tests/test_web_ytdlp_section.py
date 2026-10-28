@@ -8,7 +8,17 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from ui_support import element_of, elements_of, eventually, running_service, set_value, store, text_of
+from ui_support import (
+    element_of,
+    elements_of,
+    eventually,
+    moment_of,
+    moment_text_of,
+    running_service,
+    set_value,
+    store,
+    text_of,
+)
 
 from youtube_automanager.db.models import Schedule, ScheduleKind, Setting
 from youtube_automanager.runner import sync_lock_held
@@ -77,6 +87,11 @@ async def test_the_release_of_the_data_folder_and_the_last_update_show_on_the_pa
         assert text_of(user, "ytdlp-version") == OLD
         assert text_of(user, "ytdlp-source") == "Data folder"
         assert text_of(user, "ytdlp-last-at") == "2026-10-12 04:00 EEST"
+        assert moment_of(user, "ytdlp-last-at") == ("2026-10-12T04:00:00+03:00", "Europe/Kyiv")
+        assert (moment_text_of(user, "ytdlp-next"), moment_of(user, "ytdlp-next")[1]) == (
+            text_of(user, "ytdlp-next"),
+            "Europe/Kyiv",
+        )
         assert text_of(user, "ytdlp-last-result") == (
             "The update failed: uv exited with code 2: error: No solution found"
         )

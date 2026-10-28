@@ -41,6 +41,7 @@ from youtube_automanager.web.ui.common import (
     FOCUS_DELAY_MS,
     RUN_STATUSES,
     RUN_TRIGGERS,
+    ZONE_FIELD,
     actions_column,
     add_row_button,
     busy,
@@ -48,10 +49,12 @@ from youtube_automanager.web.ui.common import (
     confirm,
     focus_key,
     focus_when_drawn,
-    format_time,
     icon_button,
+    iso_time,
     row_button_selector,
     stored_timezone,
+    time_column,
+    time_label,
     whole_number,
 )
 from youtube_automanager.web.ui.dates import today_button
@@ -349,8 +352,9 @@ def run_row(run: RunRecord, zone: ZoneInfo) -> dict:
     status_label, status_color = RUN_STATUSES[run.status]
     return {
         "id": run.id,
-        "started": format_time(run.started_at, zone),
-        "finished": format_time(run.finished_at, zone) if run.finished_at else "",
+        "started": iso_time(run.started_at, zone),
+        "finished": iso_time(run.finished_at, zone) if run.finished_at else "",
+        ZONE_FIELD: zone.key,
         "status": _(status_label),
         "status_color": status_color,
         "trigger": _(RUN_TRIGGERS[run.trigger]),
@@ -363,7 +367,8 @@ def run_row(run: RunRecord, zone: ZoneInfo) -> dict:
 def action_row(action: ActionItem, zone: ZoneInfo) -> dict:
     return {
         "id": action.id,
-        "at": format_time(action.at, zone),
+        "at": iso_time(action.at, zone),
+        ZONE_FIELD: zone.key,
         "action": _(ACTION_KINDS[action.action]),
         "video": action.video_id or "",
         "video_url": f"{WATCH_URL}{quote(action.video_id, safe='')}" if action.video_id else "",
@@ -377,8 +382,8 @@ def action_row(action: ActionItem, zone: ZoneInfo) -> dict:
 def run_columns() -> list[dict]:
     return [
         column("id", _("Run")),
-        column("started", _("Started")),
-        column("finished", _("Finished")),
+        time_column("started", _("Started")),
+        time_column("finished", _("Finished")),
         column("status", _("Status")),
         column("trigger", _("Trigger")),
         column("added", _("Videos added")),
@@ -390,7 +395,7 @@ def run_columns() -> list[dict]:
 
 def action_columns() -> list[dict]:
     return [
-        column("at", _("Time")),
+        time_column("at", _("Time")),
         column("action", _("Action")),
         column("video", _("Video")),
         column("channel", _("Channel")),
@@ -660,7 +665,7 @@ async def history_page(services: Services) -> None:
                 ui.label(_("Actions of run {id}").format(id=run.id)).classes("text-h6").mark("details-title")
                 focus_key(icon_button("close", _("Close"), close_run), CLOSE_FOCUS_KEY).mark("details-close")
             with ui.row().classes("items-center gap-2"):
-                ui.label(format_time(run.started_at, zone)).mark("details-started")
+                time_label(run.started_at, zone).mark("details-started")
                 ui.badge(_(status_label), color=status_color).mark("details-status")
             if run.error_text:
                 ui.label(_("Error")).classes("text-grey-7")
