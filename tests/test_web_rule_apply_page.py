@@ -75,7 +75,7 @@ from youtube_automanager.rule_actions import apply_once, preview_once
 from youtube_automanager.runner import INTERRUPTED_ERROR, sync_lock_held
 from youtube_automanager.settings import Settings
 from youtube_automanager.web import applies as applies_module
-from youtube_automanager.web.ui import rule_editor
+from youtube_automanager.web.ui import budget_progress, rule_editor
 from youtube_automanager.web.ui.common import DAY_CELL_FORMAT, format_time, iso_time
 from youtube_automanager.youtube import public
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
@@ -1314,6 +1314,50 @@ async def test_the_dialog_and_the_banner_show_the_count_while_the_apply_runs_and
         assert not banner_shown(user)
         # The end of the run and the end of its task both reach the dialog, and the dialog tells the end once.
         assert notify.typed == [(done, "positive")]
+
+
+async def test_the_dialog_shows_the_state_of_the_request_budget_while_the_apply_runs(
+    nicegui_globals, settings, sessions, account_copy, youtube, children, monkeypatch
+):
+    monkeypatch.setattr(budget_progress, "BUDGET_POLL_SECONDS", 0.05)
+    async with service_with_pages(settings, children) as (user, _services):
+        await preview_a_saved_rule(user, sessions, settings, youtube)
+        assert not element_of(user, "bulk-progress").visible
+        # The refill lies a day after the clock, so the tokens do not grow while the test runs.
+        with sessions.begin() as session:
+            session.merge(RequestBudgetState(id=1, tokens=0.6, refilled_at=utc_now() + timedelta(days=1)))
+
+        gate = await start_held_apply(user, children, run_body=False)
+
+        (run,) = runs(sessions)
+        await eventually(lambda: element_of(user, "bulk-budget").visible, "The state of the budget")
+        assert text_of(user, "bulk-progress-title") == "Adding videos: 0 of 1"
+        assert element_of(user, "bulk-progress-bar").value == 0
+        assert text_of(user, "bulk-tokens-text") == "0.6 of 15"
+        assert text_of(user, "bulk-next-text") == "in 1.6 s"
+        # One video is left, which takes two requests, and the bucket holds 0.6 of one.
+        assert text_of(user, "bulk-progress-remaining") == "at least ~0:06 left"
+        set_added_count(sessions, run.id, 1)
+        await eventually(lambda: text_of(user, "bulk-progress-title") == "Adding videos: 1 of 1", "The added count")
+        assert element_of(user, "bulk-progress-bar").value == 1
+        assert text_of(user, "bulk-progress-remaining") == "at least ~0:00 left"
+        # A pause of the requests with cookies shows instead of the tokens, and its text has the color of an error.
+        with sessions.begin() as session:
+            row = session.get(RequestBudgetState, 1)
+            row.breaker_reason, row.breaker_level = BreakerReason.BOT_CHECK, 1
+            row.breaker_opened_at, row.breaker_until = utc_now(), utc_now() + timedelta(hours=6)
+        await eventually(lambda: element_of(user, "bulk-pause").visible, "The pause")
+        assert not element_of(user, "bulk-budget").visible
+        assert "text-negative" in element_of(user, "bulk-pause-text").classes
+        assert moment_of(user, "bulk-pause-text")[1] == ZONE
+        with sessions.begin() as session:
+            session.get(RequestBudgetState, 1).breaker_reason = None
+        await eventually(lambda: element_of(user, "bulk-budget").visible, "The end of the pause")
+
+        gate.release()
+
+        await eventually(lambda: text_of(user, "apply-status").startswith("The apply is done."), "The end")
+        assert not element_of(user, "bulk-progress").visible
 
 
 async def test_the_banner_shows_a_running_apply_after_a_new_load_of_the_page(

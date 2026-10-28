@@ -37,6 +37,7 @@ from youtube_automanager.db.models import (
     BreakerReason,
     Channel,
     Playlist,
+    RequestBudgetState,
     Rule,
     RuleChannel,
     Schedule,
@@ -52,7 +53,7 @@ from youtube_automanager.pacing import RequestBudget, minimum_seconds
 from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import SyncRunner, sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
-from youtube_automanager.web.ui import subscriptions_page
+from youtube_automanager.web.ui import budget_progress, subscriptions_page
 from youtube_automanager.web.ui.common import DAY_CELL_FORMAT, DAY_CELL_SORT, format_time, iso_time, template_text
 from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
@@ -1771,10 +1772,10 @@ def batch_line(subscribe: bool, *outcomes: tuple[str, str, str | None], stopped=
 
 def progress_of(user) -> str | None:
     """Return the counter of the running batch, or None when the bar shows its actions."""
-    if not element_of(user, "batch-progress").visible:
+    if not element_of(user, "bulk-progress").visible:
         return None
     assert not element_of(user, "selection-actions").visible
-    return element_of(user, "batch-progress-text").text
+    return element_of(user, "bulk-progress-title").text
 
 
 def unchanged_of(user) -> list[str]:
@@ -2169,6 +2170,192 @@ async def test_the_texts_of_the_bulk_subscription_change_have_a_ukrainian_transl
     assert subscriptions_page.unchanged_text(subscriptions_page.UnchangedChannel("Delta", "no")) == (
         "Delta: YouTube не підтвердив зміну: no"
     )
+
+
+# The state of the request budget during a batch.
+
+
+@pytest.fixture
+def fast_budget(monkeypatch):
+    monkeypatch.setattr(budget_progress, "BUDGET_POLL_SECONDS", 0.05)
+
+
+def store_budget(sessions, tokens: float, **breaker) -> None:
+    """Store the row of the request budget. Its refill lies a day after the clock, so the tokens do not grow while the
+    test runs: a clock before the refill adds no tokens."""
+    later = datetime.now(UTC) + timedelta(days=1)
+    with sessions.begin() as session:
+        session.merge(RequestBudgetState(id=1, tokens=tokens, refilled_at=later, **breaker))
+
+
+def budget_shown(user) -> bool:
+    return element_of(user, "bulk-progress").visible and element_of(user, "bulk-budget").visible
+
+
+async def test_a_batch_shows_the_tokens_the_next_request_and_the_remaining_time(
+    user, stored_channels, sessions, fake_starter, fast_counter, fast_budget
+):
+    store_budget(sessions, 0.6)
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, CHARLIE)
+    fake_starter.plan.append({"blocking": True})
+
+    confirm_unsubscribe(user)
+
+    await eventually(lambda: budget_shown(user), "The state of the budget")
+    assert progress_of(user) == "Unsubscribing: 0 of 2"
+    assert element_of(user, "bulk-progress-bar").value == 0
+    assert element_of(user, "bulk-progress-bar").props["aria-label"] == "Unsubscribing: 0 of 2"
+    assert text_of(user, "bulk-tokens-text") == "0.6 of 15"
+    assert text_of(user, "bulk-next-text") == "in 1.6 s"
+    # Two requests are left, and the bucket holds 0.6 of one: 1.4 tokens of 4 s each.
+    assert text_of(user, "bulk-progress-remaining") == "at least ~0:06 left"
+    assert text_of(user, "bulk-slow-note").startswith("The service sends at most one request with cookies each 4 s")
+    assert not element_of(user, "bulk-pause").visible
+    # The cells of the tokens: the first one is filled to 60 %, and the others are empty.
+    cells = element_of(user, "bulk-tokens").default_slot.children
+    assert len(cells) == 15
+    assert "var(--q-positive) 60%" in cells[0].style["background"]
+    assert "var(--q-positive) 0%" in cells[1].style["background"]
+    tokens = element_of(user, "bulk-tokens").props
+    assert (tokens["role"], tokens["aria-valuemax"], tokens["aria-valuenow"]) == ("progressbar", 15, 0.6)
+    assert (tokens["aria-label"], tokens["aria-valuetext"]) == ("Requests without a wait", "0.6 of 15")
+    next_bar = element_of(user, "bulk-next-bar")
+    assert (next_bar.value, next_bar.props["color"], next_bar.props["aria-valuetext"]) == (
+        pytest.approx(0.6),
+        "warning",
+        "in 1.6 s",
+    )
+
+    # The child stores the first change, and the bucket fills.
+    set_subscribed(sessions, ALPHA, False)
+    store_budget(sessions, 7.4)
+    await eventually(lambda: progress_of(user) == "Unsubscribing: 1 of 2", "The first change")
+    await eventually(lambda: text_of(user, "bulk-tokens-text") == "7.4 of 15", "The new tokens")
+    assert element_of(user, "bulk-progress-bar").value == 0.5
+    assert text_of(user, "bulk-next-text") == "at once"
+    assert element_of(user, "bulk-next-bar").props["color"] == "positive"
+    assert text_of(user, "bulk-progress-remaining") == "at least ~0:00 left"
+    assert not element_of(user, "bulk-slow-note").visible
+
+    fake_starter.children[-1].finish(0)
+
+    await eventually(lambda: progress_of(user) is None, "The end of the batch")
+    assert not element_of(user, "bulk-progress").visible
+
+
+async def test_a_batch_during_a_pause_shows_the_end_of_the_pause_in_the_time_of_the_browser(
+    user, stored_channels, sessions, fake_starter, fast_budget
+):
+    now = datetime.now(UTC).replace(microsecond=0)
+    until = now + timedelta(minutes=55, seconds=30)
+    breaker = {
+        "breaker_reason": BreakerReason.HTTP_429,
+        "breaker_until": until,
+        "breaker_opened_at": now - timedelta(minutes=4, seconds=30),
+        "breaker_level": 1,
+    }
+    store_budget(sessions, 3.0, **breaker)
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+    fake_starter.plan.append({"blocking": True})
+
+    user.find(marker="bulk-subscribe").click()
+
+    await eventually(lambda: element_of(user, "bulk-pause").visible, "The pause")
+    assert not element_of(user, "bulk-budget").visible
+    assert not element_of(user, "bulk-progress-remaining").visible
+    kyiv = ZoneInfo("Europe/Kyiv")
+    template = element_of(user, "bulk-pause-until").props["data-time-template"]
+    assert template in {f"Pause of requests until {{time}} ({minutes} min left)" for minutes in (55, 56)}
+    assert moment_of(user, "bulk-pause-until") == (until.astimezone(kyiv).isoformat(), "Europe/Kyiv")
+    assert text_of(user, "bulk-pause-until") == template.format(time=format_time(until, kyiv))
+    assert element_of(user, "bulk-pause-text").props["data-time-template"] == (
+        "YouTube limited the requests with the cookies of the account (HTTP 429, too many requests). The service "
+        "sends no such request until {time}."
+    )
+    assert moment_of(user, "bulk-pause-text") == moment_of(user, "bulk-pause-until")
+    # The red of an error is hard to read on the colored bar, so the text keeps the white of the bar.
+    assert "text-negative" not in element_of(user, "bulk-pause-text").classes
+    # About 4.5 min of the pause of 1 h passed.
+    assert element_of(user, "bulk-pause-bar").value == pytest.approx(0.075, abs=0.02)
+
+    fake_starter.children[-1].finish(0)
+    await eventually(lambda: progress_of(user) is None, "The end of the batch")
+
+
+async def test_the_page_reads_the_budget_only_while_a_batch_runs(
+    user, stored_channels, sessions, fake_starter, fast_budget, monkeypatch
+):
+    reads = []
+    real_read = budget_progress.read_budget
+
+    def read_budget(*args, **kwargs):
+        reads.append(args)
+        return real_read(*args, **kwargs)
+
+    monkeypatch.setattr(budget_progress, "read_budget", read_budget)
+    await user.open("/subscriptions")
+    toggle(user, CHARLIE)
+    await eventually(lambda: bulk_menu_of(user)[0][1], "The rule of the menu")
+    # The bulk add to a rule sends no request, so it shows no block.
+    choose_bulk_rule(user, 1)
+    await eventually(lambda: result_of(user) == "Rule Science now reads more channels: 1.", "The result of the add")
+    toggle(user, CHARLIE)
+    toggle(user, BRAVO)
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert reads == []
+    assert not element_of(user, "bulk-progress").visible
+    fake_starter.plan.append({"blocking": True})
+    user.find(marker="bulk-subscribe").click()
+    await eventually(lambda: len(reads) >= 2, "The reads during the batch")
+    # A missing row is a full bucket, and the page writes no row.
+    await eventually(lambda: budget_shown(user), "The state of the budget")
+    assert text_of(user, "bulk-tokens-text") == "15.0 of 15"
+    assert text_of(user, "bulk-next-text") == "at once"
+    with sessions() as session:
+        assert session.scalars(select(RequestBudgetState)).all() == []
+
+    fake_starter.children[-1].finish(0)
+
+    await eventually(lambda: progress_of(user) is None, "The end of the batch")
+    count = len(reads)
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert len(reads) == count
+
+
+async def test_the_texts_of_the_budget_in_a_batch_have_a_ukrainian_translation(
+    user, stored_channels, sessions, fake_starter, fast_budget, real_uk_catalog
+):
+    save_language(sessions, "uk")
+    store_budget(sessions, 0.6)
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+    fake_starter.plan.append({"blocking": True})
+
+    user.find(marker="bulk-subscribe").click()
+
+    await eventually(lambda: budget_shown(user), "The state of the budget")
+    assert progress_of(user) == "Підписка: 0 з 1"
+    assert text_of(user, "bulk-tokens-text") == "0,6 з 15"
+    assert text_of(user, "bulk-next-text") == "через 1,6 с"
+    assert text_of(user, "bulk-progress-remaining") == "лишилось щонайменше ~0:02"
+    assert text_of(user, "bulk-slow-note") == (
+        "Сервіс надсилає не більше одного запиту з cookies кожні 4 с, щоб YouTube не обмежив запити."
+    )
+    children = element_of(user, "bulk-budget").default_slot.children
+    assert [child.text for child in children if isinstance(child, ui.label)] == [
+        "Запити без чекання",
+        "0,6 з 15",
+        "Наступний запит",
+        "через 1,6 с",
+    ]
+    assert element_of(user, "bulk-tokens").props["aria-label"] == "Запити без чекання"
+    assert element_of(user, "bulk-next-bar").props["aria-label"] == "Наступний запит"
+    assert element_of(user, "bulk-pause-bar").props["aria-label"] == "Пауза запитів з cookies"
+    fake_starter.children[-1].finish(0)
+    await eventually(lambda: progress_of(user) is None, "The end of the batch")
 
 
 # The translation.
