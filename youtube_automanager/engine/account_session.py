@@ -144,7 +144,7 @@ class AccountSession:
     YouTube refused during the work, and ``write_back`` saves the updated cookies.
     ``send`` sends a notification, and ``make_client`` builds the account client from a cookie text. Without
     ``make_client``, the session builds an ``AccountClient`` that takes its tokens from the request budget on the
-    database of ``sessions``.
+    database of ``sessions``, and the breaker of that budget sends its notifications through ``send``.
     """
 
     def __init__(
@@ -169,7 +169,8 @@ class AccountSession:
         self._alive = False
 
     def _new_client(self, cookies: str) -> ClientLike:
-        return AccountClient(cookies, budget=RequestBudget(self._sessions))
+        budget = RequestBudget(self._sessions, send=self._send, default_timezone=self._settings.tz)
+        return AccountClient(cookies, budget=budget)
 
     def check(self) -> CheckResult:
         """Check the session of the current cookie version, and go back to the newest good version when it is dead.

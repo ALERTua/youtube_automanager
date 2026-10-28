@@ -12,6 +12,7 @@ import sys
 import threading
 from pathlib import Path
 from typing import ClassVar
+from zoneinfo import ZoneInfo
 
 import pytest
 import yt_dlp.version
@@ -20,8 +21,8 @@ from yt_dlp.networking.common import Response
 from yt_dlp.networking.exceptions import HTTPError
 
 from youtube_automanager import ytdlp_check
-from youtube_automanager.db.models import RequestBudgetState
-from youtube_automanager.pacing import BUCKET_SIZE, RequestBudget
+from youtube_automanager.db.models import BreakerReason, RequestBudgetState
+from youtube_automanager.pacing import BUCKET_SIZE, RequestBudget, RequestsPaused
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.settings import Settings
 from youtube_automanager.short_child import EXIT_YOUTUBE_ERROR
@@ -138,6 +139,21 @@ def test_the_session_check_takes_a_token_of_the_budget_of_the_database(
         row = session.get(RequestBudgetState, 1)
     assert row.tokens == BUCKET_SIZE - 1
     assert row.last_answer_at is not None
+
+
+def test_during_the_pause_of_the_breaker_the_check_fails_with_the_end_of_the_pause_in_the_given_time_zone(
+    uploads, settings, sessions, monkeypatch, capsys
+):
+    paused = RequestBudget(sessions, send=lambda notification: None).open_breaker(BreakerReason.HTTP_429)
+    requests = []
+    monkeypatch.setattr(YoutubeDL, "urlopen", lambda ydl, request: requests.append(request.url))
+
+    code = ytdlp_check.check_once(FOLDER, VERSION, COOKIES, settings.database_url, "Europe/Kyiv")
+
+    assert code == EXIT_YOUTUBE_ERROR
+    in_kyiv = RequestsPaused(paused.reason, paused.until, ZoneInfo("Europe/Kyiv"))
+    assert result(capsys) == f"The session check failed: {in_kyiv}"
+    assert requests == []
 
 
 def test_a_failed_session_check_fails_the_release(uploads, client, capsys):

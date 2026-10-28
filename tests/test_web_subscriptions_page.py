@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from nicegui import ui
@@ -26,8 +27,18 @@ from ui_support import (
 
 from youtube_automanager import i18n
 from youtube_automanager.account_cache import REFRESHED_AT_KEY
-from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, Schedule, ScheduleKind, Setting
+from youtube_automanager.db.models import (
+    BreakerReason,
+    Channel,
+    Playlist,
+    Rule,
+    RuleChannel,
+    Schedule,
+    ScheduleKind,
+    Setting,
+)
 from youtube_automanager.i18n.setting import NAMES
+from youtube_automanager.pacing import RequestsPaused
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
 from youtube_automanager.web.ui import subscriptions_page
@@ -828,6 +839,25 @@ async def test_a_failed_subscribe_shows_its_cause_in_the_dialog(user, stored_cha
     assert text_of(user, "channel-error") == expected
     assert text_of(user, "channel-subscribed") == "No"
     assert not user.notify.contains("Subscribed to Bravo Cooking.")
+
+
+async def test_a_subscribe_during_the_pause_of_the_requests_shows_the_end_of_the_pause(
+    user, stored_channels, fake_starter
+):
+    # The text that the child writes when the breaker of the request budget is open.
+    paused = RequestsPaused(BreakerReason.HTTP_429, datetime(2026, 10, 28, 13, 0, tzinfo=UTC), ZoneInfo("Europe/Kyiv"))
+    await user.open("/subscriptions")
+    await open_channel(user, BRAVO)
+    fake_starter.plan.append({"exit_code": EXIT_YOUTUBE_ERROR, "stderr": f"The session check failed: {paused}\n"})
+
+    user.find(marker="channel-subscribe").click()
+
+    await eventually(lambda: elements_of(user, "channel-error"), "The cause of the failure")
+    assert text_of(user, "channel-error") == (
+        "The subscription did not change. YouTube did not give the expected answer: The session check failed: The "
+        "service sends no request with the cookies of the account until 2026-10-28 15:00 EET, because YouTube "
+        "answered a request with HTTP 429 (too many requests)."
+    )
 
 
 async def test_a_subscribe_during_a_run_starts_nothing_and_says_so(user, stored_channels, fake_starter):

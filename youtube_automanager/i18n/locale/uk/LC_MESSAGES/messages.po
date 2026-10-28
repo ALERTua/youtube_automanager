@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 18:08+0200\n"
+"POT-Creation-Date: 2026-10-28 18:47+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -1040,6 +1040,10 @@ msgstr "Прибрати групу"
 #, python-brace-format
 msgid "Remove {channel}"
 msgstr "Прибрати {channel}"
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Requests with cookies paused or resumed"
+msgstr "Запити з cookies призупинено або відновлено"
 
 #: youtube_automanager/web/ui/rule_editor.py
 #: youtube_automanager/web/ui/ytdlp_section.py

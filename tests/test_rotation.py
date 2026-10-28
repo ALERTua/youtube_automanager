@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from youtube_automanager.db.models import (
     Account,
+    BreakerReason,
     CookieOrigin,
     CookieVersion,
     RequestBudgetState,
@@ -332,8 +333,8 @@ def test_without_a_cookie_key_or_cookies_there_is_no_rotation(harness, db_sessio
 # Failed rotations
 
 
-def test_http_429_saves_nothing_and_each_failure_doubles_the_wait(harness):
-    harness.accounts.rotate = (429, "Too Many Requests", [])
+def test_an_error_answer_saves_nothing_and_each_failure_doubles_the_wait(harness):
+    harness.accounts.rotate = (503, "Service Unavailable", [])
     rotation = harness.rotation()
     delays = []
     for _ in range(4):
@@ -345,6 +346,32 @@ def test_http_429_saves_nothing_and_each_failure_doubles_the_wait(harness):
 
     harness.accounts.rotate = (200, rotate_answer(), SET_COOKIES)
     assert rotation.turn() == INTERVAL_S
+
+
+def test_http_429_of_the_rotation_saves_nothing_and_opens_the_breaker_of_the_budget(harness):
+    harness.accounts.rotate = (429, "Too Many Requests", [])
+
+    assert harness.rotation().turn() == 2 * INTERVAL_S
+
+    assert len(harness.versions()) == 1
+    row = harness.budget()
+    assert (row.breaker_reason, row.breaker_until) == (
+        BreakerReason.HTTP_429,
+        row.last_answer_at + datetime.timedelta(hours=1),
+    )
+
+
+@pytest.mark.parametrize(("before_end_s", "delay_s"), [(3600, 3600), (RETRY_S + 1, RETRY_S + 1), (10, RETRY_S)])
+def test_during_the_pause_the_rotation_sends_nothing_and_waits_for_its_end(harness, before_end_s, delay_s):
+    other_process = RequestBudget(harness.sessions, clock=lambda: harness.budget_now, send=lambda notification: None)
+    other_process.open_breaker(BreakerReason.HTTP_429)
+    harness.now = NOW + datetime.timedelta(seconds=3600 - before_end_s)
+
+    assert harness.rotation().turn() == delay_s
+
+    assert harness.accounts.requests == []
+    assert len(harness.versions()) == 1
+    assert harness.next_at() == harness.now + datetime.timedelta(seconds=delay_s)
 
 
 def test_a_page_without_a_rotation_id_sends_no_rotation(harness):

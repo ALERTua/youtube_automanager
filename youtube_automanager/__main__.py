@@ -173,7 +173,7 @@ def _check_ytdlp(folder: Path, version: str) -> int:
     setup_logging(settings.verbose)
     # The text comes on the standard input, because the command line and the environment are visible to other
     # processes.
-    return check_ytdlp_once(folder, version, sys.stdin.read(), settings.database_url)
+    return check_ytdlp_once(folder, version, sys.stdin.read(), settings.database_url, settings.tz)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -4,7 +4,7 @@ import logging
 import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import IntEnum, StrEnum
 
 import apprise
@@ -48,6 +48,7 @@ class Event(StrEnum):
     YTDLP_UPDATE_RESULT = "ytdlp_update_result"
     VIDEO_ADDED = "video_added"
     SCHEDULER_STATE = "scheduler_state"
+    REQUEST_BREAKER = "request_breaker"
 
 
 EVENT_LEVELS: dict[Event, Level] = {
@@ -59,6 +60,7 @@ EVENT_LEVELS: dict[Event, Level] = {
     Event.YTDLP_UPDATE_RESULT: Level.INFO,
     Event.VIDEO_ADDED: Level.INFO,
     Event.SCHEDULER_STATE: Level.INFO,
+    Event.REQUEST_BREAKER: Level.WARNING,
 }
 
 DEFAULT_EVENTS: frozenset[Event] = frozenset(
@@ -69,6 +71,7 @@ DEFAULT_EVENTS: frozenset[Event] = frozenset(
         Event.RUN_FAILED,
         Event.CHANNEL_ERROR,
         Event.YTDLP_UPDATE_RESULT,
+        Event.REQUEST_BREAKER,
     }
 )
 
@@ -338,6 +341,36 @@ def video_added(video_title: str, playlist_title: str, video_url: str) -> Notifi
         Event.VIDEO_ADDED,
         f"{APP_NAME}: video added to {playlist_title}",
         f"Added {video_title} to the playlist {playlist_title}.\n{video_url}",
+    )
+
+
+def _duration(pause: timedelta) -> str:
+    """Return a pause as whole hours, or as whole minutes when it is not a whole number of hours."""
+    minutes = int(pause.total_seconds()) // 60
+    if minutes % 60 == 0:
+        return _count(minutes // 60, "hour")
+    return _count(minutes, "minute")
+
+
+def request_breaker_opened(reason: str, pause: timedelta, until: datetime) -> Notification:
+    """Tell that the service paused the requests with cookies. ``reason`` names the answer of YouTube, and ``until``
+    is the end of the pause in the time zone of the service."""
+    return Notification(
+        Event.REQUEST_BREAKER,
+        f"{APP_NAME}: the requests with cookies are paused",
+        f"YouTube answered a request with the cookies of the account with {reason}. The service sends no request "
+        f"with the cookies for {_duration(pause)}, until {until.strftime('%Y-%m-%d %H:%M %Z')}. Until then, each "
+        "action with the account fails at once without a request to YouTube. The reads of public channels go on.",
+    )
+
+
+def request_breaker_closed() -> Notification:
+    """Tell that the first request with cookies after the end of a pause got an answer."""
+    return Notification(
+        Event.REQUEST_BREAKER,
+        f"{APP_NAME}: the requests with cookies work again",
+        "The pause of the requests with the cookies of the account ended, and YouTube answered the first request "
+        "after it. The requests with cookies work again.",
     )
 
 

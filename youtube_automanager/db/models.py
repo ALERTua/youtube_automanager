@@ -108,6 +108,14 @@ class RunActionKind(enum.StrEnum):
     ERROR = "error"
 
 
+class BreakerReason(enum.StrEnum):
+    """The answer of YouTube to a request with cookies that paused all requests with cookies."""
+
+    HTTP_429 = "http_429"
+    TRY_AGAIN_LATER = "try_again_later"
+    BOT_CHECK = "bot_check"
+
+
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
     type_annotation_map: ClassVar[dict[type, Any]] = {datetime: UTCDateTime}
@@ -279,8 +287,13 @@ class RequestBudgetState(Base):
     id is always 1.
 
     ``tokens`` is the number of requests that can go without a wait at the time ``refilled_at``. ``last_answer_at`` is
-    the end of the last answer to such a request, or None before the first answer. Both times come from the wall clock
+    the end of the last answer to such a request, or None before the first answer. Each time comes from the wall clock
     in UTC, so each process that works with the database reads them the same way.
+
+    The breaker columns are None before the first pause. ``breaker_opened_at`` and ``breaker_until`` are the start and
+    the end of the last pause, and they stay after its end, because the next pause doubles it. ``breaker_level`` counts
+    the pauses since the pauses went back to the first length. ``breaker_reason`` is the answer that started the last
+    pause. It becomes None when the first answer after the end of the pause shows that the requests work again.
     """
 
     __tablename__ = "request_budget"
@@ -290,6 +303,10 @@ class RequestBudgetState(Base):
     tokens: Mapped[float]
     refilled_at: Mapped[datetime]
     last_answer_at: Mapped[datetime | None]
+    breaker_until: Mapped[datetime | None]
+    breaker_level: Mapped[int | None]
+    breaker_reason: Mapped[BreakerReason | None] = mapped_column(_string_enum(BreakerReason, "breaker_reason"))
+    breaker_opened_at: Mapped[datetime | None]
 
 
 class Run(Base):

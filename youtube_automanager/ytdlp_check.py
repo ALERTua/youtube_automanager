@@ -72,12 +72,12 @@ def _error_text(error: BaseException) -> str:
     return f"{type(error).__name__}: {error}"
 
 
-def check_once(folder: Path, version: str, cookies: str, database_url: str) -> int:
+def check_once(folder: Path, version: str, cookies: str, database_url: str, timezone: str = "UTC") -> int:
     """The body of the check in the child process. Return the exit code of the child.
 
     ``folder`` holds the new release of ``version``. ``cookies`` is the cookie text from the standard input, or an
     empty text when the database stores no cookies. ``database_url`` names the database of the service, whose request
-    budget the session check uses.
+    budget the session check uses. ``timezone`` is the time zone of the service for the texts of that budget.
     """
     try:
         import yt_dlp
@@ -117,7 +117,7 @@ def check_once(folder: Path, version: str, cookies: str, database_url: str) -> i
     if cookies.strip():
         engine = make_engine(database_url)
         try:
-            budget = RequestBudget(make_session_factory(engine))
+            budget = RequestBudget(make_session_factory(engine), default_timezone=timezone)
             account.AccountClient(cookies, budget=budget).check_session()
             session = "live"
         except account.NotLoggedInError:

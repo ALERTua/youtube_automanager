@@ -2,8 +2,9 @@ import logging
 import socket
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
+from zoneinfo import ZoneInfo
 
 import apprise
 import pytest
@@ -108,6 +109,7 @@ def test_each_event_has_its_level():
         Event.YTDLP_UPDATE_RESULT: Level.INFO,
         Event.VIDEO_ADDED: Level.INFO,
         Event.SCHEDULER_STATE: Level.INFO,
+        Event.REQUEST_BREAKER: Level.WARNING,
     }
 
 
@@ -166,6 +168,7 @@ def test_a_target_gets_only_the_events_at_or_above_its_minimum_level(event, sent
         Event.COOKIE_EXPIRY_WARNING,
         Event.RUN_FAILED,
         Event.CHANNEL_ERROR,
+        Event.REQUEST_BREAKER,
     }
     target = Target("t", "testcapture://t", min_level=Level.WARNING, events=frozenset(Event))
 
@@ -385,6 +388,11 @@ def test_the_repr_of_a_target_hides_its_url():
         (notify.video_added("Video", "Later", "https://www.youtube.com/watch?v=x"), Event.VIDEO_ADDED),
         (notify.scheduler_state(paused=True), Event.SCHEDULER_STATE),
         (notify.scheduler_state(paused=False), Event.SCHEDULER_STATE),
+        (
+            notify.request_breaker_opened("HTTP 429", timedelta(hours=1), datetime(2026, 10, 12, tzinfo=UTC)),
+            Event.REQUEST_BREAKER,
+        ),
+        (notify.request_breaker_closed(), Event.REQUEST_BREAKER),
     ],
 )
 def test_each_builder_gives_its_event(notification, event):
@@ -508,3 +516,39 @@ def test_ytdlp_update_without_the_latest_version_keeps_the_old_one():
     assert (
         notification.body == "yt-dlp did not update from 2026.09.01. The service keeps 2026.09.01.\n\nnetwork is down"
     )
+
+
+def test_the_opening_of_the_breaker_names_the_reason_the_pause_and_its_end_in_the_given_time_zone():
+    until = datetime(2026, 10, 28, 13, 0, tzinfo=UTC).astimezone(ZoneInfo("Europe/Kyiv"))
+
+    notification = notify.request_breaker_opened('a "try again later" page', timedelta(hours=1), until)
+
+    assert notification.title == "YouTube AutoManager: the requests with cookies are paused"
+    assert notification.body == (
+        'YouTube answered a request with the cookies of the account with a "try again later" page. The service sends '
+        "no request with the cookies for 1 hour, until 2026-10-28 15:00 EET. Until then, each action with the account "
+        "fails at once without a request to YouTube. The reads of public channels go on."
+    )
+    assert notification.level is Level.WARNING
+
+
+@pytest.mark.parametrize(
+    ("pause", "text"),
+    [
+        (timedelta(hours=6), "for 6 hours"),
+        (timedelta(hours=24), "for 24 hours"),
+        (timedelta(minutes=90), "for 90 minutes"),
+    ],
+)
+def test_the_opening_of_the_breaker_gives_the_pause_in_hours_or_in_minutes(pause, text):
+    notification = notify.request_breaker_opened("HTTP 429", pause, datetime(2026, 10, 28, tzinfo=UTC))
+
+    assert f" {text}, until 2026-10-28 00:00 UTC." in notification.body
+
+
+def test_the_end_of_the_breaker_says_that_the_requests_with_cookies_work_again():
+    notification = notify.request_breaker_closed()
+
+    assert notification.title == "YouTube AutoManager: the requests with cookies work again"
+    assert notification.body.endswith("The requests with cookies work again.")
+    assert notification.level is Level.WARNING

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 18:08+0200\n"
+"POT-Creation-Date: 2026-10-28 18:47+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -982,6 +982,10 @@ msgstr ""
 #: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "Remove {channel}"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Requests with cookies paused or resumed"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py

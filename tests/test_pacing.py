@@ -5,10 +5,11 @@ import random
 import pytest
 from sqlalchemy.dialects import postgresql
 
-from youtube_automanager import pacing
+from youtube_automanager import notify, pacing
 from youtube_automanager.db import make_engine, make_session_factory
-from youtube_automanager.db.models import RequestBudgetState
-from youtube_automanager.pacing import BUCKET_SIZE, RequestBudget, minimum_seconds, refilled_tokens
+from youtube_automanager.db.models import BreakerReason, RequestBudgetState, Schedule, ScheduleKind
+from youtube_automanager.notify import Event
+from youtube_automanager.pacing import BUCKET_SIZE, RequestBudget, RequestsPaused, minimum_seconds, refilled_tokens
 
 START = datetime.datetime(2026, 10, 28, 12, 0, tzinfo=datetime.UTC)
 
@@ -307,3 +308,299 @@ def test_after_the_wait_the_budget_reads_the_row_again(db_sessions, fake_time):
     make_budget(db_sessions, fake_time, pause=0.5).before_request()
 
     assert fake_time.sleeps == [4.0, 0.5]
+
+
+# The breaker.
+
+HOUR = datetime.timedelta(hours=1)
+OPENED_TITLE = "YouTube AutoManager: the requests with cookies are paused"
+CLOSED_TITLE = "YouTube AutoManager: the requests with cookies work again"
+
+
+class Sent(list):
+    """The notifications of the breaker, in the order of the sends."""
+
+    def titles(self) -> list[str]:
+        return [notification.title for notification in self]
+
+
+@pytest.fixture
+def sent():
+    return Sent()
+
+
+def breaker_budget(sessions, fake_time, sent, default_timezone="UTC"):
+    return RequestBudget(
+        sessions,
+        clock=fake_time.clock,
+        sleep=fake_time.sleep,
+        random=fixed_pause(0.0),
+        send=sent.append,
+        default_timezone=default_timezone,
+    )
+
+
+def pauses_of_openings(budget, fake_time, reasons) -> list[float]:
+    """Open the breaker for each reason at the end of the pause before, and return each pause in hours."""
+    pauses = []
+    for reason in reasons:
+        paused = budget.open_breaker(reason)
+        pauses.append((paused.until - fake_time.now) / HOUR)
+        fake_time.now = paused.until
+    return pauses
+
+
+@pytest.mark.parametrize(
+    ("reason", "hours"),
+    [(BreakerReason.HTTP_429, 1), (BreakerReason.TRY_AGAIN_LATER, 1), (BreakerReason.BOT_CHECK, 6)],
+)
+def test_each_reason_opens_the_breaker_with_its_first_pause(db_sessions, fake_time, sent, reason, hours):
+    paused = breaker_budget(db_sessions, fake_time, sent).open_breaker(reason)
+
+    assert (paused.reason, paused.until) == (reason, START + hours * HOUR)
+    row = stored(db_sessions)
+    assert (row.breaker_reason, row.breaker_level) == (reason, 1)
+    assert (row.breaker_opened_at, row.breaker_until) == (START, START + hours * HOUR)
+
+
+def test_an_answer_with_http_429_opens_the_breaker_for_1_hour(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.before_request()
+
+    budget.after_answer(429)
+
+    row = stored(db_sessions)
+    assert (row.breaker_reason, row.breaker_until, row.last_answer_at) == (BreakerReason.HTTP_429, START + HOUR, START)
+
+
+@pytest.mark.parametrize("status", [200, 401, 403, 500, None])
+def test_another_answer_or_no_answer_leaves_the_breaker_closed(db_sessions, fake_time, sent, status):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.before_request()
+
+    budget.after_answer(status)
+
+    row = stored(db_sessions)
+    assert (row.breaker_reason, row.breaker_until, row.breaker_level) == (None, None, None)
+    assert sent == []
+
+
+def test_a_request_during_the_pause_fails_at_once_with_the_end_and_takes_no_token(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.open_breaker(BreakerReason.HTTP_429)
+    tokens = stored(db_sessions).tokens
+    fake_time.now = START + HOUR - datetime.timedelta(microseconds=1)
+
+    with pytest.raises(RequestsPaused) as raised:
+        budget.before_request()
+
+    assert str(raised.value) == (
+        "The service sends no request with the cookies of the account until 2026-10-28 13:00 UTC, because YouTube "
+        "answered a request with HTTP 429 (too many requests)."
+    )
+    assert (raised.value.reason, raised.value.until) == (BreakerReason.HTTP_429, START + HOUR)
+    assert fake_time.sleeps == []
+    assert stored(db_sessions).tokens == tokens
+
+
+def test_the_first_request_at_the_end_of_the_pause_goes(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.open_breaker(BreakerReason.TRY_AGAIN_LATER)
+    fake_time.now = START + HOUR
+
+    budget.before_request()
+
+    assert stored(db_sessions).tokens == BUCKET_SIZE - 1
+
+
+def test_each_next_pause_of_http_429_doubles_the_pause_before_up_to_24_hours(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+
+    pauses = pauses_of_openings(budget, fake_time, [BreakerReason.HTTP_429] * 7)
+
+    assert pauses == [1, 2, 4, 8, 16, 24, 24]
+    assert stored(db_sessions).breaker_level == 7
+
+
+def test_each_next_pause_of_a_bot_check_doubles_6_hours_up_to_24_hours(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+
+    assert pauses_of_openings(budget, fake_time, [BreakerReason.BOT_CHECK] * 4) == [6, 12, 24, 24]
+
+
+def test_a_next_pause_doubles_the_pause_before_and_is_never_shorter_than_the_first_pause_of_its_reason(
+    db_sessions, fake_time, sent
+):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    reasons = [BreakerReason.HTTP_429, BreakerReason.BOT_CHECK, BreakerReason.TRY_AGAIN_LATER]
+
+    assert pauses_of_openings(budget, fake_time, reasons) == [1, 6, 12]
+
+
+@pytest.mark.parametrize(
+    ("after_opening", "hours", "level"),
+    [
+        (datetime.timedelta(days=3) - datetime.timedelta(microseconds=1), 2, 2),
+        (datetime.timedelta(days=3), 1, 1),
+        (datetime.timedelta(days=30), 1, 1),
+    ],
+)
+def test_the_pause_goes_back_to_the_first_length_3_days_after_the_last_opening(
+    db_sessions, fake_time, sent, after_opening, hours, level
+):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.open_breaker(BreakerReason.HTTP_429)
+    fake_time.now = START + after_opening
+
+    paused = budget.open_breaker(BreakerReason.HTTP_429)
+
+    assert paused.until - fake_time.now == hours * HOUR
+    assert stored(db_sessions).breaker_level == level
+
+
+def test_an_opening_during_the_pause_changes_nothing_and_sends_nothing(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.open_breaker(BreakerReason.HTTP_429)
+    fake_time.advance(600)
+
+    paused = budget.open_breaker(BreakerReason.BOT_CHECK)
+
+    assert (paused.reason, paused.until) == (BreakerReason.HTTP_429, START + HOUR)
+    row = stored(db_sessions)
+    assert (row.breaker_reason, row.breaker_level, row.breaker_until) == (BreakerReason.HTTP_429, 1, START + HOUR)
+    assert len(sent) == 1
+
+
+def test_a_restart_keeps_the_open_breaker(db_url, fake_time, sent):
+    engine = make_engine(db_url)
+    try:
+        breaker_budget(make_session_factory(engine), fake_time, sent).open_breaker(BreakerReason.BOT_CHECK)
+    finally:
+        engine.dispose()
+    fake_time.advance(3600)
+
+    engine = make_engine(db_url)
+    try:
+        with pytest.raises(RequestsPaused) as raised:
+            breaker_budget(make_session_factory(engine), fake_time, sent).before_request()
+    finally:
+        engine.dispose()
+
+    assert (raised.value.reason, raised.value.until) == (BreakerReason.BOT_CHECK, START + 6 * HOUR)
+
+
+def test_a_breaker_that_another_process_opens_during_the_wait_stops_the_request(db_sessions, fake_time, sent):
+    store(db_sessions, 0.0, START)
+    other_process = breaker_budget(db_sessions, fake_time, sent)
+    fake_time.during_sleep = lambda: other_process.open_breaker(BreakerReason.HTTP_429)
+
+    with pytest.raises(RequestsPaused):
+        breaker_budget(db_sessions, fake_time, sent).before_request()
+
+    assert fake_time.sleeps == [4.0]
+
+
+def test_the_opening_sends_one_notification_with_the_end_in_the_time_zone_of_the_service(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent, default_timezone="Europe/Kyiv")
+
+    budget.after_answer(429)
+    budget.open_breaker(BreakerReason.HTTP_429)
+
+    assert sent.titles() == [OPENED_TITLE]
+    assert sent[0].event is Event.REQUEST_BREAKER
+    assert "with HTTP 429 (too many requests). " in sent[0].body
+    assert " for 1 hour, until 2026-10-28 15:00 EET. " in sent[0].body
+
+
+def test_the_time_zone_of_the_schedule_is_the_time_zone_of_the_service(db_sessions, fake_time, sent):
+    with db_sessions.begin() as session:
+        session.add(Schedule(id=1, enabled=True, kind=ScheduleKind.CRON, timezone="America/New_York"))
+    budget = breaker_budget(db_sessions, fake_time, sent, default_timezone="Europe/Kyiv")
+
+    paused = budget.open_breaker(BreakerReason.BOT_CHECK)
+
+    assert " until 2026-10-28 14:00 EDT. " in sent[0].body
+    assert "until 2026-10-28 14:00 EDT," in str(paused)
+
+
+def test_the_first_answer_after_the_pause_closes_the_breaker_and_sends_one_notification(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.open_breaker(BreakerReason.HTTP_429)
+    fake_time.now = START + HOUR
+
+    budget.before_request()
+    budget.after_answer(200)
+    budget.before_request()
+    budget.after_answer(404)
+
+    assert sent.titles() == [OPENED_TITLE, CLOSED_TITLE]
+    row = stored(db_sessions)
+    # The pause stays in the row, so the next pause doubles it.
+    assert (row.breaker_reason, row.breaker_level, row.breaker_until) == (None, 1, START + HOUR)
+    assert budget.open_breaker(BreakerReason.HTTP_429).until == fake_time.now + 2 * HOUR
+
+
+def test_a_request_without_an_answer_after_the_pause_sends_no_end_notification(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.open_breaker(BreakerReason.HTTP_429)
+    fake_time.now = START + HOUR
+
+    budget.before_request()
+    budget.after_answer(None)
+
+    assert sent.titles() == [OPENED_TITLE]
+    assert stored(db_sessions).breaker_reason is BreakerReason.HTTP_429
+    budget.before_request()
+    budget.after_answer(200)
+    assert sent.titles() == [OPENED_TITLE, CLOSED_TITLE]
+
+
+def test_http_429_as_the_first_answer_after_the_pause_opens_a_longer_pause_and_sends_no_end(
+    db_sessions, fake_time, sent
+):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    budget.open_breaker(BreakerReason.HTTP_429)
+    fake_time.now = START + HOUR
+
+    budget.before_request()
+    budget.after_answer(429)
+
+    assert sent.titles() == [OPENED_TITLE, OPENED_TITLE]
+    assert " for 2 hours, " in sent[1].body
+    assert stored(db_sessions).breaker_until == START + 3 * HOUR
+
+
+def test_a_failed_notification_does_not_fail_the_answer(db_sessions, fake_time, caplog):
+    def send(notification):
+        raise RuntimeError("the target is down")
+
+    budget = RequestBudget(db_sessions, clock=fake_time.clock, sleep=fake_time.sleep, send=send)
+
+    budget.after_answer(429)
+
+    assert stored(db_sessions).breaker_reason is BreakerReason.HTTP_429
+    assert "Cannot send request_breaker: RuntimeError" in caplog.text
+
+
+def test_without_a_send_the_breaker_notifies_each_stored_target(db_sessions, fake_time, monkeypatch):
+    calls = []
+    monkeypatch.setattr(notify, "send_to_stored_targets", lambda sessions, notification: calls.append(sessions))
+    budget = RequestBudget(db_sessions, clock=fake_time.clock, sleep=fake_time.sleep)
+
+    budget.after_answer(429)
+
+    assert calls == [db_sessions]
+
+
+def test_paused_gives_the_error_of_an_open_breaker_and_none_before_and_after(db_sessions, fake_time, sent):
+    budget = breaker_budget(db_sessions, fake_time, sent)
+    assert budget.paused() is None
+
+    budget.open_breaker(BreakerReason.TRY_AGAIN_LATER)
+    fake_time.now = START + HOUR - datetime.timedelta(microseconds=1)
+    paused = budget.paused()
+
+    assert paused is not None
+    assert (paused.reason, paused.until) == (BreakerReason.TRY_AGAIN_LATER, START + HOUR)
+    fake_time.now = START + HOUR
+    assert budget.paused() is None

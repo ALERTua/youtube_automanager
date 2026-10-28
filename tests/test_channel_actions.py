@@ -12,6 +12,7 @@ import threading
 
 import pytest
 from sqlalchemy import select
+from yt_dlp import YoutubeDL
 
 from youtube_automanager import channel_actions
 from youtube_automanager.channel_actions import (
@@ -32,6 +33,7 @@ from youtube_automanager.channel_actions import (
 )
 from youtube_automanager.db.models import (
     Account,
+    BreakerReason,
     Channel,
     CookieVersion,
     CookieVersionState,
@@ -42,6 +44,7 @@ from youtube_automanager.db.models import (
     SessionState,
 )
 from youtube_automanager.engine import account_session
+from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.runner import BUSY_TEXT, SCHEDULED_WAIT_S, SOURCE_ROOT, SyncRunner
 from youtube_automanager.settings import Settings
 from youtube_automanager.short_child import (
@@ -344,6 +347,30 @@ def test_a_change_that_youtube_does_not_confirm_writes_no_flag_and_still_saves_t
     with db_sessions() as session:
         assert session.scalars(select(Account)).one().session_state is SessionState.OK
         assert len(session.scalars(select(CookieVersion)).all()) == 2
+
+
+def test_during_the_pause_of_the_breaker_the_change_sends_no_request_and_names_the_end_of_the_pause(
+    settings, db_sessions, capsys, monkeypatch
+):
+    store_cookies(db_sessions, settings)
+    store(db_sessions, Channel(channel_id=A, title="Stored", is_subscribed=False))
+    paused = RequestBudget(db_sessions, send=lambda notification: None).open_breaker(BreakerReason.HTTP_429)
+    requests = []
+    monkeypatch.setattr(YoutubeDL, "urlopen", lambda ydl, request: requests.append(request.url))
+
+    assert change_subscription_once(settings, A, subscribe=True) == EXIT_YOUTUBE_ERROR
+
+    assert last_stderr_line(capsys) == (
+        "The session check failed: The service sends no request with the cookies of the account until "
+        f"{paused.until.strftime('%Y-%m-%d %H:%M')} UTC, because YouTube answered a request with HTTP 429 "
+        "(too many requests)."
+    )
+    assert requests == []
+    assert stored_channel(db_sessions, A).is_subscribed is False
+    with db_sessions() as session:
+        # The pause is no sign of a dead session.
+        assert session.scalars(select(Account)).one().session_state is SessionState.UNKNOWN
+        assert [version.state for version in session.scalars(select(CookieVersion))] == [CookieVersionState.UNCHECKED]
 
 
 @pytest.mark.parametrize("channel_id", ["", "UC", "@handle", f"{A}x", "PLaaaaaaaaaaaaaaaaaaaaaa"])
