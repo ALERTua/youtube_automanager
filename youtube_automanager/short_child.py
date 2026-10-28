@@ -13,6 +13,8 @@ A child ends with one of these results:
   stderr of a child, so the result comes on that stream. The log of the child is on stdout.
 - Failure: the exit code names the kind (``EXIT_UNAVAILABLE``, ``EXIT_LOGGED_OUT`` or ``EXIT_YOUTUBE_ERROR``), and the
   cause is the last line of stderr. Any other exit code is a crash, and its stderr never goes into an answer.
+- Pause: the breaker of the request budget is open. The exit code is ``EXIT_PAUSED``, and the last line of stderr is
+  the pause as ``RequestPause.to_line`` gives it.
 
 ``work_with_account`` is the body of a child that works with the account, and ``run_child`` runs a child in the parent
 and turns a failure into a ``ChildError``.
@@ -29,6 +31,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager import notify
 from youtube_automanager.db import make_engine, make_session_factory
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import BUSY_TEXT, UNAVAILABLE_EXIT_CODE, ChildEnd, SyncRunner
 from youtube_automanager.settings import Settings
 
@@ -71,6 +74,17 @@ class ChildYouTubeError(ChildError):
     """YouTube did not give the data, or it did not confirm a change."""
 
 
+class ChildPaused(ChildYouTubeError):
+    """The breaker of the request budget is open, so the child sent no request with cookies, or YouTube limited one.
+
+    ``pause`` holds the reason and the end of the pause. The text is the English text of the pause.
+    """
+
+    def __init__(self, pause: RequestPause) -> None:
+        self.pause = pause
+        super().__init__(str(pause))
+
+
 class ChildFailed(ChildError):
     """The child did not start, did not end in time, was stopped, crashed, or gave no result."""
 
@@ -84,6 +98,13 @@ def fail(what: str, exit_code: int, cause: str | None, *, level: int = logging.E
     LOG.log(level, "%s failed: %s", what, line)
     print(line, file=sys.stderr, flush=True)
     return exit_code
+
+
+def fail_paused(what: str, pause: RequestPause) -> int:
+    """Write the pause as the last line of stderr, so the parent can read it. Return ``EXIT_PAUSED``."""
+    LOG.warning("%s failed: %s", what, pause)
+    print(pause.to_line(), file=sys.stderr, flush=True)
+    return EXIT_PAUSED
 
 
 def succeed(result: object) -> int:
@@ -114,6 +135,8 @@ def work_with_account(settings: Settings, what: str, work: AccountWork) -> int:
             return fail(what, EXIT_UNAVAILABLE, checked.detail)
         if checked.outcome is CheckOutcome.DEAD:
             return fail(what, EXIT_LOGGED_OUT, NO_ACCEPTED_VERSION)
+        if checked.pause is not None:
+            return fail_paused(what, checked.pause)
         if checked.outcome is not CheckOutcome.ALIVE:
             return fail(what, EXIT_YOUTUBE_ERROR, checked.detail)
         try:
@@ -122,6 +145,8 @@ def work_with_account(settings: Settings, what: str, work: AccountWork) -> int:
             account.died(error)
             return fail(what, EXIT_LOGGED_OUT, str(error))
         except AccountError as error:
+            if error.pause is not None:
+                return fail_paused(what, error.pause)
             return fail(what, EXIT_YOUTUBE_ERROR, str(error))
         finally:
             account.write_back()
@@ -165,6 +190,11 @@ def child_result(end: ChildEnd, noun: str, timeout_s: float) -> str:
         raise ChildLoggedOut(cause or "YouTube answered as logged out.")
     if code == EXIT_YOUTUBE_ERROR:
         raise ChildYouTubeError(cause or "YouTube did not give the data or did not confirm the change.")
+    if code == EXIT_PAUSED:
+        pause = RequestPause.from_line(cause)
+        if pause is None:
+            raise ChildFailed(f"The {noun} process stopped at a pause of the requests, but gave no end of the pause.")
+        raise ChildPaused(pause)
     # Any other exit code is a crash. Its stderr can hold anything, so the answer names only the code.
     raise ChildFailed(f"The {noun} process exited with code {code}.")
 

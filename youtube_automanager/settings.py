@@ -10,6 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_NAME = "youtube_automanager"
 HOME_DEFAULT = Path("/app/config")
 YTDLP_DIRNAME = "yt-dlp"
+# The time zone of the service when TZ is not set.
+DEFAULT_TZ = "UTC"
+# The form of a moment in a text of the service. A page shows it until the browser writes the moment in its own form.
+TIME_FORMAT = "%Y-%m-%d %H:%M %Z"
 
 
 class Settings(BaseSettings):
@@ -24,7 +28,7 @@ class Settings(BaseSettings):
     database_url: str = Field(default_factory=lambda data: f"sqlite:///{data['home'] / data['db_filename']}")
     ytdlp_dir: Path = Field(default_factory=lambda data: data["home"] / YTDLP_DIRNAME)
     # The field reads the variable TZ, which also sets the time zone of the C library. An unknown name stops the start.
-    tz: str = "UTC"
+    tz: str = DEFAULT_TZ
     child_timeout_s: int = Field(default=3600, gt=0)
     # The key of the stored cookies: one key, or several keys separated by commas with the newest first.
     # Without it, the service cannot store or read the cookies.

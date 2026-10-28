@@ -41,6 +41,7 @@ from youtube_automanager import i18n
 from youtube_automanager.cookie_upload_check import check_upload_once
 from youtube_automanager.db.models import (
     Account,
+    BreakerReason,
     CookieOrigin,
     CookieVersion,
     CookieVersionState,
@@ -54,6 +55,7 @@ from youtube_automanager.engine import account_session
 from youtube_automanager.engine.modes import ProcessingMode
 from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.notify import DEFAULT_EVENTS, EVENT_LEVELS, Event, Level
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.rotation import ROTATION_KEY
 from youtube_automanager.runner import SOURCE_ROOT, UNAVAILABLE_EXIT_CODE, sync_lock_held
 from youtube_automanager.short_child import (
@@ -68,7 +70,7 @@ from youtube_automanager.web.ui import notifications_section
 from youtube_automanager.web.ui.cookie_upload import COMPOSE_KEY_COMMAND, KEY_COMMAND, MAX_FILE_BYTES
 from youtube_automanager.web.ui.notification_targets import EVENT_LABELS, LEVEL_LABELS
 from youtube_automanager.web.ui.settings_page import expired_text, upload_error_text
-from youtube_automanager.youtube.account import AccountError, NotLoggedInError
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError, RequestsPausedError
 from youtube_automanager.youtube.cookie_text import LOGIN_COOKIES
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -154,7 +156,7 @@ class CheckingStarter(FakeStarter):
 
 
 class FakeYouTube:
-    """Answers the session check of an upload: ``answer`` is "accept", "refuse" or "fail".
+    """Answers the session check of an upload: ``answer`` is "accept", "refuse", "fail" or "pause".
 
     An answer brings a new value of SIDCC, as YouTube sends one.
     """
@@ -173,6 +175,8 @@ class FakeYouTube:
                     raise NotLoggedInError("YouTube answered https://www.youtube.com as to an anonymous user")
                 if youtube.answer == "fail":
                     raise AccountError("yt-dlp failed to check the session: HTTP Error 503")
+                if youtube.answer == "pause":
+                    raise RequestsPausedError(PAUSE)
 
             def cookies_text(self):
                 return renewed(text)
@@ -706,6 +710,53 @@ async def test_a_session_check_that_gives_no_answer_tells_why(user, sessions, fa
     await result_is(user, expected)
     assert "text-negative" in element_of(user, "cookie-result").classes
     assert text_of(user, "session-state") == "Unknown"
+
+
+PAUSE = RequestPause(BreakerReason.HTTP_429, datetime.datetime(2026, 10, 28, 13, 0, tzinfo=datetime.UTC), "Europe/Kyiv")
+PAUSE_TEMPLATE = (
+    "YouTube limited the requests with the cookies of the account (HTTP 429, too many requests). The service sends "
+    "no such request until {time}."
+)
+
+
+async def test_a_session_check_at_a_pause_names_its_end_in_the_form_of_the_browser(user, sessions, fake_starter):
+    store(sessions, Account(cookies=b"encrypted"))
+    fake_starter.state = None
+    fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": "a warning\n" + PAUSE.to_line() + "\n"})
+    await user.open("/settings")
+
+    user.find(marker="check-session").click()
+
+    template = "The session check failed. " + PAUSE_TEMPLATE
+    await result_is(user, template.format(time="2026-10-28 15:00 EET"))
+    assert "text-negative" in element_of(user, "cookie-result").classes
+    # The browser puts its form of the end of the pause into the translated sentence.
+    assert moment_of(user, "cookie-result") == ("2026-10-28T15:00:00+02:00", "Europe/Kyiv")
+    assert element_of(user, "cookie-result").props["data-time-template"] == template
+    assert text_of(user, "session-state") == "Unknown"
+
+
+async def test_an_upload_at_a_pause_stores_nothing_and_names_its_end_in_the_form_of_the_browser(
+    user, sessions, fake_starter, youtube
+):
+    """The real body of the child gives the pause to the page."""
+    youtube.answer = "pause"
+    await user.open("/settings")
+
+    await paste(user, cookie_text())
+
+    template = "The service stored nothing. " + PAUSE_TEMPLATE
+    await result_is(user, template.format(time="2026-10-28 15:00 EET"))
+    assert moment_of(user, "cookie-result") == ("2026-10-28T15:00:00+02:00", "Europe/Kyiv")
+    assert element_of(user, "cookie-result").props["data-time-template"] == template
+    assert account(sessions) is None
+    assert commands(fake_starter) == [["check-upload"]]
+
+    # The next result has no time, so the browser leaves its text as it is.
+    await paste(user, "")
+    await result_is(user, "The text is empty. Upload the cookie file, or paste its text.")
+    assert moment_of(user, "cookie-result") == (None, None)
+    assert "data-time-template" not in element_of(user, "cookie-result").props
 
 
 async def test_a_session_check_while_the_sync_lock_is_taken_starts_nothing(user, sessions, fake_starter):

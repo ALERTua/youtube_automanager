@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.runner import SyncRunner
-from youtube_automanager.settings import Settings
+from youtube_automanager.settings import DEFAULT_TZ, Settings
 from youtube_automanager.short_child import EXIT_YOUTUBE_ERROR, ChildError, child_result, fail, read_json, succeed
 from youtube_automanager.youtube.session import CookieCipher, CookieKeyError, load_current
 
@@ -72,12 +72,12 @@ def _error_text(error: BaseException) -> str:
     return f"{type(error).__name__}: {error}"
 
 
-def check_once(folder: Path, version: str, cookies: str, database_url: str) -> int:
+def check_once(folder: Path, version: str, cookies: str, database_url: str, timezone: str = DEFAULT_TZ) -> int:
     """The body of the check in the child process. Return the exit code of the child.
 
     ``folder`` holds the new release of ``version``. ``cookies`` is the cookie text from the standard input, or an
     empty text when the database stores no cookies. ``database_url`` names the database of the service, whose request
-    budget the session check uses.
+    budget the session check uses. ``timezone`` is the time zone of the service for the texts of that budget.
     """
     try:
         import yt_dlp
@@ -117,11 +117,15 @@ def check_once(folder: Path, version: str, cookies: str, database_url: str) -> i
     if cookies.strip():
         engine = make_engine(database_url)
         try:
-            budget = RequestBudget(make_session_factory(engine))
+            budget = RequestBudget(make_session_factory(engine), default_timezone=timezone)
             account.AccountClient(cookies, budget=budget).check_session()
             session = "live"
         except account.NotLoggedInError:
             session = "logged out"
+        except account.RequestsPausedError as error:
+            # A new release can be the fix of a limit of YouTube, so a pause leaves the decision to the anonymous read.
+            LOG.warning("The check of the new yt-dlp does not check the session: %s", error)
+            session = "not checked"
         except account.AccountError as error:
             # An AccountError never holds a cookie value.
             return fail(WHAT, EXIT_YOUTUBE_ERROR, f"The session check failed: {error}")

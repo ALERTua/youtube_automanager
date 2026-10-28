@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from youtube_automanager.db.models import NotificationTarget
+from youtube_automanager.i18n import _, set_language
 from youtube_automanager.notify import DEFAULT_EVENTS, Event, Level, Target
 from youtube_automanager.web.ui.notification_targets import (
     APPRISE_URLS,
@@ -41,6 +42,14 @@ def add(sessions, name="phone", url=f"tgram://{TOKEN}/chat", **values) -> int:
 def test_each_event_and_each_level_has_a_label():
     assert set(EVENT_LABELS) == set(Event)
     assert set(LEVEL_LABELS) == set(Level)
+
+
+def test_the_breaker_event_has_its_label_and_its_ukrainian_text(real_uk_catalog):
+    label = EVENT_LABELS[Event.REQUEST_BREAKER]
+    set_language("uk")
+
+    assert label == "Requests with cookies paused or resumed"
+    assert _(label) == "Запити з cookies призупинено або відновлено"
 
 
 @pytest.mark.parametrize(

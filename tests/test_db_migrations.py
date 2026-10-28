@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -171,7 +172,7 @@ def test_check_constraints_of_models_and_migrations_agree(sqlite_url, tmp_path):
     migrated = check_constraints(sqlite_url)
 
     assert migrated == check_constraints(created_url)
-    assert len(migrated) == 10
+    assert len(migrated) == 11
 
 
 def test_upgrade_keeps_stored_cookies_as_the_first_cookie_version_and_downgrade_keeps_them_in_the_account(
@@ -297,13 +298,14 @@ def test_the_catch_up_day_of_a_rule_keeps_the_rules_and_their_channels_in_both_d
 
 
 BEFORE_REQUEST_BUDGET = "c41e7a9d3b58"
+REQUEST_BUDGET = "e6b02f4a8d17"
 
 
 def test_the_request_budget_table_starts_empty_with_one_row_at_most_and_downgrade_removes_it(database_url):
     config = alembic_config(database_url)
     command.upgrade(config, BEFORE_REQUEST_BUDGET)
 
-    command.upgrade(config, "head")
+    command.upgrade(config, REQUEST_BUDGET)
 
     engine = create_engine(database_url)
     try:
@@ -326,6 +328,70 @@ def test_the_request_budget_table_starts_empty_with_one_row_at_most_and_downgrad
 
     assert "request_budget" not in table_names(database_url)
     assert current_revision(database_url) == BEFORE_REQUEST_BUDGET
+
+
+BREAKER_COLUMNS = {"breaker_until", "breaker_level", "breaker_reason", "breaker_opened_at"}
+
+
+def insert_target(connection, target_id: int, events: list[str]) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO notification_target (id, name, url, min_level, events, enabled) "
+            "VALUES (:id, :name, 'json://localhost', 0, :events, true)"
+        ),
+        {"id": target_id, "name": f"target {target_id}", "events": json.dumps(events)},
+    )
+
+
+def stored_events(connection) -> dict[int, list[str]]:
+    rows = connection.execute(text("SELECT id, events FROM notification_target ORDER BY id")).all()
+    return {row[0]: row[1] if isinstance(row[1], list) else json.loads(row[1]) for row in rows}
+
+
+def test_the_breaker_columns_keep_the_budget_and_each_stored_target_gets_the_breaker_event_once(database_url):
+    config = alembic_config(database_url)
+    command.upgrade(config, REQUEST_BUDGET)
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text("INSERT INTO request_budget (id, tokens, refilled_at) VALUES (1, 14.5, CURRENT_TIMESTAMP)")
+            )
+            insert_target(connection, 1, ["run_failed"])
+            insert_target(connection, 2, [])
+            # A target that has the event already, for example after a downgrade that the user undid by hand.
+            insert_target(connection, 3, ["request_breaker", "run_summary"])
+
+        command.upgrade(config, "head")
+
+        columns = {column["name"]: column["nullable"] for column in inspect(engine).get_columns("request_budget")}
+        assert {name: columns.get(name) for name in BREAKER_COLUMNS} == dict.fromkeys(BREAKER_COLUMNS, True)
+        with engine.begin() as connection:
+            assert connection.execute(text("SELECT tokens, breaker_reason FROM request_budget")).all() == [(14.5, None)]
+            assert stored_events(connection) == {
+                1: ["run_failed", "request_breaker"],
+                2: ["request_breaker"],
+                3: ["request_breaker", "run_summary"],
+            }
+            connection.execute(
+                text(
+                    "UPDATE request_budget SET breaker_reason = 'bot_check', breaker_level = 2, "
+                    "breaker_until = CURRENT_TIMESTAMP, breaker_opened_at = CURRENT_TIMESTAMP"
+                )
+            )
+        # The value is shorter than the column, so each database refuses it by the CHECK constraint.
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.execute(text("UPDATE request_budget SET breaker_reason = 'captcha'"))
+
+        command.downgrade(config, REQUEST_BUDGET)
+
+        assert not BREAKER_COLUMNS & {column["name"] for column in inspect(engine).get_columns("request_budget")}
+        with engine.connect() as connection:
+            assert connection.execute(text("SELECT tokens FROM request_budget")).scalars().all() == [14.5]
+            assert stored_events(connection) == {1: ["run_failed"], 2: [], 3: ["run_summary"]}
+    finally:
+        engine.dispose()
+    assert current_revision(database_url) == REQUEST_BUDGET
 
 
 def test_comparison_finds_a_column_that_the_migrations_lack(sqlite_url):

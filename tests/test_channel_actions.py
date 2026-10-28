@@ -12,6 +12,7 @@ import threading
 
 import pytest
 from sqlalchemy import select
+from yt_dlp import YoutubeDL
 
 from youtube_automanager import channel_actions
 from youtube_automanager.channel_actions import (
@@ -32,6 +33,7 @@ from youtube_automanager.channel_actions import (
 )
 from youtube_automanager.db.models import (
     Account,
+    BreakerReason,
     Channel,
     CookieVersion,
     CookieVersionState,
@@ -42,6 +44,8 @@ from youtube_automanager.db.models import (
     SessionState,
 )
 from youtube_automanager.engine import account_session
+from youtube_automanager.pacing import RequestBudget
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.runner import BUSY_TEXT, SCHEDULED_WAIT_S, SOURCE_ROOT, SyncRunner
 from youtube_automanager.settings import Settings
 from youtube_automanager.short_child import (
@@ -53,11 +57,12 @@ from youtube_automanager.short_child import (
     ChildError,
     ChildFailed,
     ChildLoggedOut,
+    ChildPaused,
     ChildUnavailable,
     ChildYouTubeError,
 )
 from youtube_automanager.youtube import public
-from youtube_automanager.youtube.account import AccountError, NotLoggedInError, WriteRejectedError
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError, RequestsPausedError, WriteRejectedError
 from youtube_automanager.youtube.public import ChannelInfo, PublicSourceError
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -346,6 +351,58 @@ def test_a_change_that_youtube_does_not_confirm_writes_no_flag_and_still_saves_t
         assert len(session.scalars(select(CookieVersion)).all()) == 2
 
 
+def test_during_the_pause_of_the_breaker_the_change_sends_no_request_and_gives_the_pause_to_the_parent(
+    settings, db_sessions, capsys, monkeypatch, runner, fake_starter
+):
+    store_cookies(db_sessions, settings)
+    store(db_sessions, Channel(channel_id=A, title="Stored", is_subscribed=False))
+    paused = RequestBudget(db_sessions, send=lambda notification: None).open_breaker(BreakerReason.HTTP_429)
+    requests = []
+    monkeypatch.setattr(YoutubeDL, "urlopen", lambda ydl, request: requests.append(request.url))
+
+    code = change_subscription_once(settings, A, subscribe=True)
+
+    assert code == EXIT_PAUSED
+    line = last_stderr_line(capsys)
+    assert RequestPause.from_line(line) == RequestPause(BreakerReason.HTTP_429, paused.pause.until, "UTC")
+    assert requests == []
+    assert stored_channel(db_sessions, A).is_subscribed is False
+    with db_sessions() as session:
+        # The pause is no sign of a dead session.
+        assert session.scalars(select(Account)).one().session_state is SessionState.UNKNOWN
+        assert [version.state for version in session.scalars(select(CookieVersion))] == [CookieVersionState.UNCHECKED]
+    # The parent reads the line back.
+    fake_starter.plan.append({"exit_code": code, "stderr": f"a warning\n{line}\n"})
+    with pytest.raises(ChildPaused) as raised:
+        subscribe_in_child(runner, A, "Alpha")
+    assert raised.value.pause == RequestPause(BreakerReason.HTTP_429, paused.pause.until, "UTC")
+    assert str(raised.value) == str(paused)
+
+
+def test_a_pause_that_starts_during_the_change_gives_the_pause_to_the_parent(
+    settings, db_sessions, fake_client, capsys
+):
+    store_cookies(db_sessions, settings)
+    pause = RequestPause(BreakerReason.BOT_CHECK, datetime.datetime(2026, 10, 28, 18, 0, tzinfo=datetime.UTC), "UTC")
+    fake_client.change_error = RequestsPausedError(pause)
+
+    assert change_subscription_once(settings, A, subscribe=True) == EXIT_PAUSED
+
+    assert RequestPause.from_line(last_stderr_line(capsys)) == pause
+
+
+@pytest.mark.parametrize("action", ["subscribe", "unsubscribe"])
+def test_the_pause_exit_code_with_a_line_that_is_no_pause_is_a_process_error(runner, fake_starter, action):
+    fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": f"ValueError: {COOKIE_VALUE}\n"})
+
+    with pytest.raises(ChildFailed) as raised:
+        subscribe_in_child(runner, A, "Alpha") if action == "subscribe" else unsubscribe_in_child(runner, A)
+
+    assert str(raised.value) == (
+        "The subscription change process stopped at a pause of the requests, but gave no end of the pause."
+    )
+
+
 @pytest.mark.parametrize("channel_id", ["", "UC", "@handle", f"{A}x", "PLaaaaaaaaaaaaaaaaaaaaaa"])
 def test_a_text_that_is_not_a_channel_id_fails_before_any_request(settings, db_sessions, fake_client, channel_id):
     store_cookies(db_sessions, settings)
@@ -514,7 +571,7 @@ def test_each_failure_exit_code_gives_its_own_error_with_the_last_stderr_line(
     assert str(raised.value) == "the cause"
 
 
-@pytest.mark.parametrize("exit_code", [1, 2, 6, 137])
+@pytest.mark.parametrize("exit_code", [1, 2, 7, 137])
 def test_another_exit_code_is_a_crash_and_its_stderr_stays_out_of_the_error(runner, fake_starter, exit_code):
     fake_starter.plan[:] = [
         {"exit_code": exit_code, "stderr": f"Traceback (most recent call last):\nValueError: {COOKIE_VALUE}\n"}

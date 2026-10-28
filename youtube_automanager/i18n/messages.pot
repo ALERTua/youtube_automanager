@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 18:08+0200\n"
+"POT-Creation-Date: 2026-10-28 20:11+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -607,6 +607,10 @@ msgstr ""
 msgid "Group type"
 msgstr ""
 
+#: youtube_automanager/web/ui/account_lists.py
+msgid "HTTP 429, too many requests"
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Handle"
 msgstr ""
@@ -982,6 +986,10 @@ msgstr ""
 #: youtube_automanager/web/ui/rule_editor.py
 #, python-brace-format
 msgid "Remove {channel}"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Requests with cookies paused or resumed"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_editor.py
@@ -1564,6 +1572,11 @@ msgstr ""
 msgid "The service reads the videos on YouTube. This takes up to a few minutes."
 msgstr ""
 
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The service stored nothing. {reason}"
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "The service works with YouTube. This takes up to a minute."
 msgstr ""
@@ -1577,6 +1590,11 @@ msgstr ""
 #: youtube_automanager/web/ui/settings_page.py
 #, python-brace-format
 msgid "The session check cannot use the stored cookies: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The session check failed. {reason}"
 msgstr ""
 
 #: youtube_automanager/web/ui/settings_page.py
@@ -1930,6 +1948,24 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "YouTube found no channel for this text."
+msgstr ""
+
+#. Translators: {reason} is the answer of YouTube, for example a bot check.
+#. {time} is the end of the pause, which the
+#. browser writes in its own form.
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid ""
+"YouTube limited the requests with the cookies of the account ({reason}). "
+"The service sends no such request until {time}."
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "a \"try again later\" page"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "a bot check"
 msgstr ""
 
 #: youtube_automanager/web/ui/rule_form.py

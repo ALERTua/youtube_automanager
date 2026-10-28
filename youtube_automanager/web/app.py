@@ -89,7 +89,7 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
             ytdlp = YtdlpUpdates(sessions, runner, settings.ytdlp_dir, install=update_ytdlp, smoke=smoke)
             ytdlp_settings = await asyncio.to_thread(read_ytdlp_settings, sessions)
             await scheduler.start_ytdlp_updates(ytdlp.run_scheduled, ytdlp_settings.at, ytdlp_settings.enabled)
-            applies = Applies(runner, sessions)
+            applies = Applies(runner, sessions, settings.tz)
             app.state.services = Services(settings, engine, sessions, runner, scheduler, ytdlp, run_events, applies)
             try:
                 yield

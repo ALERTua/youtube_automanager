@@ -13,6 +13,7 @@ from sqlalchemy import select
 from youtube_automanager.account_cache import REFRESHED_AT_KEY, refresh_account_cache
 from youtube_automanager.db.models import (
     Account,
+    BreakerReason,
     Channel,
     CookieOrigin,
     CookieVersion,
@@ -248,6 +249,33 @@ def test_the_client_of_a_session_takes_its_tokens_from_the_budget_of_the_databas
         row = session.get(RequestBudgetState, 1)
     assert row.tokens == BUCKET_SIZE - 1
     assert row.last_answer_at is not None
+
+
+def test_http_429_of_the_session_check_pauses_the_requests_and_the_session_sends_the_notification(harness, monkeypatch):
+    """The real client: YouTube answers the check with HTTP 429, so the check fails and the session stays alive."""
+    from yt_dlp import YoutubeDL
+    from yt_dlp.networking.common import Response
+    from yt_dlp.networking.exceptions import HTTPError
+
+    def limit(ydl, request):
+        raise HTTPError(Response(io.BytesIO(b""), request.url, {}, status=429))
+
+    monkeypatch.setattr(YoutubeDL, "urlopen", limit)
+    harness.upload()
+    account = AccountSession(harness.sessions, harness.make_settings(tz="Europe/Kyiv"), send=harness.sent.append)
+
+    result = account.check()
+
+    assert result.outcome is CheckOutcome.FAILED
+    assert result.detail is not None
+    assert result.detail.startswith("The session check failed: The service sends no request with the cookies")
+    assert result.detail.endswith(" EET, because YouTube answered a request with HTTP 429 (too many requests).")
+    assert result.pause is not None
+    assert (result.pause.reason, result.pause.zone) == (BreakerReason.HTTP_429, "Europe/Kyiv")
+    assert [notification.event for notification in harness.sent] == [Event.REQUEST_BREAKER]
+    assert " EET. " in harness.sent[0].body
+    with harness.sessions() as session:
+        assert session.get(RequestBudgetState, 1).breaker_reason is BreakerReason.HTTP_429
 
 
 # A live session

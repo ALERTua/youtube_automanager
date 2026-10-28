@@ -7,8 +7,8 @@ so the service never rotates more often than the answer allows, and never more o
 
 The rotation is the setting ROTATION_KEY, on by default. It never runs while a sync run or a session check holds the
 sync lock, and it saves the new values through the guarded write-back. Each of its two requests takes a token of the
-request budget that the requests of yt-dlp with cookies share. It uses only the standard library, because the process
-of the service never imports yt-dlp.
+request budget that the requests of yt-dlp with cookies share. While the breaker is open, the rotation waits for its
+end. HTTP 429 opens it. It uses only the standard library, because the process of the service never imports yt-dlp.
 """
 
 import datetime
@@ -24,7 +24,7 @@ from collections.abc import Callable, Sequence
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.db.models import CookieOrigin, SessionState, Setting, utc_now
-from youtube_automanager.pacing import RequestBudget
+from youtube_automanager.pacing import BreakerOpen, RequestBudget
 from youtube_automanager.runner import SYNC_LOCK, RunAlreadyActive, sync_lock_held
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.cookie_text import from_cookiejar, to_cookiejar
@@ -112,7 +112,7 @@ class CookieRotation:
         self._lock = lock
         self._handlers = tuple(handlers)
         self._clock = clock
-        self._budget = budget or RequestBudget(sessions)
+        self._budget = budget or RequestBudget(sessions, default_timezone=settings.tz)
         self._failures = 0
 
     def turn(self) -> float:
@@ -195,6 +195,9 @@ class CookieRotation:
                     },
                 ),
             )
+        except BreakerOpen as breaker_open:
+            LOG.info("The cookie rotation waits: %s", breaker_open)
+            return max((breaker_open.pause.until - self._clock()).total_seconds(), RETRY_S)
         except (OSError, http.client.HTTPException) as error:
             # The text of the error can hold a URL, but never a cookie. Only its type goes into the log.
             LOG.warning("The cookie rotation failed: %s", type(error).__name__)
@@ -203,6 +206,7 @@ class CookieRotation:
             LOG.warning("The cookie rotation answered HTTP %s", status)
             return self._failed()
         self._failures = 0
+        self._budget.end_if_answered()
         interval = max(_next_interval(answer) or INTERVAL_S, INTERVAL_S)
         with self._sessions.begin() as session:
             changed = write_back(
@@ -220,14 +224,18 @@ class CookieRotation:
         """Send one request with a token of the budget. Return the HTTP status and the body text, also for an HTTP
         error.
 
-        The budget keeps the end of the answer also after an error answer or a failed connection.
+        The budget keeps the end of the answer also after an error answer or a failed connection, and it gets the
+        status of the answer for its breaker. Raise ``BreakerOpen`` without a request while the breaker is open.
         """
         self._budget.before_request()
+        status = None
         try:
             with opener.open(request, timeout=TIMEOUT_S) as response:
-                return response.status, response.read().decode("utf-8", "replace")
+                status = response.status
+                return status, response.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as error:
+            status = error.code
             with error:
-                return error.code, error.read().decode("utf-8", "replace")
+                return status, error.read().decode("utf-8", "replace")
         finally:
-            self._budget.after_answer()
+            self._budget.after_answer(status)

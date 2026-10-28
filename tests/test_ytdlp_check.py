@@ -19,8 +19,8 @@ from yt_dlp import YoutubeDL
 from yt_dlp.networking.common import Response
 from yt_dlp.networking.exceptions import HTTPError
 
-from youtube_automanager import ytdlp_check
-from youtube_automanager.db.models import RequestBudgetState
+from youtube_automanager import notify, ytdlp_check
+from youtube_automanager.db.models import BreakerReason, RequestBudgetState
 from youtube_automanager.pacing import BUCKET_SIZE, RequestBudget
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.settings import Settings
@@ -138,6 +138,39 @@ def test_the_session_check_takes_a_token_of_the_budget_of_the_database(
         row = session.get(RequestBudgetState, 1)
     assert row.tokens == BUCKET_SIZE - 1
     assert row.last_answer_at is not None
+
+
+def test_during_the_pause_of_the_breaker_the_release_passes_without_the_session_check(
+    uploads, settings, sessions, monkeypatch, capsys
+):
+    RequestBudget(sessions, send=lambda notification: None).open_breaker(BreakerReason.BOT_CHECK)
+    requests = []
+    monkeypatch.setattr(YoutubeDL, "urlopen", lambda ydl, request: requests.append(request.url))
+
+    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES, settings.database_url) == 0
+
+    assert json.loads(result(capsys)) == {"version": yt_dlp.version.__version__, "session": "not checked"}
+    assert requests == []
+    assert uploads.reads == [ytdlp_check.CHECK_CHANNEL_ID]
+
+
+def test_a_limit_during_the_release_check_passes_and_names_the_end_in_the_given_time_zone(
+    uploads, settings, sessions, monkeypatch, capsys
+):
+    sent = []
+    monkeypatch.setattr(notify, "send_to_stored_targets", lambda sessions, notification: sent.append(notification))
+
+    def limit(ydl, request):
+        raise HTTPError(Response(io.BytesIO(b""), request.url, {}, status=429))
+
+    monkeypatch.setattr(YoutubeDL, "urlopen", limit)
+
+    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES, settings.database_url, "Europe/Kyiv") == 0
+
+    assert json.loads(result(capsys))["session"] == "not checked"
+    (opened,) = sent
+    assert opened.event is notify.Event.REQUEST_BREAKER
+    assert " EET. " in opened.body
 
 
 def test_a_failed_session_check_fails_the_release(uploads, client, capsys):

@@ -35,6 +35,7 @@ EVENT_LABELS = {
     Event.YTDLP_UPDATE_RESULT: N_("yt-dlp update"),
     Event.VIDEO_ADDED: N_("Video added"),
     Event.SCHEDULER_STATE: N_("Schedule paused or resumed"),
+    Event.REQUEST_BREAKER: N_("Requests with cookies paused or resumed"),
 }
 LEVEL_LABELS = {
     Level.INFO: N_("Info"),

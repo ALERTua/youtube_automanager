@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.rule_actions import apply_in_child
 from youtube_automanager.runner import SyncRunner
+from youtube_automanager.settings import DEFAULT_TZ
 from youtube_automanager.short_child import ChildError
 
 LOG = logging.getLogger(__name__)
@@ -52,11 +53,13 @@ class _Start:
 class Applies:
     """The applies of the service. The sync lock lets one apply run at a time."""
 
-    def __init__(self, runner: SyncRunner, sessions: sessionmaker[Session]) -> None:
+    def __init__(self, runner: SyncRunner, sessions: sessionmaker[Session], default_timezone: str = DEFAULT_TZ) -> None:
+        """``default_timezone`` is the time zone of the service when the database holds no schedule."""
         # Emitted with no arguments when an apply started or ended.
         self.changed: Event[[]] = Event()
         self._runner = runner
         self._sessions = sessions
+        self._default_timezone = default_timezone
         # The active applies by run id. Only the event loop changes it.
         self._active: dict[int, ActiveApply] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -104,7 +107,13 @@ class Applies:
     async def _apply(self, start: _Start, on_claimed: Callable[[int], None]) -> None:
         try:
             applied = await asyncio.to_thread(
-                apply_in_child, self._runner, self._sessions, start.rule_id, start.since, on_claimed
+                apply_in_child,
+                self._runner,
+                self._sessions,
+                start.rule_id,
+                start.since,
+                on_claimed,
+                default_timezone=self._default_timezone,
             )
         except Exception as error:
             if start.run_id is None:

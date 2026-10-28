@@ -9,6 +9,7 @@ import email.message
 import io
 import json
 import logging
+import re
 import socket
 import threading
 import urllib.error
@@ -18,11 +19,14 @@ import urllib.response
 import pytest
 from sqlalchemy import select
 
+from youtube_automanager import notify
 from youtube_automanager.db.models import (
     Account,
+    BreakerReason,
     CookieOrigin,
     CookieVersion,
     RequestBudgetState,
+    Schedule,
     SessionState,
     Setting,
 )
@@ -332,8 +336,8 @@ def test_without_a_cookie_key_or_cookies_there_is_no_rotation(harness, db_sessio
 # Failed rotations
 
 
-def test_http_429_saves_nothing_and_each_failure_doubles_the_wait(harness):
-    harness.accounts.rotate = (429, "Too Many Requests", [])
+def test_an_error_answer_saves_nothing_and_each_failure_doubles_the_wait(harness):
+    harness.accounts.rotate = (503, "Service Unavailable", [])
     rotation = harness.rotation()
     delays = []
     for _ in range(4):
@@ -345,6 +349,79 @@ def test_http_429_saves_nothing_and_each_failure_doubles_the_wait(harness):
 
     harness.accounts.rotate = (200, rotate_answer(), SET_COOKIES)
     assert rotation.turn() == INTERVAL_S
+
+
+def test_http_429_of_the_rotation_saves_nothing_and_opens_the_breaker_of_the_budget(harness):
+    harness.accounts.rotate = (429, "Too Many Requests", [])
+
+    assert harness.rotation().turn() == 2 * INTERVAL_S
+
+    assert len(harness.versions()) == 1
+    row = harness.budget()
+    assert (row.breaker_reason, row.breaker_until) == (
+        BreakerReason.HTTP_429,
+        row.last_answer_at + datetime.timedelta(hours=1),
+    )
+
+
+def test_http_429_of_the_rotation_names_the_end_in_the_time_zone_of_the_settings_without_a_schedule(
+    harness, tmp_path, monkeypatch
+):
+    sent = []
+    monkeypatch.setattr(notify, "send_to_stored_targets", lambda sessions, notification: sent.append(notification))
+    harness.accounts.rotate = (429, "Too Many Requests", [])
+    settings = Settings(home=tmp_path, database_url="sqlite://", tz="Europe/Kyiv", cookies_key=harness.key)
+    rotation = CookieRotation(
+        harness.sessions, settings, lock=harness.lock, handlers=[harness.accounts], clock=lambda: harness.now
+    )
+    with harness.sessions() as session:
+        assert session.scalars(select(Schedule)).all() == []
+
+    rotation.turn()
+
+    (opened,) = sent
+    assert opened.event is notify.Event.REQUEST_BREAKER
+    assert re.search(r" until \d{4}-\d\d-\d\d \d\d:\d\d EES?T\. ", opened.body)
+
+
+def test_a_rotation_after_the_end_of_a_pause_ends_the_pause(harness):
+    sent = []
+    budget = RequestBudget(
+        harness.sessions,
+        clock=lambda: harness.budget_now,
+        sleep=harness.budget_sleep,
+        random=lambda low, high: PAUSE_S,
+        send=sent.append,
+    )
+    budget.open_breaker(BreakerReason.HTTP_429)
+    harness.budget_now += datetime.timedelta(hours=1)
+    rotation = CookieRotation(
+        harness.sessions,
+        harness.settings,
+        lock=harness.lock,
+        handlers=[harness.accounts],
+        clock=lambda: harness.now,
+        budget=budget,
+    )
+
+    assert rotation.turn() == INTERVAL_S
+
+    assert [notification.event for notification in sent] == [notify.Event.REQUEST_BREAKER] * 2
+    assert sent[1].title.endswith("the requests with cookies work again")
+    assert harness.budget().breaker_reason is None
+
+
+@pytest.mark.parametrize(("before_end_s", "delay_s"), [(3600, 3600), (RETRY_S + 1, RETRY_S + 1), (10, RETRY_S)])
+def test_during_the_pause_the_rotation_sends_nothing_and_waits_for_its_end(harness, before_end_s, delay_s):
+    other_process = RequestBudget(harness.sessions, clock=lambda: harness.budget_now, send=lambda notification: None)
+    other_process.open_breaker(BreakerReason.HTTP_429)
+    harness.now = NOW + datetime.timedelta(seconds=3600 - before_end_s)
+
+    assert harness.rotation().turn() == delay_s
+
+    assert harness.accounts.requests == []
+    assert len(harness.versions()) == 1
+    assert harness.next_at() == harness.now + datetime.timedelta(seconds=delay_s)
 
 
 def test_a_page_without_a_rotation_id_sends_no_rotation(harness):

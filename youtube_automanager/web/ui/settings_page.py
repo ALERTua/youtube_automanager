@@ -31,9 +31,9 @@ from youtube_automanager.engine.modes import Processing, ProcessingMode
 from youtube_automanager.i18n import N_, _
 from youtube_automanager.rotation import INTERVAL_S
 from youtube_automanager.runner import SessionCheckOutcome, SessionCheckResult
-from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildUnavailable
+from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildPaused, ChildUnavailable
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.account_lists import child_error_text
+from youtube_automanager.web.ui.account_lists import child_error_text, child_pause, pause_text, show_pause_end
 from youtube_automanager.web.ui.common import (
     SESSION_STATES,
     ResultLabel,
@@ -119,6 +119,9 @@ def check_text(result: SessionCheckResult) -> tuple[str, bool]:
     if result.outcome is SessionCheckOutcome.UNAVAILABLE:
         # Translators: {cause} is the English cause from the service, for example that no cookies are stored.
         return _("The session check cannot use the stored cookies: {cause}").format(cause=result.detail or ""), True
+    if result.pause is not None:
+        # The text holds {time}, and the page lets the browser put the end of the pause into it.
+        return _("The session check failed. {reason}").format(reason=pause_text(result.pause)), True
     if result.outcome is SessionCheckOutcome.FAILED:
         return _("The session check failed: {cause}").format(cause=result.detail or ""), True
     if result.session_state is SessionState.DEAD:
@@ -153,9 +156,14 @@ def expired_text(expiry: datetime, zone: ZoneInfo) -> str:
 
 
 def upload_error_text(error: ChildError, *, had_cookies: bool) -> str:
-    """Return the text of an upload that the service did not store. ``had_cookies`` tells whether cookies are stored."""
+    """Return the text of an upload that the service did not store. ``had_cookies`` tells whether cookies are stored.
+
+    The text of a pause of the requests with cookies holds ``{time}`` for its end.
+    """
     if isinstance(error, ChildBusy):
         return child_error_text(error)
+    if isinstance(error, ChildPaused):
+        return _("The service stored nothing. {reason}").format(reason=pause_text(error.pause))
     if isinstance(error, ChildLoggedOut):
         if had_cookies:
             return _(
@@ -254,6 +262,7 @@ async def _cookies_section(services: Services) -> None:
         # The text and the new state show together.
         await reload()
         show_result(text, problem=problem)
+        show_pause_end(result_label, text, result.pause)
 
     async def store(text: str) -> None:
         """Check the cookie text, first without a request and then with YouTube, which stores it when it works.
@@ -298,7 +307,9 @@ async def _cookies_section(services: Services) -> None:
         if failure is not None:
             # The cause comes from the child, and it never holds a cookie value.
             LOG.warning("The settings page did not store the uploaded cookies: %s", failure)
-            show_result(upload_error_text(failure, had_cookies=had_cookies), problem=True)
+            text = upload_error_text(failure, had_cookies=had_cookies)
+            show_result(text, problem=True)
+            show_pause_end(result_label, text, child_pause(failure))
             return
         LOG.info("The settings page stored new YouTube cookies, because YouTube accepted them")
         ui.notify(_("The cookies work and are stored."), type="positive")

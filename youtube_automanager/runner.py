@@ -30,6 +30,7 @@ import youtube_automanager
 from youtube_automanager import notify
 from youtube_automanager.db import affected_rows, make_engine, make_session_factory
 from youtube_automanager.db.models import Run, RunStatus, RunTrigger, SessionState, utc_now
+from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.session import account_row
 from youtube_automanager.youtube.ytdlp_updater import child_env
@@ -101,6 +102,8 @@ class SessionCheckResult:
     last_checked_at: datetime | None = None
     earliest_cookie_expiry: datetime | None = None
     detail: str | None = None
+    # The pause of the requests with cookies when the check stopped at an open breaker.
+    pause: RequestPause | None = None
 
 
 @dataclass(frozen=True)
@@ -383,6 +386,7 @@ class SyncRunner:
             end = self._run_process(check_command(), "The session check", CHECK_TIMEOUT_S)
         finally:
             self._lock.release()
+        pause = None
         if end.start_error is not None:
             outcome, detail = (
                 SessionCheckOutcome.FAILED,
@@ -395,6 +399,8 @@ class SyncRunner:
             outcome, detail = SessionCheckOutcome.CHECKED, None
         elif end.stopped:
             outcome, detail = SessionCheckOutcome.FAILED, "The service stopped during the session check."
+        elif end.returncode == EXIT_PAUSED and (pause := RequestPause.from_line(end.last_line)) is not None:
+            outcome, detail = SessionCheckOutcome.FAILED, f"The session check failed: {pause}"
         else:
             outcome = (
                 SessionCheckOutcome.UNAVAILABLE
@@ -405,9 +411,9 @@ class SyncRunner:
         with self._sessions() as session:
             account = account_row(session)
         if account is None:
-            return SessionCheckResult(outcome, detail=detail)
+            return SessionCheckResult(outcome, detail=detail, pause=pause)
         return SessionCheckResult(
-            outcome, account.session_state, account.last_checked_at, account.earliest_cookie_expiry, detail
+            outcome, account.session_state, account.last_checked_at, account.earliest_cookie_expiry, detail, pause
         )
 
     def run_short_child(
@@ -619,5 +625,8 @@ def check_session_once(settings: Settings) -> int:
     LOG.info("The session check gave %s", result.outcome.value)
     if result.outcome in (CheckOutcome.ALIVE, CheckOutcome.DEAD):
         return 0
+    if result.pause is not None:
+        print(result.pause.to_line(), file=sys.stderr, flush=True)
+        return EXIT_PAUSED
     print(result.detail, file=sys.stderr, flush=True)
     return UNAVAILABLE_EXIT_CODE if result.outcome is CheckOutcome.UNAVAILABLE else 1

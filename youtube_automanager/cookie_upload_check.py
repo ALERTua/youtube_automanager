@@ -35,6 +35,7 @@ from youtube_automanager.short_child import (
     EXIT_YOUTUBE_ERROR,
     ChildFailed,
     fail,
+    fail_paused,
     read_json,
     run_child,
     succeed,
@@ -72,6 +73,8 @@ def check_upload_once(settings: Settings, text: str) -> int:
         return succeed(STORED)
     if result.outcome is CheckOutcome.UNAVAILABLE:
         return fail(WHAT, EXIT_UNAVAILABLE, result.detail)
+    if result.pause is not None:
+        return fail_paused(WHAT, result.pause)
     # A session that YouTube refuses, or a check without a clear answer, is no fault of the service.
     code = EXIT_LOGGED_OUT if result.outcome is CheckOutcome.DEAD else EXIT_YOUTUBE_ERROR
     return fail(WHAT, code, result.detail, level=logging.WARNING)

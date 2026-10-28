@@ -25,6 +25,7 @@ from youtube_automanager import notify
 from youtube_automanager.account_cache import ChannelLike, PlaylistLike
 from youtube_automanager.db.models import CookieOrigin, SessionState, utc_now
 from youtube_automanager.pacing import RequestBudget
+from youtube_automanager.request_pause import RequestPause
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube import session as cookie_store
 from youtube_automanager.youtube.account import AccountClient, AccountError, NotLoggedInError
@@ -88,6 +89,8 @@ class CheckOutcome(enum.StrEnum):
 class CheckResult:
     outcome: CheckOutcome
     detail: str | None = None
+    # The pause of the requests with cookies when the check failed at an open breaker.
+    pause: RequestPause | None = None
 
 
 def load_stored(sessions: sessionmaker[Session], settings: Settings) -> tuple[CookieCipher, StoredCookies]:
@@ -144,7 +147,7 @@ class AccountSession:
     YouTube refused during the work, and ``write_back`` saves the updated cookies.
     ``send`` sends a notification, and ``make_client`` builds the account client from a cookie text. Without
     ``make_client``, the session builds an ``AccountClient`` that takes its tokens from the request budget on the
-    database of ``sessions``.
+    database of ``sessions``, and the breaker of that budget sends its notifications through ``send``.
     """
 
     def __init__(
@@ -169,7 +172,8 @@ class AccountSession:
         self._alive = False
 
     def _new_client(self, cookies: str) -> ClientLike:
-        return AccountClient(cookies, budget=RequestBudget(self._sessions))
+        budget = RequestBudget(self._sessions, send=self._send, default_timezone=self._settings.tz)
+        return AccountClient(cookies, budget=budget)
 
     def check(self) -> CheckResult:
         """Check the session of the current cookie version, and go back to the newest good version when it is dead.
@@ -218,7 +222,7 @@ class AccountSession:
             return CheckResult(CheckOutcome.DEAD, UPLOAD_REFUSED_TEXT)
         except AccountError as error:
             LOG.warning("The check of the uploaded cookies failed, so the service stores nothing: %s", error)
-            return CheckResult(CheckOutcome.FAILED, f"The check of the uploaded cookies failed: {error}")
+            return CheckResult(CheckOutcome.FAILED, f"The check of the uploaded cookies failed: {error}", error.pause)
         now = self._clock()
         with self._sessions.begin() as session:
             self._version_id = cookie_store.save_cookies(session, cipher, text, now=now).id
@@ -279,7 +283,7 @@ class AccountSession:
             return self._verify(client, good, roll_back=False)
         except AccountError as error:
             LOG.warning("The session check failed: %s", error)
-            return CheckResult(CheckOutcome.FAILED, f"The session check failed: {error}")
+            return CheckResult(CheckOutcome.FAILED, f"The session check failed: {error}", error.pause)
         self._passed(stored)
         return CheckResult(CheckOutcome.ALIVE)
 

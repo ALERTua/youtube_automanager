@@ -17,6 +17,7 @@ from youtube_automanager import notify, rule_actions
 from youtube_automanager.db.models import (
     Account,
     AddedVideo,
+    BreakerReason,
     Channel,
     CookieVersion,
     CookieVersionState,
@@ -32,11 +33,13 @@ from youtube_automanager.db.models import (
     SeenVideoState,
     SessionState,
     Setting,
+    utc_now,
 )
 from youtube_automanager.engine import account_session
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.engine.sync import FEED_READ_KEY, FEED_SOURCE
-from youtube_automanager.pacing import PAUSE_JITTER_S, PAUSE_S, REFILL_S
+from youtube_automanager.pacing import PAUSE_JITTER_S, PAUSE_S, REFILL_S, RequestBudget
+from youtube_automanager.request_pause import RequestPause
 from youtube_automanager.rule_actions import (
     PREVIEW_TIMEOUT_SECONDS,
     AppliedRun,
@@ -56,6 +59,7 @@ from youtube_automanager.short_child import (
     ChildBusy,
     ChildFailed,
     ChildLoggedOut,
+    ChildPaused,
     ChildUnavailable,
     ChildYouTubeError,
 )
@@ -685,6 +689,31 @@ def test_a_failed_apply_keeps_its_cause_as_the_error_of_the_run_and_sends_the_fa
     )
     (sent,) = runner.sent
     assert sent.event is notify.Event.RUN_FAILED
+
+
+@pytest.mark.parametrize("zone", ["UTC", "Europe/Kyiv"])
+def test_an_apply_during_the_pause_of_the_requests_writes_no_run_and_starts_nothing(
+    runner, fake_starter, db_sessions, zone
+):
+    paused = RequestBudget(db_sessions, send=lambda notification: None).open_breaker(BreakerReason.BOT_CHECK)
+
+    with pytest.raises(ChildPaused) as raised:
+        apply_in_child(runner, db_sessions, 3, SINCE, default_timezone=zone)
+
+    assert raised.value.pause == RequestPause(BreakerReason.BOT_CHECK, paused.pause.until, zone)
+    assert runs(db_sessions) == []
+    assert fake_starter.calls == []
+    assert not runner.is_active()
+
+
+def test_an_apply_after_the_end_of_the_pause_runs(runner, fake_starter, db_sessions):
+    budget = RequestBudget(db_sessions, clock=lambda: utc_now() - datetime.timedelta(hours=7))
+    budget.open_breaker(BreakerReason.BOT_CHECK)
+
+    applied = apply_in_child(runner, db_sessions, 3, SINCE)
+
+    assert applied.status is RunStatus.SUCCEEDED
+    assert len(fake_starter.calls) == 1
 
 
 def test_an_apply_while_the_lock_is_taken_writes_no_run_and_starts_nothing(runner, fake_starter, db_sessions):
