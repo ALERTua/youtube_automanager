@@ -94,7 +94,8 @@ def create_app(settings: Settings | None = None, *, start: ChildStarter = start_
             try:
                 yield
             finally:
-                # The runner stops first, so the scheduler starts no new run and has no job in a thread at its shutdown.
+                # The runner stops first, so the scheduler starts no new run. The shutdown of the scheduler waits for a
+                # cleanup that still runs.
                 await asyncio.to_thread(runner.stop, STOP_TIMEOUT_SECONDS)
                 # The stop ended the child of an active apply, so the task of the apply only reads the end of its run.
                 await applies.close()
