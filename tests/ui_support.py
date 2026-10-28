@@ -1,14 +1,17 @@
 """Helpers of the tests that run the whole service with its pages. The fixtures of these tests are in ``conftest.py``."""
 
 import asyncio
+import shutil
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
 from nicegui import ElementFilter, ui
 from nicegui.client import Client
 from nicegui.testing import User
+from sqlalchemy import make_url
 
 from youtube_automanager.web.app import create_app
 from youtube_automanager.web.ui import mount_ui
@@ -19,6 +22,8 @@ SEE_PAUSE_SECONDS = 0.1
 # NiceGUI tries 3 times, 0.1 s apart. Under load, for example in a parallel run, a page can need longer. The tries end
 # at the first success, so the longer limit costs a passing test nothing. A call can still give its own number of tries.
 SEE_RETRIES = round(WAIT_SECONDS / SEE_PAUSE_SECONDS)
+# A SQLite file with the newest schema. The fixture ``nicegui_globals`` sets it for each test.
+DATABASE_TEMPLATE: Path | None = None
 
 
 def store(sessions, *rows):
@@ -50,6 +55,7 @@ async def service_with_pages(settings, start) -> AsyncGenerator[tuple[User, Any]
     The ``user`` fixture of NiceGUI runs only the lifespan of NiceGUI and sends each request to NiceGUI directly, so
     its pages would get no services. A second ``PatientUser`` on ``user.http_client`` is a second browser tab.
     """
+    copy_database_template(settings.database_url)
     app = create_app(settings, start=start)
     mount_ui(app)
     async with (
@@ -60,6 +66,22 @@ async def service_with_pages(settings, start) -> AsyncGenerator[tuple[User, Any]
             yield PatientUser(client), app.state.services
         finally:
             close_tabs()
+
+
+def copy_database_template(url: str) -> None:
+    """Copy ``DATABASE_TEMPLATE`` to the SQLite file of ``url`` when that file does not exist yet.
+
+    The service then starts with a database at the newest schema, and its migrations at the start only check the
+    version. The migrations of a fresh database take about 0.15 s, and nearly each test of the pages starts the service.
+    The tests of the database and of the start of the service migrate their own databases.
+    """
+    parsed = make_url(url)
+    if DATABASE_TEMPLATE is None or parsed.get_backend_name() != "sqlite" or parsed.database in (None, "", ":memory:"):
+        return
+    path = Path(parsed.database)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(DATABASE_TEMPLATE, path)
 
 
 def close_tabs() -> None:

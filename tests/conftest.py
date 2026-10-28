@@ -13,6 +13,7 @@ from pathlib import Path
 
 import fastapi.dependencies.models as fastapi_models
 import pytest
+import ui_support
 from babel.messages.mofile import write_mo
 from babel.messages.pofile import read_po
 from nicegui import Client
@@ -278,8 +279,8 @@ async def user(nicegui_globals, settings, fake_starter):
 
 
 @pytest.fixture
-def nicegui_globals():
-    """Give a test that mounts the pages a clean global state of NiceGUI.
+def nicegui_globals(migrated_database, monkeypatch):
+    """Give a test that mounts the pages a clean global state of NiceGUI, and a migrated database to its service.
 
     NiceGUI keeps one global application. ``mount_ui`` adds middleware to it, and Starlette refuses that after the
     application served a request. At its end, the reset of NiceGUI also removes the module of each page function and
@@ -287,6 +288,7 @@ def nicegui_globals():
     registers its pages in ``mount_ui``, so the fixture empties the list of page functions first, and the modules of
     the service stay.
     """
+    monkeypatch.setattr(ui_support, "DATABASE_TEMPLATE", migrated_database)
     with nicegui_reset_globals():
         try:
             yield
