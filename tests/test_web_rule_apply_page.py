@@ -356,15 +356,15 @@ async def open_apply(user):
 
 
 async def preview_in_editor(user):
+    """Press Preview and wait for a new result. An old result stays until then, so only a new element counts."""
+
+    def result_ids():
+        markers = ("preview-table", "preview-empty", "preview-failed")
+        return {element.id for marker in markers for element in elements_of(user, marker)}
+
+    old = result_ids()
     user.find(marker="preview-run").click()
-    await eventually(
-        lambda: (
-            elements_of(user, "preview-table")
-            or elements_of(user, "preview-empty")
-            or elements_of(user, "preview-failed")
-        ),
-        "The result of the preview",
-    )
+    await eventually(lambda: result_ids() - old, "The result of the preview")
 
 
 async def preview_in_dialog(user):
@@ -625,10 +625,11 @@ async def test_the_preview_of_a_saved_rule_shows_what_the_next_run_does_with_the
         ("rule-no-shorts", True),
         ("rule-catch-up", None),
         ("rule-enabled", False),
+        ("rule-name", "Another name"),
         ("value-0", "other"),
     ],
 )
-async def test_a_change_of_the_form_removes_the_old_preview(
+async def test_a_change_of_the_form_keeps_the_old_preview(
     user, sessions, settings, account_copy, youtube, marker, value
 ):
     store_cookies(sessions, settings)
@@ -641,11 +642,33 @@ async def test_a_change_of_the_form_removes_the_old_preview(
     assert shown(user, "preview-table") == [("New video", "Will be added")]
 
     set_value(user, marker, value)
+    await asyncio.sleep(SETTLE_SECONDS)
 
-    await eventually(lambda: not elements_of(user, "preview-table"), "The removed preview")
+    assert shown(user, "preview-table") == [("New video", "Will be added")]
 
 
-async def test_a_remove_button_of_a_channel_removes_the_old_preview(user, sessions, settings, account_copy, youtube):
+async def test_a_second_preview_replaces_the_old_preview(user, sessions, settings, account_copy, youtube):
+    store_cookies(sessions, settings)
+    saved_rule(sessions, condition={"and": [{"regex": [{"var": "title"}, "video", "i"]}]})
+    youtube.uploads[A] = [
+        entry("new", A, title="New video", day=today()),
+        entry("other", A, title="Other", day=today()),
+    ]
+    await user.open("/rules")
+    await open_editor(user, 1)
+    set_value(user, "rule-catch-up", days_back(7).isoformat())
+    await preview_in_editor(user)
+    assert shown(user, "preview-table") == [("New video", "Will be added")]
+
+    set_value(user, "value-0", "other")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert shown(user, "preview-table") == [("New video", "Will be added")]
+    await preview_in_editor(user)
+
+    await eventually(lambda: shown(user, "preview-table") == [("Other", "Will be added")], "The new preview")
+
+
+async def test_a_remove_button_of_a_channel_keeps_the_old_preview(user, sessions, settings, account_copy, youtube):
     store_cookies(sessions, settings)
     saved_rule(sessions, condition={"and": [{"regex": [{"var": "title"}, "video", "i"]}]}, channels=(A, B))
     youtube.uploads[A] = [entry("new", A, title="New video", day=today())]
@@ -657,26 +680,12 @@ async def test_a_remove_button_of_a_channel_removes_the_old_preview(user, sessio
 
     click_on(user, channel_remove_button(user, B))
 
-    await eventually(lambda: not elements_of(user, "preview-table"), "The removed preview")
-    assert elements_of(user, "rule-channels")[-1].value == [A]
-
-
-async def test_a_change_of_the_name_keeps_the_preview(user, sessions, settings, account_copy, youtube):
-    store_cookies(sessions, settings)
-    saved_rule(sessions)
-    youtube.uploads[A] = [entry("new", A, title="New video", day=today())]
-    await user.open("/rules")
-    await open_editor(user, 1)
-    set_value(user, "rule-catch-up", days_back(7).isoformat())
-    await preview_in_editor(user)
-
-    set_value(user, "rule-name", "Another name")
+    await eventually(lambda: elements_of(user, "rule-channels")[-1].value == [A], "The removed channel")
     await asyncio.sleep(SETTLE_SECONDS)
-
     assert shown(user, "preview-table") == [("New video", "Will be added")]
 
 
-async def test_a_change_while_the_preview_runs_shows_no_old_result(user, sessions, account_copy, children):
+async def test_a_change_while_the_preview_runs_does_not_hide_its_result(user, sessions, account_copy, children):
     finish = threading.Event()
     value = Preview((PreviewVideo("v", "Video", "Alpha", today(), Mark.WILL_ADD),), {Mark.WILL_ADD: 1}).to_value()
 
@@ -697,9 +706,9 @@ async def test_a_change_while_the_preview_runs_shows_no_old_result(user, session
     set_value(user, "rule-no-shorts", True)
     finish.set()
 
-    await eventually(lambda: elements_of(user, "preview-note"), "The note")
-    assert text_of(user, "preview-note") == "The form changed while the preview ran. Press Preview again."
-    assert not elements_of(user, "preview-table")
+    await eventually(lambda: elements_of(user, "preview-table"), "The result")
+    assert shown(user, "preview-table") == [("Video", "Will be added")]
+    assert not elements_of(user, "preview-note")
 
 
 async def test_the_preview_button_of_the_apply_dialog_keeps_its_name_while_it_loads(
