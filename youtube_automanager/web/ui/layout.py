@@ -1,4 +1,4 @@
-"""The shell of each page: the header with the service name, the language button and the theme button, the navigation
+"""The shell of each page: the header with the service name, the language list and the theme button, the navigation
 drawer and the content frame.
 
 A page module adds its page with the decorator ``register_page``. The navigation drawer shows each registered page,
@@ -25,8 +25,8 @@ from weakref import WeakKeyDictionary
 from nicegui import background_tasks, helpers, ui
 from nicegui.client import Client
 
-from youtube_automanager.i18n import _, language, set_language
-from youtube_automanager.i18n.setting import NAMES, NEXT_LANGUAGE, save_language
+from youtube_automanager.i18n import LANGUAGES, _, language, set_language
+from youtube_automanager.i18n.setting import NAMES, save_language
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.common import accessibility_script, icon_button, time_script
 from youtube_automanager.web.ui.theme import (
@@ -300,9 +300,9 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
     paints its background for the moment before the scripts of the page run. The theme button of the header goes to the
     next theme at once, and it stores it.
 
-    The language button names the language that a click gives. A click stores that language, and loads the page again
-    at the same path and query, so the frame, the content and the texts of Quasar show the new language. The content
-    can ask first, as for a click in the drawer.
+    The language list shows the current language, and it has one item for each language. A choice stores that language,
+    and loads the page again at the same path and query, so the frame, the content and the texts of Quasar show the new
+    language. The content can ask first, as for a click in the drawer.
     """
     client = ui.context.client
     # The head gets each part once, at the full load: NiceGUI adds a later part to the head and never removes one.
@@ -325,13 +325,11 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
 
     shown_language = language()
 
-    async def switch_language() -> None:
+    async def choose_language(chosen: str) -> None:
         # The new load of the page loses the content, for example a form with changes that are not saved.
         if not await may_leave(client):
             return
-        # The language of this frame decides the next one, so the click gives the language that the button promised,
-        # also after another tab changed it.
-        chosen = NEXT_LANGUAGE[shown_language]
+        # The first choice also ends the use of the language of the browser, also when it is the language shown now.
         await asyncio.to_thread(save_language, services.sessions, chosen)
         set_language(chosen)
         # The user agreed to leave, so the browser does not ask a second time before the new load.
@@ -374,18 +372,27 @@ def frame(services: Services, theme: Theme) -> Generator[None]:
         icon_button("menu", _("Menu"), drawer.toggle, props="flat round color=white").mark("menu")
         ui.label(_("YouTube AutoManager")).classes("text-h6")
         ui.space()
-        # The button names the language of the click in that language, so a reader of each language finds it. The lang
-        # attribute lets a screen reader speak the name with the voice of that language. Quasar moves the tooltip to the
-        # end of the body and gives it the attributes of the q-tooltip, so the tooltip gets its own lang.
-        target = NEXT_LANGUAGE[shown_language]
-        language_button = (
-            ui.button(icon="translate", on_click=switch_language).props("flat round color=white").mark("language")
-        )
-        language_button.props["aria-label"] = NAMES[target]
-        language_button.props["lang"] = target
-        language_tooltip = ui.tooltip(NAMES[target])
-        language_tooltip.props["target"] = f"#{language_button.html_id}"
-        language_tooltip.props["lang"] = target
+        # The list shows the current language, and each item names its language in that language, so a reader of each
+        # language finds it. The lang attribute lets a screen reader speak a name with the voice of that language. The
+        # label of the list holds the name that the button shows, as the rule of the visible name asks, and the page
+        # shows the current language in its own language, so the label has the same language.
+        with (
+            ui.dropdown_button(NAMES[shown_language], icon="translate", auto_close=True)
+            .props("flat no-caps color=white")
+            .mark("language") as language_list
+        ):
+            # Translators: the name of the list of languages in the header, for screen readers. {language} is the name
+            # of the current language, for example "English".
+            language_list.props["aria-label"] = _("Language: {language}").format(language=NAMES[shown_language])
+            language_list.props["lang"] = shown_language
+            with ui.list():
+                for code in LANGUAGES:
+                    with ui.item(on_click=lambda code=code: choose_language(code)).mark(f"language:{code}") as option:
+                        option.props["lang"] = code
+                        if code == shown_language:
+                            option.props("active")
+                        with ui.item_section():
+                            ui.item_label(NAMES[code])
         with (
             ui.button(icon=ICONS[theme], on_click=switch_theme)
             .props("flat round color=white")

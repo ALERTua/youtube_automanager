@@ -68,7 +68,7 @@ The service first checks the cookies with YouTube, and it stores them only when 
 
 ## The pages
 
-The drawer on the left lists the pages: Dashboard, Rules, Subscriptions, Scheduler, History and Settings. The header has the button of the drawer, a language button and a theme button. The language button switches the pages between English and Ukrainian. The language is one setting of the service, so each browser shows the same language. The theme button goes through the theme of the system, the dark theme and the light theme.
+The drawer on the left lists the pages: Dashboard, Rules, Subscriptions, Scheduler, History and Settings. The header has the button of the drawer, a language list and a theme button. The language list shows the current language, and it offers English and Ukrainian. Until you choose a language, each page follows the language of your browser, and English is the default. Your choice is one setting of the service, so each browser shows the same language. The theme button goes through the theme of the system, the dark theme and the light theme.
 
 After you upload the cookies, take these first steps:
 

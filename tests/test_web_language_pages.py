@@ -63,8 +63,9 @@ async def test_each_page_opens_in_ukrainian_and_shows_its_translated_title(ukrai
     assert english not in client.title
     assert english not in headings(user)
     assert english not in drawer_labels(user).values()
-    # The language of the shell follows too: the button names English, and the Quasar texts load the Ukrainian pack.
-    assert element_of(user, "language").props["aria-label"] == "English"
+    # The language of the shell follows too: the list shows Ukrainian, and the Quasar texts load the Ukrainian pack.
+    assert element_of(user, "language").props["label"] == "Українська"
+    assert element_of(user, "language").props["aria-label"] == "Мова: Українська"
     assert app.config.language == "uk"
 
 

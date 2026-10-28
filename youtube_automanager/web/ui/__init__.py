@@ -14,7 +14,8 @@ from nicegui import app as nicegui_app
 from nicegui import ui
 from nicegui.language import Language
 
-from youtube_automanager.i18n import _, language
+from youtube_automanager.i18n import _, browser_language, language, set_language
+from youtube_automanager.i18n.setting import read_language
 from youtube_automanager.web.services import Services
 
 # The drawer lists the pages in the order of these imports, so the sorting of the imports stays off here.
@@ -63,6 +64,16 @@ def _shell(app: FastAPI) -> Callable[[], Awaitable[None]]:
     async def show_shell() -> None:
         # A page request reaches the NiceGUI application, not ``app``, so the services come from ``app`` itself.
         services: Services = app.state.services
+        client = ui.context.client
+        # The stored language, which the user chose in the list of the header, wins. Until the user chooses one, each
+        # full load takes the language of its browser, and its header is never read again after the choice. The service
+        # has one language for the whole process, so the language of the last load applies to each open page.
+        chosen = await asyncio.to_thread(read_language, services.sessions)
+        if chosen is None:
+            chosen = browser_language(client.request.headers.get("accept-language") if client.request else None)
+        # The holder keeps its texts when the language does not change.
+        if chosen != language():
+            set_language(chosen)
         # NiceGUI reads its language when it renders this page, after this function, so the Quasar components and the
         # lang attribute of the page follow the language of the texts. NiceGUI has one language for the process, as the
         # holder of the texts.

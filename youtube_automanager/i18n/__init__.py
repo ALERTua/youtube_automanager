@@ -22,7 +22,7 @@ DOMAIN = "messages"
 # A language gets its compiled catalog at locale/<language>/LC_MESSAGES/messages.mo.
 LOCALE_DIR = Path(__file__).resolve().parent / "locale"
 ENGLISH = "en"
-# The languages of the user interface, in the order of the language button of the header.
+# The languages of the user interface, in the order of the language list of the header.
 LANGUAGES = (ENGLISH, "uk")
 
 LOG = logging.getLogger(__name__)
@@ -55,6 +55,36 @@ def set_language(code: str) -> str:
 def language() -> str:
     """Return the code of the language of the texts, for example "en"."""
     return _language
+
+
+def browser_language(accept_language: str | None) -> str:
+    """Return the first language of ``LANGUAGES`` in the ``Accept-Language`` header of a browser, else English.
+
+    The browser lists its languages with a weight ``q`` from 0 to 1, and a language without ``q`` has the weight 1. The
+    languages with the highest weight come first, and the order of the header decides between equal weights. A regional
+    code counts as its language, so ``uk-UA`` is ``uk``. A weight of 0 means "not acceptable", and the wildcard ``*`` and
+    each part that is not well formed give no language.
+    """
+    if not accept_language:
+        return ENGLISH
+    ranked: list[tuple[float, int, str]] = []
+    for position, part in enumerate(accept_language.split(",")):
+        tag, *parameters = (piece.strip() for piece in part.split(";"))
+        weight = 1.0
+        for parameter in parameters:
+            name, _equals, value = parameter.partition("=")
+            if name.strip().lower() == "q":
+                try:
+                    weight = float(value)
+                except ValueError:
+                    weight = 0.0
+                # A weight outside 0 to 1, and nan, is not well formed.
+                if not 0 <= weight <= 1:
+                    weight = 0.0
+        primary = tag.split("-")[0].lower()
+        if weight > 0 and primary in LANGUAGES:
+            ranked.append((-weight, position, primary))
+    return min(ranked)[2] if ranked else ENGLISH
 
 
 def _(message: str) -> str:
