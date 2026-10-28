@@ -74,6 +74,20 @@ pot:
     uv run pybabel extract -F pyproject.toml --add-location=file --sort-output --add-comments=Translators: \
     -o youtube_automanager/i18n/messages.pot youtube_automanager
 
+# Pybabel ends the .po file with an empty line, and the hook end-of-file-fixer removes it. The hook exits 1 when it
+# fixes a file. So the recipe runs the hook again after a non-zero exit, and only the second run decides.
+
+# Update the Ukrainian catalog from messages.pot. Then translate each new message, and check each fuzzy one: the test fails on both
+po:
+    uv run pybabel update --init-missing --ignore-obsolete -i youtube_automanager/i18n/messages.pot \
+    -d youtube_automanager/i18n/locale -D messages -l uk
+    uv run pre-commit run end-of-file-fixer --files youtube_automanager/i18n/locale/uk/LC_MESSAGES/messages.po; \
+    if ($LASTEXITCODE) { uv run pre-commit run end-of-file-fixer --files youtube_automanager/i18n/locale/uk/LC_MESSAGES/messages.po; exit $LASTEXITCODE }
+
+# Compile the catalogs into the .mo files that the service loads. Git ignores them, and the image build makes them too
+mo:
+    uv run pybabel compile --statistics -d youtube_automanager/i18n/locale -D messages
+
 # Run each pre-commit hook on each file
 pre:
     uv run pre-commit run --all-files

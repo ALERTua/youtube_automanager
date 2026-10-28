@@ -1,12 +1,14 @@
 """The rules in the database: read, save, delete, turn on and off, the checks of a rule before a save, and the counts
 of the videos that each rule added.
 
-The rules page and the HTTP API of the rules call these functions, so both use the same code and the same texts. The
-module imports nothing from NiceGUI or from ``web``, so the API and a child process can import it too. Each function
-that touches the database blocks, so a caller on the event loop runs it with ``asyncio.to_thread``.
+The rules page and the HTTP API of the rules call these functions, so both use the same code. The checks of a rule say
+their messages in the language of the pages. The API answers in English whatever that language is, so it gives the checks
+``AS_ENGLISH``. The module imports nothing from NiceGUI or from ``web``, so the API and a child process can import it
+too. Each function that touches the database blocks, so a caller on the event loop runs it with ``asyncio.to_thread``.
 """
 
 import functools
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -17,9 +19,17 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from youtube_automanager.db.models import Channel, Playlist, Rule, RuleChannel, RunAction, RunActionKind, utc_now
 from youtube_automanager.engine.rules import validate
-from youtube_automanager.i18n import _
+from youtube_automanager.i18n import N_, _
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.scheduler import stored_timezone
+
+# The function that turns the English message of a check into the text for the reader. The default translates it into
+# the language of the pages at the moment of the call. ``AS_ENGLISH`` gives the message as it is, for the HTTP API.
+Say = Callable[[str], str]
+AS_ENGLISH: Say = N_
+
+ENTER_A_NAME = N_("Enter a name.")
+CHOOSE_A_PLAYLIST = N_("Choose a target playlist.")
 
 # The first day of an apply and of the older videos of a rule is at most this many days back. The rules page and the
 # HTTP API check this limit, and ``validate_draft`` does not, because the day of today depends on the caller.
@@ -103,32 +113,38 @@ class RuleDraft:
     catch_up_since: date | None = None
 
 
-def validate_name(name: str | None) -> str:
-    """Return the name without the spaces around it. Raise ValueError with a message for the user when it is empty."""
+def validate_name(name: str | None, say: Say = _) -> str:
+    """Return the name without the spaces around it. Raise ValueError with a message for the user when it is empty.
+
+    ``say`` turns the English message into its text. The default is the language of the pages.
+    """
     stripped = (name or "").strip()
     if not stripped:
-        raise ValueError(_("Enter a name."))
+        raise ValueError(say(ENTER_A_NAME))
     return stripped
 
 
-def validate_playlist(playlist_id: str | None) -> str:
-    """Return the id of the target playlist. Raise ValueError with a message for the user when it is empty."""
+def validate_playlist(playlist_id: str | None, say: Say = _) -> str:
+    """Return the id of the target playlist. Raise ValueError with a message for the user when it is empty.
+
+    ``say`` turns the English message into its text. The default is the language of the pages.
+    """
     if not playlist_id:
-        raise ValueError(_("Choose a target playlist."))
+        raise ValueError(say(CHOOSE_A_PLAYLIST))
     return playlist_id
 
 
-def validate_draft(draft: RuleDraft) -> None:
+def validate_draft(draft: RuleDraft, say: Say = _) -> None:
     """Check a draft before a save, in this order: the name, the target playlist, the condition.
 
     Raise ValueError with a message for the user at the first check that fails, and ``RuleError``, a ValueError, when the
-    condition is no valid rule tree. The editor does not call this function. ``RuleEditor.read_draft`` calls
-    ``validate_name`` and ``validate_playlist`` first, in the same order, and then converts its widgets, which can
-    raise their own errors, for example a leaf that is not complete. A caller that has no editor calls this function
-    alone.
+    condition is no valid rule tree. The message of ``RuleError`` is English. The editor does not call this function.
+    ``RuleEditor.read_draft`` calls ``validate_name`` and ``validate_playlist`` first, in the same order, and then
+    converts its widgets, which can raise their own errors, for example a leaf that is not complete. A caller that has
+    no editor calls this function alone, and the HTTP API gives it ``AS_ENGLISH``.
     """
-    validate_name(draft.name)
-    validate_playlist(draft.playlist_id)
+    validate_name(draft.name, say)
+    validate_playlist(draft.playlist_id, say)
     validate(draft.condition)
 
 

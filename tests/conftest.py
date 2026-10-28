@@ -44,6 +44,8 @@ from youtube_automanager.youtube.ytdlp_updater import UpdateResult, installed_ve
 
 # A tiny Ukrainian catalog for the tests of the language: a few labels of the shell.
 UK_CATALOG = Path(__file__).parent / "fixtures" / "i18n" / "uk.po"
+# The real Ukrainian catalog of the service.
+REAL_UK_CATALOG = Path(i18n.__file__).resolve().parent / "locale" / "uk" / "LC_MESSAGES" / "messages.po"
 
 
 class FakeYtdlpInstall:
@@ -124,10 +126,21 @@ def english_texts():
 def uk_catalog(tmp_path, monkeypatch):
     """Compile the tiny Ukrainian catalog of ``fixtures/i18n/uk.po`` into a folder of the test, and point the
     translation at that folder. Return the folder of the catalogs."""
+    return _compiled_catalog(UK_CATALOG, tmp_path, monkeypatch)
+
+
+@pytest.fixture
+def real_uk_catalog(tmp_path, monkeypatch):
+    """Compile the real Ukrainian catalog of the service into a folder of the test, and point the translation at that
+    folder. The test needs no ``just mo``. Return the folder of the catalogs."""
+    return _compiled_catalog(REAL_UK_CATALOG, tmp_path, monkeypatch)
+
+
+def _compiled_catalog(source_path: Path, tmp_path: Path, monkeypatch) -> Path:
     locale_dir = tmp_path / "locale"
     compiled = locale_dir / "uk" / "LC_MESSAGES" / f"{i18n.DOMAIN}.mo"
     compiled.parent.mkdir(parents=True)
-    with UK_CATALOG.open("rb") as source:
+    with source_path.open("rb") as source:
         catalog = read_po(source)
     with compiled.open("wb") as target:
         write_mo(target, catalog)

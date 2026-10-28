@@ -647,6 +647,30 @@ async def test_a_rule_needs_a_name_and_a_target_playlist(user, sessions, account
     await user.should_see(marker="editor")
 
 
+@pytest.mark.parametrize(
+    ("name", "playlist_id", "error"),
+    [
+        ("", "WL", "Введіть назву."),
+        ("A rule", None, "Виберіть цільовий плейлист."),
+    ],
+)
+async def test_the_editor_says_the_errors_of_the_rule_in_the_language_of_the_pages(
+    user, sessions, account_copy, real_uk_catalog, name, playlist_id, error
+):
+    # The same two errors that the HTTP API gives in English whatever the language of the pages is.
+    # The service started in English before the test body, so the test switches the language of the process.
+    i18n.set_language("uk")
+    await user.open("/rules")
+    await open_editor(user)
+    set_value(user, "rule-name", name)
+    set_value(user, "rule-playlist", playlist_id)
+
+    user.find(marker="editor-save").click()
+
+    await error_is(user, error)
+    assert stored_rules(sessions) == []
+
+
 async def test_without_a_stored_playlist_the_editor_says_where_the_lists_come_from(user, sessions):
     await user.open("/rules")
     await user.should_see(marker="refresh-lists")

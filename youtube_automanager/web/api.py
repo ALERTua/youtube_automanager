@@ -42,6 +42,7 @@ from youtube_automanager.db.models import (
     SessionState,
 )
 from youtube_automanager.rules_store import (
+    AS_ENGLISH,
     MAX_DAYS_BACK,
     RuleDraft,
     RuleRecord,
@@ -294,7 +295,8 @@ def _checked_draft(body: RuleIn, stored: Stored) -> RuleDraft:
         catch_up_since=body.catch_up_since,
     )
     try:
-        validate_draft(draft)
+        # The API answers in English whatever the language of the pages is, so it does not translate the message.
+        validate_draft(draft, AS_ENGLISH)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     if draft.catch_up_since is not None:

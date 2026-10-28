@@ -13,7 +13,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 from ui_support import running_service, store
 
-from youtube_automanager import notify
+from youtube_automanager import i18n, notify
 from youtube_automanager.db.models import (
     Channel,
     Playlist,
@@ -28,6 +28,7 @@ from youtube_automanager.db.models import (
     ScheduleKind,
 )
 from youtube_automanager.engine.rules import MATCH_ALL, MAX_DEPTH
+from youtube_automanager.i18n.setting import save_language
 from youtube_automanager.rules_store import MAX_DAYS_BACK
 from youtube_automanager.runner import BUSY_TEXT
 from youtube_automanager.scheduler import MIN_INTERVAL_S, SchedulerState
@@ -255,6 +256,36 @@ def test_a_rule_that_cannot_be_saved_gets_422_with_the_reason(client, account, m
 
     assert answer.status_code == 422
     assert reason in answer.json()["detail"]
+    assert rule_rows(account) == before
+
+
+@pytest.fixture
+def uk_client(settings, account, fake_starter, real_uk_catalog):
+    """A client of the service whose stored language is Ukrainian, with the real catalog."""
+    save_language(account, "uk")
+    with TestClient(create_app(settings, start=fake_starter)) as client:
+        assert i18n.language() == "uk"
+        yield client
+
+
+@pytest.mark.parametrize(
+    ("refused", "english", "ukrainian"),
+    [
+        (body(name="   "), "Enter a name.", "Введіть назву."),
+        (body(playlist_id=""), "Choose a target playlist.", "Виберіть цільовий плейлист."),
+    ],
+)
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_the_422_text_of_a_rule_is_english_when_the_pages_are_ukrainian(
+    uk_client, account, method, refused, english, ukrainian
+):
+    before = rule_rows(account)
+    # The rules page says the same error in Ukrainian.
+    assert i18n._(english) == ukrainian
+
+    answer = uk_client.request(method, "/api/rules" if method == "POST" else "/api/rules/1", json=refused)
+
+    assert (answer.status_code, answer.json()["detail"]) == (422, english)
     assert rule_rows(account) == before
 
 

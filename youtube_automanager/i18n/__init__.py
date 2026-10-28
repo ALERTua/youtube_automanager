@@ -3,6 +3,9 @@
 The English text is the message id, so English needs no catalog: without a compiled catalog of the language, each
 function returns the English text. ``messages.pot`` next to this module holds each message of the code, and a test
 fails when it is out of date. The ``[tool.babel]`` table of ``pyproject.toml`` tells how to extract it again.
+The Ukrainian catalog is ``locale/uk/LC_MESSAGES/messages.po`` in git, and a test fails on a message that it lacks,
+leaves untranslated or marks fuzzy. ``just mo`` and the image build compile it into the ``messages.mo`` that
+``set_language`` loads, and git ignores that file.
 
 The language is one setting of the service, for the whole process. ``set_language`` puts the catalog of a language
 into this module, and ``_`` reads it at each call, so each text that the code makes after the change is in the new
