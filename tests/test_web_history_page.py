@@ -817,7 +817,10 @@ async def test_a_larger_or_equal_retention_saves_at_once_also_with_old_runs(user
 
     set_value(user, "retention-days", 365)
     user.find(marker="retention-save").click()
-    await eventually(lambda: stored_retention(sessions) == 365, "The save of the larger value")
+    # The save ends with its message. The button stays off until then, and a click on it would do nothing.
+    await eventually(
+        lambda: stored_retention(sessions) == 365 and len(user.notify.messages) == 1, "The save of the larger value"
+    )
     assert not elements_of(user, "retention-dialog")
 
     set_value(user, "retention-days", 365.0)

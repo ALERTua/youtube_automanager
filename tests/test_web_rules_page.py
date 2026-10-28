@@ -156,6 +156,8 @@ async def names_are(user, expected: list[str]) -> None:
 
 
 async def open_editor(user, rule_id: int | None = None) -> None:
+    # After the editor closed, the rules come back in a task of the page, and a click before them would find nothing.
+    await user.should_see(marker="new-rule" if rule_id is None else "rules-table")
     if rule_id is None:
         user.find(marker="new-rule").click()
     else:

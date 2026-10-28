@@ -1,4 +1,5 @@
 import datetime
+import gc
 import io
 import itertools
 import logging
@@ -11,13 +12,13 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+import ui_support
 from babel.messages.mofile import write_mo
 from babel.messages.pofile import read_po
 from nicegui import Client
 from nicegui.awaitable_response import AwaitableResponse
-from nicegui.testing.general import nicegui_reset_globals
 from sqlalchemy import create_engine, make_url, select, text
-from ui_support import running_service
+from ui_support import fresh_nicegui, running_service
 
 from youtube_automanager import i18n
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
@@ -276,8 +277,8 @@ async def user(nicegui_globals, settings, fake_starter):
 
 
 @pytest.fixture
-def nicegui_globals():
-    """Give a test that mounts the pages a clean global state of NiceGUI.
+def nicegui_globals(migrated_database, monkeypatch):
+    """Give a test that mounts the pages a clean global state of NiceGUI, and a migrated database to its service.
 
     NiceGUI keeps one global application. ``mount_ui`` adds middleware to it, and Starlette refuses that after the
     application served a request. At its end, the reset of NiceGUI also removes the module of each page function and
@@ -285,11 +286,9 @@ def nicegui_globals():
     registers its pages in ``mount_ui``, so the fixture empties the list of page functions first, and the modules of
     the service stay.
     """
-    with nicegui_reset_globals():
-        try:
-            yield
-        finally:
-            Client.page_routes.clear()
+    monkeypatch.setattr(ui_support, "DATABASE_TEMPLATE", migrated_database)
+    with fresh_nicegui():
+        yield
 
 
 class FakeChild:
@@ -372,6 +371,16 @@ ON_POSTGRES = pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "sqlite_only: the test assumes SQLite, so its PostgreSQL case is not collected")
+
+
+def pytest_collection_finish(session):
+    """Move each object that exists after the collection into the permanent generation of the garbage collector.
+
+    The reset of NiceGUI runs ``gc.collect`` twice for each test of the pages, and NiceGUI searches ``gc.get_objects``
+    at each start of the service. Both then skip the modules and the collected tests, which never become garbage.
+    """
+    gc.collect()
+    gc.freeze()
 
 
 def pytest_collection_modifyitems(config, items):
