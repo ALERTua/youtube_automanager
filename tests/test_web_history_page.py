@@ -14,6 +14,7 @@ from ui_support import (
     element_of,
     elements_of,
     eventually,
+    moment_of,
     running_service,
     set_value,
     store,
@@ -33,6 +34,7 @@ from youtube_automanager.db.models import (
 )
 from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.web.ui import history_page
+from youtube_automanager.web.ui.common import TIME_CELL_FORMAT
 from youtube_automanager.web.ui.dates import today_in
 
 pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("logging_setups", "no_logged_errors")]
@@ -127,12 +129,18 @@ async def test_runs_come_newest_first_in_the_time_zone_of_the_schedule(user, ses
         "Error",
         "Actions",
     ]
+    # The browser shows the start and the end of a run in its own form.
+    assert {column["name"]: column.get(":format") for column in table.columns if ":format" in column} == {
+        "started": TIME_CELL_FORMAT,
+        "finished": TIME_CELL_FORMAT,
+    }
     assert [row["id"] for row in table.rows] == [3, 2, 1]
     assert table.rows[0] == {
         "id": 3,
-        # Kyiv is at UTC+3 until 25 October 2026.
-        "started": "2026-10-04 00:30 EEST",
-        "finished": "2026-10-04 00:45 EEST",
+        # Kyiv is at UTC+3 until 25 October 2026. The browser shows the moments in its own form, in this time zone.
+        "started": "2026-10-04T00:30:00+03:00",
+        "finished": "2026-10-04T00:45:00+03:00",
+        "zone": "Europe/Kyiv",
         "status": "Failed",
         "status_color": "negative",
         "trigger": "Manual",
@@ -141,7 +149,7 @@ async def test_runs_come_newest_first_in_the_time_zone_of_the_schedule(user, ses
         "error": "The sync process exited with code 1.",
     }
     assert (table.rows[1]["status"], table.rows[1]["finished"], table.rows[1]["error"]) == ("In progress", "", "")
-    assert (table.rows[2]["started"], table.rows[2]["trigger"]) == ("2026-10-01 18:00 EEST", "Schedule")
+    assert (table.rows[2]["started"], table.rows[2]["trigger"]) == ("2026-10-01T18:00:00+03:00", "Schedule")
     assert text_of(user, "runs-summary") == "Runs 1-3 of 3"
     await user.should_not_see(marker="runs-pagination")
 
@@ -166,7 +174,10 @@ async def test_the_times_of_the_runs_follow_the_time_zone_of_the_schedule(
     async with running_service(settings, fake_starter) as user:
         await user.open("/history")
 
-        assert rows_of(user, "runs-table")[0]["started"] == "2026-01-04 20:00 EST"
+        assert (rows_of(user, "runs-table")[0]["started"], rows_of(user, "runs-table")[0]["zone"]) == (
+            "2026-01-04T20:00:00-05:00",
+            "America/New_York",
+        )
         assert "(America/New_York)" in text_of(user, "retention-hint")
 
 
@@ -520,8 +531,12 @@ async def test_a_click_on_a_run_opens_its_actions_in_the_order_of_their_time(use
     await open_run(user, 1)
 
     assert text_of(user, "details-started") == "2026-10-02 18:05 EEST"
+    assert moment_of(user, "details-started") == ("2026-10-02T18:05:00+03:00", "Europe/Kyiv")
     assert text_of(user, "details-status") == "Succeeded"
     table = element_of(user, "actions-table")
+    assert {column["name"]: column.get(":format") for column in table.columns if ":format" in column} == {
+        "at": TIME_CELL_FORMAT
+    }
     assert [column["label"] for column in table.columns] == [
         "Time",
         "Action",
@@ -534,7 +549,8 @@ async def test_a_click_on_a_run_opens_its_actions_in_the_order_of_their_time(use
     assert table.rows == [
         {
             "id": 11,
-            "at": "2026-10-01 15:00 EEST",
+            "at": "2026-10-01T15:00:11+03:00",
+            "zone": "Europe/Kyiv",
             "action": "Added",
             "video": "dQw4w9WgXcQ",
             "video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -545,7 +561,8 @@ async def test_a_click_on_a_run_opens_its_actions_in_the_order_of_their_time(use
         },
         {
             "id": 12,
-            "at": "2026-10-01 15:00 EEST",
+            "at": "2026-10-01T15:00:12+03:00",
+            "zone": "Europe/Kyiv",
             "action": "Skipped",
             "video": "vid-skip",
             "video_url": "https://www.youtube.com/watch?v=vid-skip",
@@ -556,7 +573,8 @@ async def test_a_click_on_a_run_opens_its_actions_in_the_order_of_their_time(use
         },
         {
             "id": 13,
-            "at": "2026-10-01 15:00 EEST",
+            "at": "2026-10-01T15:00:13+03:00",
+            "zone": "Europe/Kyiv",
             "action": "Error",
             "video": "",
             "video_url": "",

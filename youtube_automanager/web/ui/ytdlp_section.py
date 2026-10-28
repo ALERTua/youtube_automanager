@@ -24,7 +24,7 @@ from youtube_automanager.i18n import N_, _
 from youtube_automanager.short_child import ChildBusy
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text
-from youtube_automanager.web.ui.common import ResultLabel, confirm, format_time, read_timezone, set_loading
+from youtube_automanager.web.ui.common import ResultLabel, confirm, read_timezone, set_loading, time_label
 from youtube_automanager.web.ui.dashboard import YTDLP_SOURCES
 from youtube_automanager.web.ui.settings_draft import DraftPart, FormError, SettingsDraft, Write
 from youtube_automanager.youtube.ytdlp_updater import (
@@ -268,7 +268,7 @@ async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
             ui.label(_("Skipped version")).classes("text-grey-7")
             ui.label(status.skipped or _("None")).mark("ytdlp-skipped")
             ui.label(_("Last update")).classes("text-grey-7")
-            ui.label(format_time(last.at, zone) if last else _("Never")).mark("ytdlp-last-at")
+            (time_label(last.at, zone) if last else ui.label(_("Never"))).mark("ytdlp-last-at")
             if last is not None:
                 ui.label(_("Result")).classes("text-grey-7")
                 result = ui.label(result_text(last)).classes("whitespace-pre-wrap break-words")
@@ -277,7 +277,7 @@ async def ytdlp_section(services: Services, draft: SettingsDraft) -> None:
                     result.classes("text-negative")
             ui.label(_("Next update")).classes("text-grey-7")
             next_update = status.next_update
-            ui.label(format_time(next_update, zone) if next_update else _("No update is planned")).mark("ytdlp-next")
+            (time_label(next_update, zone) if next_update else ui.label(_("No update is planned"))).mark("ytdlp-next")
 
     with ui.card().classes("w-full").mark("ytdlp-card"):
         ui.label(_("yt-dlp")).classes("text-h6")

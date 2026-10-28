@@ -34,7 +34,14 @@ from youtube_automanager.runner import SessionCheckOutcome, SessionCheckResult
 from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildUnavailable
 from youtube_automanager.web.services import Services
 from youtube_automanager.web.ui.account_lists import child_error_text
-from youtube_automanager.web.ui.common import SESSION_STATES, ResultLabel, format_time, set_loading
+from youtube_automanager.web.ui.common import (
+    SESSION_STATES,
+    ResultLabel,
+    format_time,
+    set_loading,
+    show_time,
+    time_label,
+)
 from youtube_automanager.web.ui.cookie_upload import (
     COMPOSE_KEY_COMMAND,
     KEY_COMMAND,
@@ -134,12 +141,15 @@ def missing_text(missing: tuple[str, ...]) -> str:
     ).format(domain=YOUTUBE_DOMAIN, names=", ".join(missing))
 
 
-def expired_text(expiry: datetime, zone: ZoneInfo) -> str:
-    """Return the text of a cookie text whose login cookies expired at ``expiry``."""
+def expired_template() -> str:
+    """Return the text of a cookie text whose login cookies expired, with ``{time}`` for the expiry time."""
     # Translators: {time} is the expiry time of the login cookies, for example "2026-10-12 18:30 EEST".
-    return _("The login cookies of this export expired on {time}. Export new cookies and upload them.").format(
-        time=format_time(expiry, zone)
-    )
+    return _("The login cookies of this export expired on {time}. Export new cookies and upload them.")
+
+
+def expired_text(expiry: datetime, zone: ZoneInfo) -> str:
+    """Return the text of a cookie text whose login cookies expired at ``expiry``, in the form of the service."""
+    return expired_template().format(time=format_time(expiry, zone))
 
 
 def upload_error_text(error: ChildError, *, had_cookies: bool) -> str:
@@ -268,6 +278,8 @@ async def _cookies_section(services: Services) -> None:
         expired = login_expired_at(text, utc_now())
         if expired is not None:
             show_result(expired_text(expired, ZoneInfo(state.stored.timezone)), problem=True)
+            # The browser puts the expiry time into the sentence in its own form.
+            show_time(result_label, expired, ZoneInfo(state.stored.timezone), expired_template())
             return
         had_cookies = state.stored.session is not None
         state.uploading = True
@@ -328,10 +340,10 @@ async def _cookies_section(services: Services) -> None:
                 ui.badge(_(label), color=color).mark("session-state")
             ui.label(_("Last check")).classes("text-grey-7")
             checked = cookie_session.last_checked_at
-            ui.label(format_time(checked, zone) if checked else _("Never")).mark("session-checked")
+            (time_label(checked, zone) if checked else ui.label(_("Never"))).mark("session-checked")
             ui.label(_("Earliest cookie expiry")).classes("text-grey-7")
             expiry = cookie_session.earliest_cookie_expiry
-            ui.label(format_time(expiry, zone) if expiry else _("No expiry date")).mark("session-expiry")
+            (time_label(expiry, zone) if expiry else ui.label(_("No expiry date"))).mark("session-expiry")
 
     with ui.card().classes("w-full").mark("cookies-card"):
         ui.label(_("YouTube cookies")).classes("text-h6")

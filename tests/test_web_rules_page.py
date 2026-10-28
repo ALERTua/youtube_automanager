@@ -58,7 +58,7 @@ from youtube_automanager.i18n.setting import NAMES
 from youtube_automanager.rules_store import validate_name
 from youtube_automanager.runner import sync_lock_held
 from youtube_automanager.web.ui import layout, rule_editor, rules_page
-from youtube_automanager.web.ui.common import keyboard_sort_template
+from youtube_automanager.web.ui.common import TIME_CELL_FORMAT, TIME_CELL_SORT, keyboard_sort_template
 from youtube_automanager.web.ui.dates import today_in
 from youtube_automanager.web.ui.rule_form import LIVE_STATUSES
 
@@ -244,6 +244,9 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
         "Changed",
         "Actions",
     ]
+    # The browser shows the time of the change in its own form, and the sort follows the moment.
+    (changed,) = [column for column in table.columns if column["name"] == "updated"]
+    assert (changed[":format"], changed[":sort"]) == (TIME_CELL_FORMAT, TIME_CELL_SORT)
     assert table.rows == [
         {
             "id": 2,
@@ -256,8 +259,9 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
             "condition": "Each video",
             "added": "0 / 0",
             "added_month": 0,
-            # Kyiv is at UTC+3 on this day.
-            "updated": "2026-10-01 15:00 EEST",
+            # Kyiv is at UTC+3 on this day. The browser shows the moment in its own form, in this time zone.
+            "updated": "2026-10-01T15:00:00+03:00",
+            "zone": "Europe/Kyiv",
         },
         {
             "id": 1,
@@ -270,7 +274,8 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
             "condition": 'Title matches the pattern "Levels of" and Duration is at least 2:00',
             "added": "0 / 0",
             "added_month": 0,
-            "updated": "2026-10-01 15:00 EEST",
+            "updated": "2026-10-01T15:00:00+03:00",
+            "zone": "Europe/Kyiv",
         },
         {
             "id": 3,
@@ -283,7 +288,8 @@ async def test_the_table_shows_each_rule_in_the_order_of_the_evaluation(user, th
             "condition": "Custom JSON condition",
             "added": "0 / 0",
             "added_month": 0,
-            "updated": "2026-10-01 15:00 EEST",
+            "updated": "2026-10-01T15:00:00+03:00",
+            "zone": "Europe/Kyiv",
         },
     ]
 
@@ -301,7 +307,10 @@ async def test_the_time_of_the_change_follows_the_time_zone_of_the_schedule(
     async with running_service(settings, fake_starter) as user:
         await user.open("/rules")
 
-        assert table_rows(user)[0]["updated"] == "2026-10-01 08:00 EDT"
+        assert (table_rows(user)[0]["updated"], table_rows(user)[0]["zone"]) == (
+            "2026-10-01T08:00:00-04:00",
+            "America/New_York",
+        )
 
 
 @pytest.mark.parametrize(
@@ -966,7 +975,7 @@ async def test_a_change_of_a_rule_is_stored(user, sessions, account_copy):
         "Home",
         'Title matches the pattern "Pizza" (case-sensitive)',
     )
-    assert row["updated"] != "2026-10-01 15:00 EEST"
+    assert row["updated"] != "2026-10-01T15:00:00+03:00"
 
 
 async def test_a_change_of_the_channels_alone_changes_the_time_of_the_change(user, sessions, account_copy):
@@ -1957,7 +1966,7 @@ async def test_the_switch_of_a_row_writes_the_rule_and_changes_the_row_in_place(
     await eventually(lambda: stored_rule(sessions, 1).enabled is False, "The rule off in the database")
     await eventually(lambda: table_rows(user)[1]["enabled"] is False, "The rule off in the table")
     assert stored_rule(sessions, 1).updated_at > CHANGED_AT
-    assert table_rows(user)[1]["updated"] != "2026-10-01 15:00 EEST"
+    assert table_rows(user)[1]["updated"] != "2026-10-01T15:00:00+03:00"
     # The other rules stay as they are, and the page keeps the same table.
     assert [stored_rule(sessions, rule_id).enabled for rule_id in (2, 3)] == [False, True]
     assert element_of(user, "rules-table") is table

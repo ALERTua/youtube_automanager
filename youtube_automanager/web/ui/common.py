@@ -1,6 +1,7 @@
 """The helpers that two or more pages share: the table columns, the button of a table row, the keyboard sort of a table,
 the icon button, the confirm dialog, the busy button, the notification of a result, the button "Run now", the result label, the time zone of the
-schedule, the format of a time, and the labels of the run statuses, the session states and the run triggers.
+schedule, the format of a time in the browser, and the labels of the run statuses, the session states and the run
+triggers.
 """
 
 import html
@@ -13,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from nicegui import ui
 from nicegui.client import Client
+from nicegui.elements.mixins.text_element import TextElement
 from nicegui.events import GenericEventArguments
 
 from youtube_automanager.db.models import RunStatus, RunTrigger, SessionState
@@ -22,7 +24,20 @@ from youtube_automanager.i18n import N_, _
 from youtube_automanager.scheduler import RunNowOutcome, read_timezone, stored_timezone  # noqa: F401
 from youtube_automanager.web.services import Services
 
+# The form of a time before the browser formats it, and in the tests, which run no JavaScript.
 TIME_FORMAT = "%Y-%m-%d %H:%M %Z"
+# The attributes of an element that shows a moment. The browser formats the moment in its own form, in the time zone of
+# the service, see ``show_time``. A template is a translated sentence with ``{time}`` for the moment.
+TIME_ATTRIBUTE = "data-time"
+ZONE_ATTRIBUTE = "data-zone"
+TEMPLATE_ATTRIBUTE = "data-time-template"
+# The field of a table row that holds the time zone of its moments, for the format of a column of ``time_column``.
+ZONE_FIELD = "zone"
+# The format and the sort of a table column of moments, and the format of a column of days. Quasar calls the format for
+# each cell, so the row keeps the ISO text, and the sort follows the moment and not the text.
+TIME_CELL_FORMAT = "(value, row) => (value && window.browserDates?.moment(value, row.zone)) || value"
+TIME_CELL_SORT = "(a, b) => (Date.parse(a) || 0) - (Date.parse(b) || 0)"
+DAY_CELL_FORMAT = "(value) => window.browserDates?.day(value) || value"
 # The name of the table column that holds the button of each row.
 ROW_BUTTON_COLUMN = "actions"
 # The event that the cell of a row button emits, and the code that the browser runs to send only the id of the row.
@@ -61,6 +76,23 @@ def column(name: str, label: str, *, sortable: bool = False) -> dict:
     if sortable:
         definition["sortable"] = True
     return definition
+
+
+def time_column(name: str, label: str, *, sortable: bool = False) -> dict:
+    """Return the definition of a column whose field holds a moment as ISO text, from ``iso_time``, or an empty text.
+
+    The browser shows each moment in its own form, in the time zone of the field ``ZONE_FIELD`` of the row.
+    """
+    definition = {**column(name, label, sortable=sortable), ":format": TIME_CELL_FORMAT}
+    if sortable:
+        definition[":sort"] = TIME_CELL_SORT
+    return definition
+
+
+def day_column(name: str, label: str) -> dict:
+    """Return the definition of a column whose field holds a day as ``YYYY-MM-DD``. The browser shows the day in its own
+    form. Another text of the field, for example "No date", shows as it is."""
+    return {**column(name, label), ":format": DAY_CELL_FORMAT}
 
 
 def actions_column() -> dict:
@@ -397,19 +429,117 @@ def run_now_button(services: Services, marker: str) -> ui.button:
 
 
 class ResultLabel(ui.label):
-    """A label for the result of an action. A problem shows in the color of an error."""
+    """A label for the result of an action. A problem shows in the color of an error.
+
+    A result with a moment gets it with ``show_time`` after ``ok`` or ``problem``. The next result forgets it.
+    """
 
     def ok(self, text: str) -> None:
+        forget_time(self)
         self.classes(remove="text-negative")
         self.set_text(text)
 
     def problem(self, text: str) -> None:
+        forget_time(self)
         self.classes(add="text-negative")
         self.set_text(text)
 
 
 def format_time(value: datetime, zone: ZoneInfo) -> str:
+    """Return ``value`` in the form of the service, the text of a moment before the browser formats it."""
     return value.astimezone(zone).strftime(TIME_FORMAT)
+
+
+def iso_time(value: datetime, zone: ZoneInfo) -> str:
+    """Return ``value`` as ISO text with the offset of ``zone``, the form that the browser reads."""
+    return value.astimezone(zone).isoformat()
+
+
+def show_time[T: TextElement](element: T, value: datetime, zone: ZoneInfo, template: str | None = None) -> T:
+    """Show the moment ``value`` in ``element``, a label, in the form of the browser and in the time zone ``zone``.
+
+    The label gets the text in the form of the service, and the moment and the zone as attributes. The script of
+    ``time_script`` in the head then writes the text in the form of the browser. ``template`` is a translated sentence
+    with ``{time}`` for the moment, for example "Lists refreshed: {time}", and the browser puts its form of the moment
+    into it.
+    """
+    text = format_time(value, zone)
+    element.props[TIME_ATTRIBUTE] = iso_time(value, zone)
+    element.props[ZONE_ATTRIBUTE] = zone.key
+    if template is None:
+        element.props.pop(TEMPLATE_ATTRIBUTE, None)
+    else:
+        element.props[TEMPLATE_ATTRIBUTE] = template
+        text = template.format(time=text)
+    element.set_text(text)
+    return element
+
+
+def forget_time(element: ui.element) -> None:
+    """Remove the moment of ``show_time`` from ``element``, so the browser leaves its next text as it is."""
+    for attribute in (TIME_ATTRIBUTE, ZONE_ATTRIBUTE, TEMPLATE_ATTRIBUTE):
+        element.props.pop(attribute, None)
+
+
+def time_label(value: datetime, zone: ZoneInfo) -> ui.label:
+    """Return a label that shows the moment ``value`` in the form of the browser, in the time zone ``zone``."""
+    return show_time(ui.label(), value, zone)
+
+
+def time_script() -> str:
+    """Return the ``<script>`` that each page has in its head, which shows each moment in the form of the browser.
+
+    An element of ``show_time`` holds the moment as ISO text with the time zone of the service. The script formats it
+    with ``Intl.DateTimeFormat`` in the language of the browser and in that time zone, so the clock time stays as the
+    service has it, and only its form changes. It writes the text node of the element, because Vue keeps that node and
+    writes the next text of the server into it. It formats each such element at the load and after each change of the
+    page. It keeps the source and the result of its last write in two attributes, so an element whose moment and text
+    did not change stays as it is, and its own write does not start it again. A moment that the browser cannot format
+    keeps the text of the server.
+
+    ``window.browserDates`` also formats the cells of ``time_column`` and ``day_column``.
+    """
+    return f"""<script>
+(() => {{
+  const formats = new Map();
+  const format = (key, options) => {{
+    if (!formats.has(key)) formats.set(key, new Intl.DateTimeFormat(undefined, options));
+    return formats.get(key);
+  }};
+  const moment = (iso, zone) => {{
+    const date = new Date(iso);
+    if (!iso || !zone || Number.isNaN(date.getTime())) return null;
+    try {{
+      return format('moment ' + zone, {{year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: zone, timeZoneName: 'short'}}).format(date);
+    }} catch {{
+      return null;
+    }}
+  }};
+  const day = (text) => {{
+    if (!/^\\d{{4}}-\\d{{2}}-\\d{{2}}$/.test(text || '')) return null;
+    const date = new Date(text + 'T00:00:00Z');
+    if (Number.isNaN(date.getTime())) return null;
+    return format('day', {{year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC'}}).format(date);
+  }};
+  window.browserDates = {{moment, day}};
+  const show = (element) => {{
+    const node = [...element.childNodes].find((child) => child.nodeType === Node.TEXT_NODE);
+    if (!node) return;
+    const template = element.getAttribute('{TEMPLATE_ATTRIBUTE}');
+    const source = JSON.stringify([element.getAttribute('{TIME_ATTRIBUTE}'), element.getAttribute('{ZONE_ATTRIBUTE}'), template]);
+    if (element.getAttribute('data-time-source') === source && node.nodeValue === element.getAttribute('data-time-shown')) return;
+    const formatted = moment(element.getAttribute('{TIME_ATTRIBUTE}'), element.getAttribute('{ZONE_ATTRIBUTE}'));
+    if (formatted === null) return;
+    const text = template === null ? formatted : template.split('{{time}}').join(formatted);
+    element.setAttribute('data-time-source', source);
+    element.setAttribute('data-time-shown', text);
+    if (node.nodeValue !== text) node.nodeValue = text;
+  }};
+  const showAll = () => document.querySelectorAll('[{TIME_ATTRIBUTE}]').forEach(show);
+  new MutationObserver(showAll).observe(document.documentElement, {{childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['{TIME_ATTRIBUTE}', '{ZONE_ATTRIBUTE}', '{TEMPLATE_ATTRIBUTE}']}});
+  document.addEventListener('DOMContentLoaded', showAll);
+}})();
+</script>"""
 
 
 def whole_number(text: str | None) -> int | None:

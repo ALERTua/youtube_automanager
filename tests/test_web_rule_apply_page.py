@@ -68,6 +68,7 @@ from youtube_automanager.runner import INTERRUPTED_ERROR, sync_lock_held
 from youtube_automanager.settings import Settings
 from youtube_automanager.web import applies as applies_module
 from youtube_automanager.web.ui import rule_editor
+from youtube_automanager.web.ui.common import DAY_CELL_FORMAT
 from youtube_automanager.youtube import public
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -457,6 +458,9 @@ async def test_the_preview_of_a_new_rule_lists_what_the_next_run_adds_and_stores
         "mark_color": "positive",
     }
     assert rows(user, "preview-table")[0]["date"] == "No date"
+    # The browser shows the day of the upload in its own form, and "No date" as it is.
+    (date_column,) = [column for column in element_of(user, "preview-table").columns if column["name"] == "date"]
+    assert date_column[":format"] == DAY_CELL_FORMAT
     assert text_of(user, "preview-counts") == "Will be added: 2, Waits: no value yet for a field of the rule: 1"
     assert (
         text_of(user, "preview-footer") == "The next run also checks each new video that comes before the run starts."

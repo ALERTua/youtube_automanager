@@ -23,7 +23,7 @@ from youtube_automanager.account_refresh import refresh_in_child
 from youtube_automanager.i18n import _
 from youtube_automanager.short_child import ChildBusy, ChildError, ChildLoggedOut, ChildUnavailable, ChildYouTubeError
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import ResultLabel, busy, format_time, read_timezone
+from youtube_automanager.web.ui.common import ResultLabel, busy, read_timezone, show_time
 
 LOG = logging.getLogger(__name__)
 
@@ -82,8 +82,10 @@ async def account_lists(services: Services, on_refreshed: OnRefreshed | None = N
         if time.refreshed_at is None:
             ui.label(_("The lists were never refreshed.")).mark("lists-refreshed")
             return
-        text = format_time(time.refreshed_at, ZoneInfo(time.timezone))
-        ui.label(_("Lists refreshed: {time}").format(time=text)).mark("lists-refreshed")
+        # The browser puts the time into the sentence in its own form.
+        show_time(ui.label(), time.refreshed_at, ZoneInfo(time.timezone), _("Lists refreshed: {time}")).mark(
+            "lists-refreshed"
+        )
 
     async def refresh() -> None:
         with busy(button):

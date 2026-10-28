@@ -50,6 +50,7 @@ from youtube_automanager.web.ui.common import (
     busy,
     column,
     confirm,
+    day_column,
     focus_when_drawn,
     icon_button,
     named,
@@ -212,7 +213,7 @@ def day_input(today: date) -> ui.input:
 
 def preview_columns() -> list[dict]:
     return [
-        column("date", _("Date")),
+        day_column("date", _("Date")),
         column("channel", _("Channel")),
         column("title", _("Title")),
         column("mark", _("Result")),

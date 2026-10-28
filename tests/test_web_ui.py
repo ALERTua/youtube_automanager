@@ -13,6 +13,8 @@ from ui_support import (
     element_of,
     elements_of,
     eventually,
+    moment_of,
+    moment_text_of,
     running_service,
     service_with_pages,
     store,
@@ -106,6 +108,14 @@ async def test_dashboard_shows_the_session_and_the_failed_last_run(user, session
     assert text_of(user, "session-checked") == "2026-10-01 12:30 EEST"
     assert text_of(user, "session-expiry") == "2027-01-01 00:00 EET"
     assert text_of(user, "run-started") == "2026-10-02 18:05 EEST"
+    # The texts above are the form of the service. The browser shows each moment in its own form, in the same zone.
+    assert moment_of(user, "session-checked") == ("2026-10-01T12:30:00+03:00", "Europe/Kyiv")
+    assert moment_of(user, "session-expiry") == ("2027-01-01T00:00:00+02:00", "Europe/Kyiv")
+    assert moment_of(user, "run-started") == ("2026-10-02T18:05:00+03:00", "Europe/Kyiv")
+    assert (moment_text_of(user, "next-run"), moment_of(user, "next-run")[1]) == (
+        text_of(user, "next-run"),
+        "Europe/Kyiv",
+    )
     assert text_of(user, "run-status") == "Failed"
     assert text_of(user, "run-trigger") == "Manual"
     assert (text_of(user, "run-added"), text_of(user, "run-seen")) == ("3", "40")

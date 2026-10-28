@@ -29,7 +29,7 @@ from youtube_automanager.scheduler import (
     upcoming_run_times,
 )
 from youtube_automanager.web.services import Services
-from youtube_automanager.web.ui.common import format_time, read_timezone, run_now_button
+from youtube_automanager.web.ui.common import read_timezone, run_now_button, time_label
 from youtube_automanager.web.ui.dashboard import SCHEDULER_STATES
 from youtube_automanager.web.ui.layout import register_page
 from youtube_automanager.web.ui.live_runs import RunFollower
@@ -81,7 +81,7 @@ def _is_valid(kind: ScheduleKind, timezone: str, cron: str | None, interval: int
 
 def _show_run_times(times: list[datetime], zone: ZoneInfo, marker: str) -> None:
     for time in times:
-        ui.label(format_time(time, zone)).mark(marker)
+        time_label(time, zone).mark(marker)
 
 
 def _status_card(status: Status) -> None:
