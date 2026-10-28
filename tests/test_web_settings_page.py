@@ -163,7 +163,7 @@ class FakeYouTube:
         self.answer = "accept"
         self.checks = 0
 
-    def client(self, text):
+    def client(self, text, *, budget):
         youtube = self
 
         class Client:

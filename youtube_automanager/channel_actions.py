@@ -43,8 +43,9 @@ if TYPE_CHECKING:
 SEARCH_LIMIT = 20
 # A search sends one or two anonymous requests. The time includes the start of the child.
 SEARCH_TIMEOUT_SECONDS = 90
-# A subscription change sends a session check, a read of the page config and the change, 5 s apart. Each timeout must
-# stay shorter than ``SCHEDULED_WAIT_S`` of the runner, so a channel action never makes a scheduled run give up.
+# A subscription change sends a session check, a read of the page config and the change, and each takes a token of
+# the request budget. Each timeout must stay shorter than ``SCHEDULED_WAIT_S`` of the runner, so a channel action
+# never makes a scheduled run give up.
 SUBSCRIPTION_TIMEOUT_SECONDS = 120
 
 

@@ -56,7 +56,7 @@ class FakeYouTube:
         self.answer = "accept"
         self.checks = []
 
-    def client(self, text):
+    def client(self, text, *, budget):
         return FakeClient(self, text)
 
 

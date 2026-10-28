@@ -5,6 +5,7 @@ of the account, so no test sends a request. Each cookie value is fake.
 """
 
 import importlib.metadata
+import io
 import json
 import subprocess
 import sys
@@ -14,8 +15,13 @@ from typing import ClassVar
 
 import pytest
 import yt_dlp.version
+from yt_dlp import YoutubeDL
+from yt_dlp.networking.common import Response
+from yt_dlp.networking.exceptions import HTTPError
 
 from youtube_automanager import ytdlp_check
+from youtube_automanager.db.models import RequestBudgetState
+from youtube_automanager.pacing import BUCKET_SIZE, RequestBudget
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.settings import Settings
 from youtube_automanager.short_child import EXIT_YOUTUBE_ERROR
@@ -30,6 +36,8 @@ KEY = generate_key()
 FOLDER = Path(yt_dlp.__file__).resolve().parent.parent
 VERSION = importlib.metadata.version("yt-dlp")
 COOKIES = f"# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t4000000000\tSAPISID\t{SECRET}\n"
+# The database of the request budget for the fake client, which sends no request, so the budget never opens it.
+DATABASE_URL = "sqlite://"
 
 
 def entry(video_id="dQw4w9WgXcQ"):
@@ -52,13 +60,16 @@ class FakeUploads:
 
 
 class FakeClient:
-    """Replaces the client of the account: the session check raises ``error`` when it is set. Records each text."""
+    """Replaces the client of the account: the session check raises ``error`` when it is set. Records each text and
+    each budget."""
 
     error: ClassVar[BaseException | None] = None
     texts: ClassVar[list[str]] = []
+    budgets: ClassVar[list[RequestBudget]] = []
 
-    def __init__(self, text):
+    def __init__(self, text, *, budget):
         FakeClient.texts.append(text)
+        FakeClient.budgets.append(budget)
 
     def check_session(self):
         if FakeClient.error is not None:
@@ -76,6 +87,7 @@ def uploads(monkeypatch):
 def client(monkeypatch):
     FakeClient.error = None
     FakeClient.texts = []
+    FakeClient.budgets = []
     monkeypatch.setattr(account, "AccountClient", FakeClient)
     return FakeClient
 
@@ -89,7 +101,7 @@ def result(capsys):
 
 
 def test_a_working_release_without_cookies_passes_after_one_anonymous_read(uploads, client, capsys):
-    assert ytdlp_check.check_once(FOLDER, VERSION, "") == 0
+    assert ytdlp_check.check_once(FOLDER, VERSION, "", DATABASE_URL) == 0
 
     assert json.loads(result(capsys)) == {"version": yt_dlp.version.__version__, "session": "not checked"}
     assert uploads.reads == [ytdlp_check.CHECK_CHANNEL_ID]
@@ -102,16 +114,36 @@ def test_a_working_release_without_cookies_passes_after_one_anonymous_read(uploa
 def test_a_live_session_and_a_logged_out_answer_both_pass(uploads, client, capsys, error, session):
     client.error = error
 
-    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES) == 0
+    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES, DATABASE_URL) == 0
 
     assert json.loads(result(capsys))["session"] == session
     assert client.texts == [COOKIES]
+    assert [type(budget) for budget in client.budgets] == [RequestBudget]
+
+
+def test_the_session_check_takes_a_token_of_the_budget_of_the_database(
+    uploads, settings, sessions, monkeypatch, capsys
+):
+    """The real client: YouTube refuses the session with HTTP 401, and the request still took its token."""
+
+    def refuse(ydl, request):
+        raise HTTPError(Response(io.BytesIO(b""), request.url, {}, status=401))
+
+    monkeypatch.setattr(YoutubeDL, "urlopen", refuse)
+
+    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES, settings.database_url) == 0
+
+    assert json.loads(result(capsys))["session"] == "logged out"
+    with sessions() as session:
+        row = session.get(RequestBudgetState, 1)
+    assert row.tokens == BUCKET_SIZE - 1
+    assert row.last_answer_at is not None
 
 
 def test_a_failed_session_check_fails_the_release(uploads, client, capsys):
     client.error = account.AccountError("yt-dlp 2026.08.19 does not fit the client: YoutubeTab.initialize raised")
 
-    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES) == EXIT_YOUTUBE_ERROR
+    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES, DATABASE_URL) == EXIT_YOUTUBE_ERROR
 
     assert result(capsys) == (
         "The session check failed: yt-dlp 2026.08.19 does not fit the client: YoutubeTab.initialize raised"
@@ -121,7 +153,7 @@ def test_a_failed_session_check_fails_the_release(uploads, client, capsys):
 def test_another_error_of_the_session_check_fails_without_its_text(uploads, client, capsys, caplog):
     client.error = ValueError(f"line 2 holds {SECRET}")
 
-    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES) == EXIT_YOUTUBE_ERROR
+    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES, DATABASE_URL) == EXIT_YOUTUBE_ERROR
 
     output = capsys.readouterr()
     assert output.err.strip().splitlines()[-1] == "The session check raised ValueError"
@@ -129,14 +161,14 @@ def test_another_error_of_the_session_check_fails_without_its_text(uploads, clie
 
 
 def test_a_release_from_another_folder_fails(uploads, client, capsys, tmp_path):
-    assert ytdlp_check.check_once(tmp_path, VERSION, "") == EXIT_YOUTUBE_ERROR
+    assert ytdlp_check.check_once(tmp_path, VERSION, "", DATABASE_URL) == EXIT_YOUTUBE_ERROR
 
     assert result(capsys).startswith("The child imported yt-dlp from ")
     assert uploads.reads == []
 
 
 def test_a_release_of_another_version_fails(uploads, client, capsys):
-    assert ytdlp_check.check_once(FOLDER, "2020.1.1", "") == EXIT_YOUTUBE_ERROR
+    assert ytdlp_check.check_once(FOLDER, "2020.1.1", "", DATABASE_URL) == EXIT_YOUTUBE_ERROR
 
     assert result(capsys) == f"yt-dlp says that it is {yt_dlp.version.__version__}, but the update installed 2020.1.1"
 
@@ -157,7 +189,7 @@ def test_the_version_of_the_module_names_the_pypi_version(module_version, instal
 def test_a_release_without_an_internal_of_the_client_fails_before_any_request(uploads, client, capsys, monkeypatch):
     monkeypatch.setattr(account, "missing_internals", lambda: ["YoutubeTab._extract_response"])
 
-    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES) == EXIT_YOUTUBE_ERROR
+    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES, DATABASE_URL) == EXIT_YOUTUBE_ERROR
 
     assert result(capsys) == f"yt-dlp {yt_dlp.version.__version__} lacks YoutubeTab._extract_response"
     assert uploads.reads == []
@@ -177,7 +209,7 @@ def test_a_failed_anonymous_read_fails_the_release(uploads, client, capsys, chan
     for name, value in change.items():
         setattr(uploads, name, value)
 
-    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES) == EXIT_YOUTUBE_ERROR
+    assert ytdlp_check.check_once(FOLDER, VERSION, COOKIES, DATABASE_URL) == EXIT_YOUTUBE_ERROR
 
     assert result(capsys).startswith(cause)
     assert client.texts == []

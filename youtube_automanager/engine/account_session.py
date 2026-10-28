@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from youtube_automanager import notify
 from youtube_automanager.account_cache import ChannelLike, PlaylistLike
 from youtube_automanager.db.models import CookieOrigin, SessionState, utc_now
+from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube import session as cookie_store
 from youtube_automanager.youtube.account import AccountClient, AccountError, NotLoggedInError
@@ -141,7 +142,9 @@ class AccountSession:
     ``check`` checks the session of the current cookie version, and ``open`` gives the checked client to the work.
     ``check_upload`` checks an uploaded cookie text instead, and stores it when it lives. ``died`` takes a session that
     YouTube refused during the work, and ``write_back`` saves the updated cookies.
-    ``send`` sends a notification, and ``make_client`` builds the account client from a cookie text.
+    ``send`` sends a notification, and ``make_client`` builds the account client from a cookie text. Without
+    ``make_client``, the session builds an ``AccountClient`` that takes its tokens from the request budget on the
+    database of ``sessions``.
     """
 
     def __init__(
@@ -157,13 +160,16 @@ class AccountSession:
         self._settings = settings
         self._zone = ZoneInfo(settings.tz)
         self._send = send
-        self._make_client = make_client or AccountClient
+        self._make_client = make_client or self._new_client
         self._clock = clock
         self._cipher: CookieCipher | None = None
         self._client: ClientLike | None = None
         self._version_id: int | None = None
         self._unavailable: AccountUnavailable | None = None
         self._alive = False
+
+    def _new_client(self, cookies: str) -> ClientLike:
+        return AccountClient(cookies, budget=RequestBudget(self._sessions))
 
     def check(self) -> CheckResult:
         """Check the session of the current cookie version, and go back to the newest good version when it is dead.

@@ -9,7 +9,8 @@ first on the import path of the child, while the update holds the sync lock. The
 2. Each attribute of ``account.YTDLP_INTERNALS`` exists in the new release.
 3. One anonymous flat read of the uploads of the official YouTube channel gives an entry with an id.
 4. When the database stores cookies, the session check of ``AccountClient`` runs with the new release. A live session
-   and a logged-out answer both pass, because both prove that the code path works. The check saves no cookie.
+   and a logged-out answer both pass, because both prove that the code path works. The check saves no cookie, and its
+   request takes a token of the request budget on the database of the service.
 
 The child gets the cookie text on its standard input, never on its command line or in its environment. No log line,
 no stderr line and no error text holds the text. A failure of any step, a network failure included, ends the child
@@ -26,6 +27,8 @@ from pathlib import Path
 from packaging.version import InvalidVersion, Version
 from sqlalchemy.orm import Session, sessionmaker
 
+from youtube_automanager.db import make_engine, make_session_factory
+from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.runner import SyncRunner
 from youtube_automanager.settings import Settings
 from youtube_automanager.short_child import EXIT_YOUTUBE_ERROR, ChildError, child_result, fail, read_json, succeed
@@ -69,11 +72,12 @@ def _error_text(error: BaseException) -> str:
     return f"{type(error).__name__}: {error}"
 
 
-def check_once(folder: Path, version: str, cookies: str) -> int:
+def check_once(folder: Path, version: str, cookies: str, database_url: str) -> int:
     """The body of the check in the child process. Return the exit code of the child.
 
     ``folder`` holds the new release of ``version``. ``cookies`` is the cookie text from the standard input, or an
-    empty text when the database stores no cookies.
+    empty text when the database stores no cookies. ``database_url`` names the database of the service, whose request
+    budget the session check uses.
     """
     try:
         import yt_dlp
@@ -111,8 +115,10 @@ def check_once(folder: Path, version: str, cookies: str) -> int:
 
     session = "not checked"
     if cookies.strip():
+        engine = make_engine(database_url)
         try:
-            account.AccountClient(cookies).check_session()
+            budget = RequestBudget(make_session_factory(engine))
+            account.AccountClient(cookies, budget=budget).check_session()
             session = "live"
         except account.NotLoggedInError:
             session = "logged out"
@@ -127,6 +133,8 @@ def check_once(folder: Path, version: str, cookies: str) -> int:
                 "".join(traceback.format_tb(error.__traceback__)),
             )
             return fail(WHAT, EXIT_YOUTUBE_ERROR, f"The session check raised {type(error).__name__}")
+        finally:
+            engine.dispose()
     LOG.info("yt-dlp %s passed the check of a new release, and the session is %s", module_version, session)
     return succeed({"version": module_version, "session": session})
 

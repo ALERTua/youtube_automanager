@@ -17,11 +17,14 @@ import pytest
 from yt_dlp import YoutubeDL
 from yt_dlp.cookies import YoutubeDLCookieJar
 from yt_dlp.networking.common import Response
-from yt_dlp.networking.exceptions import HTTPError
+from yt_dlp.networking.exceptions import HTTPError, TransportError
 from yt_dlp.utils import DownloadError, ExtractorError
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
-from youtube_automanager.youtube import account
+from youtube_automanager.db import make_engine, make_session_factory
+from youtube_automanager.db.models import RequestBudgetState
+from youtube_automanager.pacing import BUCKET_SIZE, PAUSE_S, REFILL_S, RequestBudget
+from youtube_automanager.youtube import account, public
 from youtube_automanager.youtube.account import (
     AccountClient,
     AccountError,
@@ -34,6 +37,8 @@ from youtube_automanager.youtube.account import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "account"
+# The time of the wall clock at the zero of the fake clock.
+EPOCH = datetime.datetime(2026, 10, 28, 12, 0, tzinfo=datetime.UTC)
 
 ACCOUNT = "UCfakeAccount00000000001"
 CHANNEL = "UCfakeChannel00000000001"
@@ -94,28 +99,41 @@ def page_html(ytcfg: dict, initial_data: dict | None = None) -> str:
 
 
 class FakeTime:
-    """A monotonic clock and a sleep that only moves the clock."""
+    """A clock of the wall time, ``now`` seconds after ``EPOCH``, and a sleep that only moves the clock."""
 
     def __init__(self):
         self.now = 1000.0
         self.sleeps = []
 
-    def clock(self) -> float:
-        return self.now
+    def clock(self) -> datetime.datetime:
+        return EPOCH + datetime.timedelta(seconds=self.now)
 
     def sleep(self, seconds: float) -> None:
+        # A budget that never stops waiting fails the test instead of a hang.
+        assert len(self.sleeps) < 200, f"the budget keeps waiting: {self.sleeps[:5]}"
         self.sleeps.append(seconds)
         self.now += seconds
+
+
+def fake_budget(sessions, fake_time: FakeTime, pause_s: float = PAUSE_S) -> RequestBudget:
+    """A budget on the database of ``sessions`` with the fake clock, and the same pause after each answer."""
+    return RequestBudget(sessions, clock=fake_time.clock, sleep=fake_time.sleep, random=lambda low, high: pause_s)
+
+
+def stored_budget(sessions) -> RequestBudgetState | None:
+    with sessions() as session:
+        return session.get(RequestBudgetState, 1)
 
 
 class FakeYouTube:
     """Replaces ``YoutubeDL.urlopen``: answers each request from canned pages and API answers, and records it.
 
-    Each answer takes one second on the fake clock.
+    Each answer takes ``answer_s`` seconds on the fake clock, one second unless a test sets another time.
     """
 
     def __init__(self, fake_time: FakeTime):
         self.time = fake_time
+        self.answer_s = 1.0
         self.pages = {}
         self.page_errors = {}
         self.api = {}
@@ -134,7 +152,7 @@ class FakeYouTube:
         self.requests.append(
             {"method": request.method, "url": request.url, "headers": dict(request.headers), "body": body}
         )
-        self.time.now += 1.0
+        self.time.now += self.answer_s
         path = request.url.split("?")[0]
         if "/youtubei/v1/" in path:
             endpoint = path.split("/youtubei/v1/")[1]
@@ -201,8 +219,13 @@ def fake_time():
 
 
 @pytest.fixture
-def client(fake_time):
-    return AccountClient(COOKIES, clock=fake_time.clock, sleep=fake_time.sleep)
+def budget(sessions, fake_time):
+    return fake_budget(sessions, fake_time)
+
+
+@pytest.fixture
+def client(budget):
+    return AccountClient(COOKIES, budget=budget)
 
 
 @pytest.fixture
@@ -253,23 +276,23 @@ def test_client_loads_each_cookie_of_the_netscape_text(client):
     }
 
 
-def test_client_loads_a_text_with_crlf_line_ends_without_a_cr_in_the_values():
-    jar = AccountClient(COOKIES.replace("\n", "\r\n"))._cookiejar
+def test_client_loads_a_text_with_crlf_line_ends_without_a_cr_in_the_values(budget):
+    jar = AccountClient(COOKIES.replace("\n", "\r\n"), budget=budget)._cookiejar
 
     assert {cookie.name: cookie.value for cookie in jar}["YSC"] == "fake-ysc"
     assert not any(cookie.value.endswith("\r") for cookie in jar)
 
 
-def test_client_loads_an_httponly_line():
+def test_client_loads_an_httponly_line(budget):
     text = COOKIES + "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\tHSID\tfake-hsid\n"
 
-    assert "HSID" in {cookie.name for cookie in AccountClient(text)._cookiejar}
+    assert "HSID" in {cookie.name for cookie in AccountClient(text, budget=budget)._cookiejar}
 
 
 @pytest.mark.parametrize("text", ["", ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tfake-sid\n", '[{"name": "SID"}]'])
-def test_client_refuses_a_text_without_the_netscape_header_line(text):
+def test_client_refuses_a_text_without_the_netscape_header_line(budget, text):
     with pytest.raises(ValueError, match="does not start with the header line"):
-        AccountClient(text)
+        AccountClient(text, budget=budget)
 
 
 @pytest.mark.parametrize(
@@ -282,19 +305,19 @@ def test_client_refuses_a_text_without_the_netscape_header_line(text):
     ],
     ids=["six fields", "bad expiry", "domain flag", "indented comment"],
 )
-def test_client_refuses_a_bad_line_and_names_only_its_number(capsys, line):
+def test_client_refuses_a_bad_line_and_names_only_its_number(budget, capsys, line):
     text = f"# Netscape HTTP Cookie File\n\n{line}\n"
 
     with pytest.raises(ValueError, match="line 3 of the cookie text") as raised:
-        AccountClient(text)
+        AccountClient(text, budget=budget)
 
     assert "secret-value" not in str(raised.value)
     assert capsys.readouterr().err == ""
 
 
-def test_client_refuses_a_text_without_cookies():
+def test_client_refuses_a_text_without_cookies(budget):
     with pytest.raises(ValueError, match="holds no cookie"):
-        AccountClient("# Netscape HTTP Cookie File\n# only a comment\n")
+        AccountClient("# Netscape HTTP Cookie File\n# only a comment\n", budget=budget)
 
 
 def test_cookies_text_gives_the_cookies_as_a_netscape_cookie_file(client):
@@ -324,46 +347,110 @@ def test_yt_dlp_gets_the_cookies_of_the_client_and_no_cookie_file(client):
         ydl.close()
 
 
-# The pause between requests
+# The request budget
 
 
-def test_pacer_waits_for_the_rest_of_the_pause_after_the_previous_answer(fake_time):
-    pacer = account._Pacer(5.0, fake_time.clock, fake_time.sleep)
+def test_a_request_of_the_client_takes_a_token_and_stores_the_end_of_its_answer(client, youtube, fake_time, sessions):
+    started = fake_time.clock()
 
-    with pacer.request():
-        fake_time.now += 1.0
-    with pacer.request():
-        pass
-    fake_time.now += 3.0
-    with pacer.request():
-        pass
-    fake_time.now += 10.0
-    with pacer.request():
-        pass
+    client.check_session()
 
-    assert fake_time.sleeps == [5.0, 2.0]
+    assert len(youtube.requests) == 1
+    row = stored_budget(sessions)
+    assert (row.tokens, row.refilled_at) == (BUCKET_SIZE - 1, started)
+    # The answer took one second on the fake clock, and the budget stored its end.
+    assert row.last_answer_at == fake_time.clock() == started + datetime.timedelta(seconds=1)
 
 
-def test_pacer_counts_a_failed_request_as_an_answer(fake_time):
-    pacer = account._Pacer(5.0, fake_time.clock, fake_time.sleep)
+def test_an_error_answer_also_takes_a_token_and_stores_its_end(client, youtube, fake_time, sessions):
+    youtube.page_errors[HOME_URL] = 401
+    started = fake_time.clock()
 
-    with pytest.raises(OSError), pacer.request():
-        raise OSError("connection reset")
-    with pacer.request():
-        pass
+    with pytest.raises(NotLoggedInError):
+        client.check_session()
 
-    assert fake_time.sleeps == [5.0]
+    assert len(youtube.requests) == 1
+    row = stored_budget(sessions)
+    assert (row.tokens, row.refilled_at) == (BUCKET_SIZE - 1, started)
+    assert row.last_answer_at == fake_time.clock() == started + datetime.timedelta(seconds=1)
 
 
-def test_two_requests_of_the_client_are_five_seconds_apart(client, youtube, fake_time):
+def test_the_requests_of_the_client_keep_the_pause_after_each_answer(client, youtube, fake_time):
     youtube.answer("account/account_menu", recorded_response("account_menu"))
 
     client.identity()
-    fake_time.now += 3.0
+    fake_time.now += 0.5
     client.identity()
 
     assert len(youtube.requests) == 4
-    assert fake_time.sleeps == [5.0, 2.0, 5.0]
+    # Each answer ends right before the next request, except the one that was 0.5 s before it.
+    assert fake_time.sleeps == pytest.approx([PAUSE_S, PAUSE_S - 0.5, PAUSE_S])
+
+
+def test_15_requests_go_at_once_and_the_16th_waits_for_the_rest_of_4_s(sessions, youtube, fake_time):
+    youtube.answer("account/account_menu", recorded_response("account_menu"))
+    youtube.answer_s = 0.25
+    waited_before_request = []
+
+    def sleep(seconds):
+        waited_before_request.append(len(youtube.requests) + 1)
+        fake_time.sleep(seconds)
+
+    budget = RequestBudget(sessions, clock=fake_time.clock, sleep=sleep, random=lambda low, high: 0.0)
+    client = AccountClient(COOKIES, budget=budget)
+
+    for _ in range(8):
+        client.identity()
+
+    assert len(youtube.requests) == 16
+    assert waited_before_request == [16]
+    # 15 answers took 3.75 s, so the bucket got 0.9375 tokens back, and the 16th request waits for the rest.
+    assert fake_time.sleeps == [pytest.approx(REFILL_S - 15 * 0.25)]
+
+
+def test_two_clients_on_one_database_share_the_budget(settings, sessions, youtube, fake_time):
+    engines = [make_engine(settings.database_url), make_engine(settings.database_url)]
+    try:
+        first, second = (
+            AccountClient(COOKIES, budget=fake_budget(make_session_factory(engine), fake_time)) for engine in engines
+        )
+        first.check_session()
+        fake_time.now += 0.25
+
+        second.check_session()
+
+        # The second client waits for the rest of the pause after the answer of the first one.
+        assert fake_time.sleeps == pytest.approx([PAUSE_S - 0.25])
+        assert len(youtube.requests) == 2
+        assert stored_budget(sessions).tokens == pytest.approx(BUCKET_SIZE - 2 + (1.0 + PAUSE_S) / REFILL_S)
+    finally:
+        for engine in engines:
+            engine.dispose()
+
+
+def test_an_anonymous_read_takes_no_token(client, monkeypatch):
+    calls = []
+    requests = []
+
+    def refuse(ydl, request):
+        requests.append(request.url)
+        raise TransportError("a test of the account client refuses the network")
+
+    monkeypatch.setattr(RequestBudget, "before_request", lambda budget: calls.append("token"))
+    monkeypatch.setattr(RequestBudget, "after_answer", lambda budget: calls.append("answer"))
+    monkeypatch.setattr(YoutubeDL, "urlopen", refuse)
+
+    with pytest.raises(public.PublicSourceError):
+        list(public.iter_channel_uploads(CHANNEL))
+    with pytest.raises(public.PublicSourceError):
+        public.search_channels("fake channel name")
+
+    assert requests
+    assert calls == []
+    # The same fake counts the request of the client, so the empty list above is not a broken fake.
+    with pytest.raises(AccountError):
+        client.check_session()
+    assert calls[:2] == ["token", "answer"]
 
 
 # The login check on the real yt-dlp extractor
@@ -472,14 +559,15 @@ def test_check_session_without_a_clear_answer_raises_account_error(client, youtu
     assert not isinstance(raised.value, NotLoggedInError)
 
 
-def test_use_cookies_replaces_the_cookies_and_keeps_the_pause(client, youtube, fake_time):
+def test_use_cookies_replaces_the_cookies_and_keeps_the_budget(client, youtube, fake_time, sessions):
     client.check_session()
 
     client.use_cookies(COOKIES.replace("fake-sid", "fake-sid-2"))
     client.check_session()
 
     assert {cookie.name: cookie.value for cookie in client._cookiejar}["SID"] == "fake-sid-2"
-    assert fake_time.sleeps == [5.0]
+    assert fake_time.sleeps == [PAUSE_S]
+    assert stored_budget(sessions).tokens == pytest.approx(BUCKET_SIZE - 2 + (1.0 + PAUSE_S) / REFILL_S)
 
 
 def test_use_cookies_refuses_a_bad_text_and_keeps_the_cookies(client):

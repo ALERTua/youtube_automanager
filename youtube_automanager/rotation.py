@@ -6,8 +6,9 @@ SIDCC cookies, and the interval until the next rotation. A second rotation withi
 so the service never rotates more often than the answer allows, and never more often than each ``INTERVAL_S``.
 
 The rotation is the setting ROTATION_KEY, on by default. It never runs while a sync run or a session check holds the
-sync lock, and it saves the new values through the guarded write-back. It uses only the standard library, because the
-process of the service never imports yt-dlp.
+sync lock, and it saves the new values through the guarded write-back. Each of its two requests takes a token of the
+request budget that the requests of yt-dlp with cookies share. It uses only the standard library, because the process
+of the service never imports yt-dlp.
 """
 
 import datetime
@@ -16,7 +17,6 @@ import json
 import logging
 import re
 import threading
-import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
@@ -24,6 +24,7 @@ from collections.abc import Callable, Sequence
 from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.db.models import CookieOrigin, SessionState, Setting, utc_now
+from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.runner import SYNC_LOCK, RunAlreadyActive, sync_lock_held
 from youtube_automanager.settings import Settings
 from youtube_automanager.youtube.cookie_text import from_cookiejar, to_cookiejar
@@ -49,8 +50,6 @@ RETRY_S = 60.0
 # The longest wait after failed rotations.
 MAX_DELAY_S = 3600.0
 TIMEOUT_S = 30.0
-# The pause between two requests with the cookies of the account.
-PAUSE_S = 5.0
 _ROTATION_ID = re.compile(r"init\('(-?\d+)'")
 
 
@@ -94,7 +93,8 @@ class CookieRotation:
     """Rotates the session of the stored cookies, one turn at a time.
 
     ``handlers`` are more urllib handlers for the requests, for example a fake transport in a test. ``lock`` is the
-    sync lock of the runs.
+    sync lock of the runs. ``budget`` is the request budget of the requests with cookies. Without it, the rotation
+    uses the budget on the database of ``sessions``.
     """
 
     def __init__(
@@ -105,16 +105,14 @@ class CookieRotation:
         lock: threading.Lock = SYNC_LOCK,
         handlers: Sequence[urllib.request.BaseHandler] = (),
         clock: Callable[[], datetime.datetime] = utc_now,
-        sleep: Callable[[float], object] = time.sleep,
-        pause_s: float = PAUSE_S,
+        budget: RequestBudget | None = None,
     ) -> None:
         self._sessions = sessions
         self._settings = settings
         self._lock = lock
         self._handlers = tuple(handlers)
         self._clock = clock
-        self._sleep = sleep
-        self._pause_s = pause_s
+        self._budget = budget or RequestBudget(sessions)
         self._failures = 0
 
     def turn(self) -> float:
@@ -181,7 +179,6 @@ class CookieRotation:
             if found is None:
                 LOG.warning("The rotation page answered HTTP %s without a rotation id", status)
                 return self._failed()
-            self._sleep(self._pause_s)
             status, answer = self._send(
                 opener,
                 urllib.request.Request(
@@ -219,12 +216,18 @@ class CookieRotation:
         self._failures += 1
         return min(INTERVAL_S * 2**self._failures, MAX_DELAY_S)
 
-    @staticmethod
-    def _send(opener: urllib.request.OpenerDirector, request: urllib.request.Request) -> tuple[int, str]:
-        """Send one request. Return the HTTP status and the body text, also for an HTTP error."""
+    def _send(self, opener: urllib.request.OpenerDirector, request: urllib.request.Request) -> tuple[int, str]:
+        """Send one request with a token of the budget. Return the HTTP status and the body text, also for an HTTP
+        error.
+
+        The budget keeps the end of the answer also after an error answer or a failed connection.
+        """
+        self._budget.before_request()
         try:
             with opener.open(request, timeout=TIMEOUT_S) as response:
                 return response.status, response.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as error:
             with error:
                 return error.code, error.read().decode("utf-8", "replace")
+        finally:
+            self._budget.after_answer()

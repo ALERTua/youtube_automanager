@@ -8,7 +8,7 @@ from sqlalchemy.dialects import postgresql
 from youtube_automanager import pacing
 from youtube_automanager.db import make_engine, make_session_factory
 from youtube_automanager.db.models import RequestBudgetState
-from youtube_automanager.pacing import BUCKET_SIZE, RequestBudget, refilled_tokens
+from youtube_automanager.pacing import BUCKET_SIZE, RequestBudget, minimum_seconds, refilled_tokens
 
 START = datetime.datetime(2026, 10, 28, 12, 0, tzinfo=datetime.UTC)
 
@@ -90,6 +90,32 @@ def stored(sessions) -> RequestBudgetState | None:
 )
 def test_the_bucket_gets_one_token_each_4_s_up_to_15(tokens, elapsed_s, expected):
     assert refilled_tokens(tokens, START, at(elapsed_s)) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("requests", "expected"),
+    [
+        (0, 0.0),
+        (1, 0.0),
+        # Inside the bucket only the shortest pause of 0.25 s after each answer counts.
+        (2, 0.25),
+        (15, 3.5),
+        # From the 16th request, the wait for a new token each 4 s counts.
+        (16, 4.0),
+        (200, 740.0),
+    ],
+)
+def test_the_shortest_time_of_the_requests_comes_from_the_pause_and_the_bucket(requests, expected):
+    assert minimum_seconds(requests) == pytest.approx(expected)
+
+
+def test_the_fastest_run_of_a_budget_takes_the_shortest_time(sessions, fake_time):
+    # Each answer comes at once, and each pause is the shortest that the random pause gives.
+    budget = make_budget(sessions, fake_time, pause=pacing.PAUSE_S - pacing.PAUSE_JITTER_S)
+    for _ in range(40):
+        budget.before_request()
+        budget.after_answer()
+    assert (fake_time.now - START).total_seconds() == pytest.approx(minimum_seconds(40))
 
 
 @pytest.mark.parametrize(

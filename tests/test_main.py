@@ -64,7 +64,7 @@ def test_check_ytdlp_gives_the_folder_the_version_and_the_standard_input_to_the_
 
     assert cli.main(["check-ytdlp", "--folder", str(tmp_path), "--version", "2026.8.19"]) == 5
 
-    assert calls == [(tmp_path, "2026.8.19", "# Netscape HTTP Cookie File\nthe rest\n")]
+    assert calls == [(tmp_path, "2026.8.19", "# Netscape HTTP Cookie File\nthe rest\n", settings.database_url)]
     assert logging_setups == [True]
 
 

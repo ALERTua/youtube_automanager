@@ -4,8 +4,9 @@ The client uses no YouTube Data API. Lists come from the flat extraction of yt-d
 playlist dialog and each change go through internal methods of the ``YoutubeTab`` extractor of yt-dlp. A method name
 with a leading underscore is internal, and a new release of yt-dlp can change it.
 
-Two requests with the cookies of the account are at least ``pause_s`` seconds apart, from the end of one answer to the
-start of the next. The functions are synchronous, because the yt-dlp calls are synchronous.
+Each request with the cookies of the account takes a token of the shared ``RequestBudget`` before it goes, and the
+budget keeps the end of its answer, also of an error answer. The functions are synchronous, because the yt-dlp calls
+are synchronous.
 
 The page config of a logged-in YouTube page holds the value of the ``LOGIN_INFO`` cookie, so the client never logs it.
 
@@ -15,16 +16,13 @@ version of yt-dlp and the call, so a run goes on without the account. ``YTDLP_IN
 check of a new yt-dlp release makes sure that each of them exists.
 """
 
-import contextlib
 import copy
 import datetime
 import io
 import logging
 import re
-import threading
-import time
 import urllib.parse
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from yt_dlp import YoutubeDL
@@ -33,6 +31,7 @@ from yt_dlp.networking.exceptions import HTTPError
 from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError, traverse_obj
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
+from youtube_automanager.pacing import RequestBudget
 from youtube_automanager.youtube._ytdlp import (
     BASE_OPTIONS,
     CHANNEL_ID,
@@ -45,7 +44,6 @@ from youtube_automanager.youtube.cookie_text import checked_lines
 
 LOG = logging.getLogger(__name__)
 
-PAUSE_S = 5.0
 WATCH_LATER = "WL"
 
 _YT_DLP_LOGGER = YtDlpLogger(LOG)
@@ -172,40 +170,18 @@ class FeedVideo:
     live_status: str | None
 
 
-class _Pacer:
-    """Keeps two requests at least ``pause_s`` seconds apart, from the end of one answer to the start of the next."""
-
-    def __init__(self, pause_s: float, clock: Callable[[], float], sleep: Callable[[float], object]) -> None:
-        self._pause_s = pause_s
-        self._clock = clock
-        self._sleep = sleep
-        self._lock = threading.Lock()
-        self._last_answer: float | None = None
-
-    @contextlib.contextmanager
-    def request(self) -> Generator[None]:
-        with self._lock:
-            if self._last_answer is not None:
-                remaining = self._last_answer + self._pause_s - self._clock()
-                if remaining > 0:
-                    self._sleep(remaining)
-            try:
-                yield
-            finally:
-                self._last_answer = self._clock()
-
-
 class _AccountYoutubeDL(YoutubeDL):
     """A yt-dlp instance that sends the cookies of the account, paces its requests and checks the login.
 
-    It has no ``cookiefile`` option, so it never writes a cookie file. ``ytcfgs`` collects the config of each page
-    that confirmed the login. A page that answers as to an anonymous user, or a redirect to the Google sign-in page,
-    raises ``NotLoggedInError`` at once, before yt-dlp retries the page or reads more pages.
+    It has no ``cookiefile`` option, so it never writes a cookie file. Each request takes a token of ``budget``.
+    ``ytcfgs`` collects the config of each page that confirmed the login. A page that answers as to an anonymous user,
+    or a redirect to the Google sign-in page, raises ``NotLoggedInError`` at once, before yt-dlp retries the page or
+    reads more pages.
     """
 
-    def __init__(self, params: dict, cookiejar: YoutubeDLCookieJar, pacer: _Pacer) -> None:
+    def __init__(self, params: dict, cookiejar: YoutubeDLCookieJar, budget: RequestBudget) -> None:
         self._account_cookiejar = cookiejar
-        self._pacer = pacer
+        self._budget = budget
         super().__init__(params)
         self.ytcfgs: list[dict] = []
         with _YtDlpCall(f"YoutubeDL.get_info_extractor of {_TAB_EXTRACTOR}"):
@@ -238,8 +214,12 @@ class _AccountYoutubeDL(YoutubeDL):
         return self._account_cookiejar
 
     def urlopen(self, req):
-        with self._pacer.request():
+        self._budget.before_request()
+        try:
             response = super().urlopen(req)
+        finally:
+            # An error answer and a failed connection count too, so the next request keeps the pause after them.
+            self._budget.after_answer()
         if urllib.parse.urlsplit(response.url).hostname == _SIGN_IN_HOST:
             response.close()
             raise NotLoggedInError("YouTube sent the request to the Google sign-in page")
@@ -249,24 +229,18 @@ class _AccountYoutubeDL(YoutubeDL):
 class AccountClient:
     """A client of one YouTube account. It holds the cookies of the account in memory only.
 
-    ``cookies`` is the text of a Netscape cookie file. ``clock`` and ``sleep`` set the pause between two requests.
+    ``cookies`` is the text of a Netscape cookie file. ``budget`` is the shared budget of the requests with cookies,
+    on the database of the service, and each request of the client takes a token of it.
     """
 
-    def __init__(
-        self,
-        cookies: str,
-        *,
-        pause_s: float = PAUSE_S,
-        clock: Callable[[], float] = time.monotonic,
-        sleep: Callable[[float], object] = time.sleep,
-    ) -> None:
+    def __init__(self, cookies: str, *, budget: RequestBudget) -> None:
         self._cookiejar = _load_cookie_jar(cookies)
-        self._pacer = _Pacer(pause_s, clock, sleep)
+        self._budget = budget
 
     def use_cookies(self, cookies: str) -> None:
         """Replace the cookies of the client with the text of a Netscape cookie file.
 
-        The pause between two requests stays, so the next request still waits for the rest of the pause.
+        The budget stays, so the next request still takes a token and waits for the rest of the pause.
         """
         self._cookiejar = _load_cookie_jar(cookies)
 
@@ -399,7 +373,7 @@ class AccountClient:
         self._change_subscription("subscription/unsubscribe", channel_id, subscribed=False)
 
     def _new_youtube_dl(self, **options) -> _AccountYoutubeDL:
-        return _AccountYoutubeDL({**_OPTIONS, **options}, self._cookiejar, self._pacer)
+        return _AccountYoutubeDL({**_OPTIONS, **options}, self._cookiejar, self._budget)
 
     def _read_page(self, url: str, **options) -> tuple[dict, dict]:
         """Read the first page of a list of the account. Return the answer of yt-dlp and the config of the page.

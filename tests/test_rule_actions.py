@@ -36,6 +36,7 @@ from youtube_automanager.db.models import (
 from youtube_automanager.engine import account_session
 from youtube_automanager.engine.rule_preview import APPLY_LIMIT, DraftRule, Mark, Preview, PreviewVideo
 from youtube_automanager.engine.sync import FEED_READ_KEY, FEED_SOURCE
+from youtube_automanager.pacing import PAUSE_JITTER_S, PAUSE_S, REFILL_S
 from youtube_automanager.rule_actions import (
     PREVIEW_TIMEOUT_SECONDS,
     AppliedRun,
@@ -59,7 +60,7 @@ from youtube_automanager.short_child import (
     ChildYouTubeError,
 )
 from youtube_automanager.youtube import public
-from youtube_automanager.youtube.account import PAUSE_S, AccountError, NotLoggedInError
+from youtube_automanager.youtube.account import AccountError, NotLoggedInError
 from youtube_automanager.youtube.public import PublicSourceError
 from youtube_automanager.youtube.session import CookieCipher, generate_key, save_cookies
 
@@ -180,7 +181,7 @@ def fake_client(monkeypatch):
     state = ClientState()
 
     class FakeClient:
-        def __init__(self, text):
+        def __init__(self, text, *, budget):
             state.created += 1
             self.text = text
 
@@ -280,8 +281,9 @@ def test_the_timeout_of_a_preview_is_shorter_than_the_wait_of_a_scheduled_run():
 
 
 def test_a_scheduled_run_waits_longer_than_the_adds_of_a_full_apply():
-    # Each add sends two requests with the cookies, at least the pause of the account client apart.
-    assert APPLY_LIMIT * 2 * PAUSE_S < SCHEDULED_WAIT_S
+    # Each add sends two requests with the cookies, and one request waits at most for one token of the budget, or for
+    # the longest pause after an answer.
+    assert APPLY_LIMIT * 2 * max(REFILL_S, PAUSE_S + PAUSE_JITTER_S) < SCHEDULED_WAIT_S
 
 
 # The body of the preview child.

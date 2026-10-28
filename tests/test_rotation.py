@@ -18,7 +18,15 @@ import urllib.response
 import pytest
 from sqlalchemy import select
 
-from youtube_automanager.db.models import Account, CookieOrigin, CookieVersion, SessionState, Setting
+from youtube_automanager.db.models import (
+    Account,
+    CookieOrigin,
+    CookieVersion,
+    RequestBudgetState,
+    SessionState,
+    Setting,
+)
+from youtube_automanager.pacing import BUCKET_SIZE, PAUSE_S, REFILL_S, RequestBudget
 from youtube_automanager.rotation import (
     INTERVAL_S,
     MAX_DELAY_S,
@@ -137,18 +145,31 @@ class Harness:
         self.settings = Settings(home=tmp_path, database_url="sqlite://", tz="UTC", cookies_key=self.key)
         self.accounts = FakeAccounts()
         self.lock = threading.Lock()
-        self.sleeps = []
         self.now = NOW
+        # The request budget has a clock of its own, so its waits do not move the times of the rotation.
+        self.budget_now = NOW
+        self.sleeps = []
+
+    def budget_sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.budget_now += datetime.timedelta(seconds=seconds)
 
     def rotation(self, settings=None):
+        budget = RequestBudget(
+            self.sessions, clock=lambda: self.budget_now, sleep=self.budget_sleep, random=lambda low, high: PAUSE_S
+        )
         return CookieRotation(
             self.sessions,
             settings or self.settings,
             lock=self.lock,
             handlers=[self.accounts],
             clock=lambda: self.now,
-            sleep=self.sleeps.append,
+            budget=budget,
         )
+
+    def budget(self):
+        with self.sessions() as session:
+            return session.get(RequestBudgetState, 1)
 
     def upload(self, text=STORED):
         with self.sessions.begin() as session:
@@ -200,8 +221,25 @@ def test_a_rotation_sends_the_two_requests_of_a_browser_tab(harness):
     assert rotate["headers"]["Origin"] == "https://accounts.youtube.com"
     assert rotate["headers"]["Referer"] == PAGE_URL
     assert page["headers"]["User-agent"] == rotate["headers"]["User-agent"]
-    # The two requests are a pause apart.
-    assert harness.sleeps == [5.0]
+
+
+def test_the_two_requests_of_a_rotation_take_two_tokens_and_keep_the_pause(harness):
+    harness.rotation().turn()
+
+    # The second request waits for the pause after the answer of the first one.
+    assert harness.sleeps == [PAUSE_S]
+    row = harness.budget()
+    assert row.tokens == pytest.approx(BUCKET_SIZE - 2 + PAUSE_S / REFILL_S)
+    assert row.last_answer_at == harness.budget_now
+
+
+def test_the_rotation_waits_for_the_pause_after_an_answer_of_another_process(harness):
+    other_process = RequestBudget(harness.sessions, clock=lambda: harness.budget_now)
+    other_process.after_answer()
+
+    harness.rotation().turn()
+
+    assert harness.sleeps == [PAUSE_S, PAUSE_S]
 
 
 def test_a_rotation_sends_only_the_cookies_of_youtube_com_that_did_not_expire(harness):
@@ -325,3 +363,6 @@ def test_a_network_error_logs_only_its_type(harness, caplog):
     assert "URLError" in caplog.text
     assert "fake-sapisid" not in caplog.text
     assert len(harness.versions()) == 1
+    # A failed request takes its token and keeps the end of its try, so the next request keeps the pause after it.
+    row = harness.budget()
+    assert (row.tokens, row.last_answer_at) == (BUCKET_SIZE - 1, NOW)
