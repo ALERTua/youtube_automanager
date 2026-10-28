@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from youtube_automanager.rule_actions import apply_in_child
 from youtube_automanager.runner import SyncRunner
+from youtube_automanager.settings import DEFAULT_TZ
 from youtube_automanager.short_child import ChildError
 
 LOG = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ class _Start:
 class Applies:
     """The applies of the service. The sync lock lets one apply run at a time."""
 
-    def __init__(self, runner: SyncRunner, sessions: sessionmaker[Session], default_timezone: str = "UTC") -> None:
+    def __init__(self, runner: SyncRunner, sessions: sessionmaker[Session], default_timezone: str = DEFAULT_TZ) -> None:
         """``default_timezone`` is the time zone of the service when the database holds no schedule."""
         # Emitted with no arguments when an apply started or ended.
         self.changed: Event[[]] = Event()

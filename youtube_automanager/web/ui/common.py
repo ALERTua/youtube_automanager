@@ -22,10 +22,11 @@ from youtube_automanager.i18n import N_, _
 
 # The pages import the time zone readers from here, and the scheduler owns them.
 from youtube_automanager.scheduler import RunNowOutcome, read_timezone, stored_timezone  # noqa: F401
-from youtube_automanager.web.services import Services
 
 # The form of a time before the browser formats it, and in the tests, which run no JavaScript.
-TIME_FORMAT = "%Y-%m-%d %H:%M %Z"
+from youtube_automanager.settings import TIME_FORMAT
+from youtube_automanager.web.services import Services
+
 # The attributes of an element that shows a moment. The browser formats the moment in its own form, in the time zone of
 # the service, see ``show_time``. A template is a translated sentence with ``{time}`` for the moment.
 TIME_ATTRIBUTE = "data-time"

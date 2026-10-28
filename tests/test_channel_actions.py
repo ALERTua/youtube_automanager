@@ -364,7 +364,7 @@ def test_during_the_pause_of_the_breaker_the_change_sends_no_request_and_gives_t
 
     assert code == EXIT_PAUSED
     line = last_stderr_line(capsys)
-    assert RequestPause.from_line(line) == RequestPause(BreakerReason.HTTP_429, paused.until, "UTC")
+    assert RequestPause.from_line(line) == RequestPause(BreakerReason.HTTP_429, paused.pause.until, "UTC")
     assert requests == []
     assert stored_channel(db_sessions, A).is_subscribed is False
     with db_sessions() as session:
@@ -375,7 +375,7 @@ def test_during_the_pause_of_the_breaker_the_change_sends_no_request_and_gives_t
     fake_starter.plan.append({"exit_code": code, "stderr": f"a warning\n{line}\n"})
     with pytest.raises(ChildPaused) as raised:
         subscribe_in_child(runner, A, "Alpha")
-    assert raised.value.pause == RequestPause(BreakerReason.HTTP_429, paused.until, "UTC")
+    assert raised.value.pause == RequestPause(BreakerReason.HTTP_429, paused.pause.until, "UTC")
     assert str(raised.value) == str(paused)
 
 

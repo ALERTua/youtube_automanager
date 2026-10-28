@@ -1113,8 +1113,8 @@ async def test_an_apply_at_a_pause_writes_no_run_and_shows_the_end_and_the_next_
         "service sends no such request until {time}."
     )
     zone = ZoneInfo(ZONE)
-    assert text_of(user, "apply-status") == template.format(time=format_time(paused.until, zone))
-    assert moment_of(user, "apply-status") == (iso_time(paused.until, zone), ZONE)
+    assert text_of(user, "apply-status") == template.format(time=format_time(paused.pause.until, zone))
+    assert moment_of(user, "apply-status") == (iso_time(paused.pause.until, zone), ZONE)
     assert element_of(user, "apply-status").props["data-time-template"] == template
     assert runs(sessions) == []
     assert children.of("apply-rule") == []

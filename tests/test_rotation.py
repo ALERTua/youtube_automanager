@@ -9,6 +9,7 @@ import email.message
 import io
 import json
 import logging
+import re
 import socket
 import threading
 import urllib.error
@@ -18,12 +19,14 @@ import urllib.response
 import pytest
 from sqlalchemy import select
 
+from youtube_automanager import notify
 from youtube_automanager.db.models import (
     Account,
     BreakerReason,
     CookieOrigin,
     CookieVersion,
     RequestBudgetState,
+    Schedule,
     SessionState,
     Setting,
 )
@@ -359,6 +362,53 @@ def test_http_429_of_the_rotation_saves_nothing_and_opens_the_breaker_of_the_bud
         BreakerReason.HTTP_429,
         row.last_answer_at + datetime.timedelta(hours=1),
     )
+
+
+def test_http_429_of_the_rotation_names_the_end_in_the_time_zone_of_the_settings_without_a_schedule(
+    harness, tmp_path, monkeypatch
+):
+    sent = []
+    monkeypatch.setattr(notify, "send_to_stored_targets", lambda sessions, notification: sent.append(notification))
+    harness.accounts.rotate = (429, "Too Many Requests", [])
+    settings = Settings(home=tmp_path, database_url="sqlite://", tz="Europe/Kyiv", cookies_key=harness.key)
+    rotation = CookieRotation(
+        harness.sessions, settings, lock=harness.lock, handlers=[harness.accounts], clock=lambda: harness.now
+    )
+    with harness.sessions() as session:
+        assert session.scalars(select(Schedule)).all() == []
+
+    rotation.turn()
+
+    (opened,) = sent
+    assert opened.event is notify.Event.REQUEST_BREAKER
+    assert re.search(r" until \d{4}-\d\d-\d\d \d\d:\d\d EES?T\. ", opened.body)
+
+
+def test_a_rotation_after_the_end_of_a_pause_ends_the_pause(harness):
+    sent = []
+    budget = RequestBudget(
+        harness.sessions,
+        clock=lambda: harness.budget_now,
+        sleep=harness.budget_sleep,
+        random=lambda low, high: PAUSE_S,
+        send=sent.append,
+    )
+    budget.open_breaker(BreakerReason.HTTP_429)
+    harness.budget_now += datetime.timedelta(hours=1)
+    rotation = CookieRotation(
+        harness.sessions,
+        harness.settings,
+        lock=harness.lock,
+        handlers=[harness.accounts],
+        clock=lambda: harness.now,
+        budget=budget,
+    )
+
+    assert rotation.turn() == INTERVAL_S
+
+    assert [notification.event for notification in sent] == [notify.Event.REQUEST_BREAKER] * 2
+    assert sent[1].title.endswith("the requests with cookies work again")
+    assert harness.budget().breaker_reason is None
 
 
 @pytest.mark.parametrize(("before_end_s", "delay_s"), [(3600, 3600), (RETRY_S + 1, RETRY_S + 1), (10, RETRY_S)])

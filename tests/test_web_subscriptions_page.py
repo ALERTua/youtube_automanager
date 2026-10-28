@@ -881,8 +881,8 @@ async def test_a_subscribe_during_the_pause_of_the_requests_shows_the_end_of_the
     await eventually(lambda: elements_of(user, "channel-error"), "The cause of the failure")
     template = "The subscription did not change. " + PAUSE_TEMPLATE
     zone = ZoneInfo(settings.tz)
-    assert text_of(user, "channel-error") == template.format(time=format_time(paused.until, zone))
-    assert moment_of(user, "channel-error") == (iso_time(paused.until, zone), settings.tz)
+    assert text_of(user, "channel-error") == template.format(time=format_time(paused.pause.until, zone))
+    assert moment_of(user, "channel-error") == (iso_time(paused.pause.until, zone), settings.tz)
     assert element_of(user, "channel-error").props["data-time-template"] == template
     assert text_of(user, "channel-subscribed") == "No"
 

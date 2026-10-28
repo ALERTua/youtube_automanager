@@ -290,10 +290,8 @@ class RequestBudgetState(Base):
     the end of the last answer to such a request, or None before the first answer. Each time comes from the wall clock
     in UTC, so each process that works with the database reads them the same way.
 
-    The breaker columns are None before the first pause. ``breaker_opened_at`` and ``breaker_until`` are the start and
-    the end of the last pause, and they stay after its end, because the next pause doubles it. ``breaker_level`` counts
-    the pauses since the pauses went back to the first length. ``breaker_reason`` is the answer that started the last
-    pause. It becomes None when the first answer after the end of the pause shows that the requests work again.
+    The breaker columns describe the last pause and stay after its end, so the next pause doubles it.
+    ``breaker_reason`` is None once an answer after the end showed that the requests work.
     """
 
     __tablename__ = "request_budget"

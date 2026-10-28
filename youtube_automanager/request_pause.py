@@ -1,11 +1,5 @@
-"""The pause of the requests with the cookies of the account, as the breaker of the request budget starts it.
-
-A child process that stops at an open breaker ends with ``EXIT_PAUSED`` and writes the pause as one JSON line at the
-end of its stderr: the reason as the value of ``BreakerReason``, the end as ISO 8601 text in UTC, and the time zone of
-the service. The web process reads the line back, so a page can show its own text and let the browser format the end.
-
-The module imports only the models, so the runner, the request budget and each child can use it.
-"""
+"""The pause as one JSON line, which a child that exits with ``EXIT_PAUSED`` writes last on stderr. Imports only the
+models and the settings."""
 
 import datetime
 import json
@@ -13,8 +7,10 @@ from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 from youtube_automanager.db.models import BreakerReason
+from youtube_automanager.settings import TIME_FORMAT
 
-# The exit code of a child that stopped at an open breaker. The other codes of a failed child are 3, 4 and 5.
+# The exit code of a child that stopped at an open breaker. It differs from ``UNAVAILABLE_EXIT_CODE`` of the runner
+# and from ``EXIT_LOGGED_OUT`` and ``EXIT_YOUTUBE_ERROR`` of the short children.
 EXIT_PAUSED = 6
 # The answer of YouTube for each reason, in the English texts of the errors and of the notifications.
 REASON_TEXTS = {
@@ -22,8 +18,6 @@ REASON_TEXTS = {
     BreakerReason.TRY_AGAIN_LATER: 'a "try again later" page',
     BreakerReason.BOT_CHECK: 'a bot check ("Sign in to confirm you\'re not a bot")',
 }
-# The form of the end of a pause in an English text.
-END_FORMAT = "%Y-%m-%d %H:%M %Z"
 
 
 @dataclass(frozen=True)
@@ -36,7 +30,7 @@ class RequestPause:
     zone: str
 
     def __str__(self) -> str:
-        end = self.until.astimezone(ZoneInfo(self.zone)).strftime(END_FORMAT)
+        end = self.until.astimezone(ZoneInfo(self.zone)).strftime(TIME_FORMAT)
         return (
             f"The service sends no request with the cookies of the account until {end}, because YouTube answered a "
             f"request with {REASON_TEXTS[self.reason]}."

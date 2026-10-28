@@ -5,10 +5,10 @@ playlist dialog and each change go through internal methods of the ``YoutubeTab`
 with a leading underscore is internal, and a new release of yt-dlp can change it.
 
 Each request with the cookies of the account takes a token of the shared ``RequestBudget`` before it goes, and the
-budget keeps the end of its answer, also of an error answer. An answer that shows a limit of YouTube opens the breaker
-of the budget: HTTP 429, a "try again later" text or a bot check in the error or in a "YouTube said" warning of yt-dlp.
-While the breaker is open, each request fails at once with ``RequestsPausedError``, and so does the call that hit the
-limit. The functions are synchronous, because the yt-dlp calls are synchronous.
+budget keeps the end of its answer, also of an error answer. HTTP 429, a "try again later" page or a bot check opens
+the breaker of the budget, and while it is open, each call fails with ``RequestsPausedError``. A call that ends
+without a limit lets the budget close a pause that ended. The functions are synchronous, because the yt-dlp calls are
+synchronous.
 
 The page config of a logged-in YouTube page holds the value of the ``LOGIN_INFO`` cookie, so the client never logs it.
 
@@ -34,7 +34,7 @@ from yt_dlp.utils import DownloadError, ExtractorError, YoutubeDLError, traverse
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
 from youtube_automanager.db.models import BreakerReason
-from youtube_automanager.pacing import RequestBudget, RequestsPaused
+from youtube_automanager.pacing import BreakerOpen, RequestBudget
 from youtube_automanager.request_pause import RequestPause
 from youtube_automanager.youtube._ytdlp import (
     BASE_OPTIONS,
@@ -67,10 +67,12 @@ _SAVE_DIALOG_VIDEO_ID = "jNQXAC9IVRw"
 _SUCCEEDED = "STATUS_SUCCEEDED"
 
 _VIDEO_ID = re.compile(r"[0-9A-Za-z_-]{11}")
-# The texts of YouTube that open the breaker, in an error of yt-dlp or in a warning that quotes YouTube. YouTube writes
-# the apostrophe of "you're" as U+2019.
+# The texts of the pages of YouTube that open the breaker, as yt-dlp gives them in an error or in a warning that quotes
+# YouTube. YouTube can write each apostrophe as U+2019.
 _BOT_CHECK = re.compile("confirm you[\u2019']re not a bot", re.IGNORECASE)
-_TRY_AGAIN_LATER = re.compile(r"try again later", re.IGNORECASE)
+_TRY_AGAIN_LATER = re.compile("this content isn[\u2019']t available, try again later", re.IGNORECASE)
+# The lowest HTTP status of a fault of the server. Its text can ask to try again later, but it is no limit.
+_SERVER_ERROR = 500
 # yt-dlp puts this text before each alert of YouTube that it reports as a warning.
 _YOUTUBE_SAID = "YouTube said:"
 _PLAYLIST_ID = re.compile(r"[0-9A-Za-z_-]{2,64}")
@@ -86,7 +88,9 @@ _INTERNAL_ERRORS = (AttributeError, TypeError, KeyError)
 
 
 class AccountError(Exception):
-    """yt-dlp failed to read or change the YouTube account."""
+    """yt-dlp failed to read or change the YouTube account. ``pause`` is the pause of the requests that caused it."""
+
+    pause: RequestPause | None = None
 
 
 class NotLoggedInError(AccountError):
@@ -205,6 +209,8 @@ class _AccountYoutubeDL(YoutubeDL):
         self._budget = budget
         super().__init__(params)
         self.ytcfgs: list[dict] = []
+        # The HTTP status of the last answer, or None before the first answer and after a failed connection.
+        self.last_status: int | None = None
         with _YtDlpCall(f"YoutubeDL.get_info_extractor of {_TAB_EXTRACTOR}"):
             self.tab = self.get_info_extractor(_TAB_EXTRACTOR)
         with _YtDlpCall(f"{_TAB_EXTRACTOR}._download_webpage"):
@@ -235,18 +241,17 @@ class _AccountYoutubeDL(YoutubeDL):
         return self._account_cookiejar
 
     def report_warning(self, message, only_once=False):
-        # A request whose answer YouTube limits can end as a warning, for example when yt-dlp reads a page that it may
-        # skip, and the next request must not go.
+        # yt-dlp may report a limited answer only as a warning, so open the breaker here.
         text = str(message)
-        if _YOUTUBE_SAID in text and (reason := _text_reason(text)) is not None:
+        if _YOUTUBE_SAID in text and not _server_error(self.last_status) and (reason := _text_reason(text)):
             self._budget.open_breaker(reason)
         super().report_warning(message, only_once)
 
     def urlopen(self, req):
         try:
             self._budget.before_request()
-        except RequestsPaused as paused:
-            raise RequestsPausedError(paused.pause) from None
+        except BreakerOpen as breaker_open:
+            raise RequestsPausedError(breaker_open.pause) from None
         status = None
         try:
             response = super().urlopen(req)
@@ -256,6 +261,7 @@ class _AccountYoutubeDL(YoutubeDL):
             raise
         finally:
             # An error answer and a failed connection count too, so the next request keeps the pause after them.
+            self.last_status = status
             self._budget.after_answer(status)
         if urllib.parse.urlsplit(response.url).hostname == _SIGN_IN_HOST:
             response.close()
@@ -296,6 +302,7 @@ class AccountClient:
             raise _account_error(error, what, self._budget) from error
         finally:
             ydl.close()
+        self._budget.end_if_answered()
 
     def cookies_text(self) -> str:
         """Return the current cookies of the client as the text of a Netscape cookie file.
@@ -432,6 +439,7 @@ class AccountClient:
         except BaseException:
             ydl.close()
             raise
+        self._budget.end_if_answered()
         entries = info.get("entries")
         if isinstance(entries, Iterator):
             info["entries"] = closing_entries(entries, ydl)
@@ -463,6 +471,7 @@ class AccountClient:
             raise _account_error(error, what, self._budget) from error
         finally:
             ydl.close()
+        self._budget.end_if_answered()
         if not isinstance(response, dict) or not response:
             raise AccountError(f"YouTube gave an empty answer when the client tried to {what}")
         return response
@@ -548,20 +557,26 @@ def _iter_entries(info: dict, url: str, budget: RequestBudget) -> Iterator[dict]
 
 
 def _account_error(error: YoutubeDLError, what: str, budget: RequestBudget) -> AccountError:
-    """Return the error of the client for a yt-dlp error. An answer that shows a limit of YouTube opens the breaker.
-
-    An earlier answer of the same call can open the breaker without a trace in the error, for example a page that
-    yt-dlp may skip and reports only in a warning. While the breaker is open, the error therefore names the pause.
-    """
+    """Map a yt-dlp error to a client error. A limit of YouTube opens the breaker, and while it is open each error
+    names the pause."""
     causes = list(_causes(error))
     status = next((cause.status for cause in causes if isinstance(cause, HTTPError)), None)
+    reason = None
+    if status == 429:
+        reason = BreakerReason.HTTP_429
+    elif not _server_error(status):
+        reason = _text_reason(" ".join(map(str, causes)))
+    breaker_open = budget.paused() if reason is None else budget.open_breaker(reason)
+    if breaker_open is not None:
+        return RequestsPausedError(breaker_open.pause)
+    budget.end_if_answered()
     if status == 401:
         return NotLoggedInError(f"YouTube refused the session with HTTP 401 when the client tried to {what}")
-    reason = BreakerReason.HTTP_429 if status == 429 else _text_reason(" ".join(map(str, causes)))
-    paused = budget.paused() if reason is None else budget.open_breaker(reason)
-    if paused is not None:
-        return RequestsPausedError(paused.pause)
     return AccountError(f"yt-dlp failed to {what}: {error}")
+
+
+def _server_error(status: int | None) -> bool:
+    return status is not None and status >= _SERVER_ERROR
 
 
 def _text_reason(text: str) -> BreakerReason | None:

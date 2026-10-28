@@ -78,11 +78,7 @@ def child_pause(error: ChildError | None) -> RequestPause | None:
 
 
 def show_pause_end[T: TextElement](element: T, text: str, pause: RequestPause | None) -> T:
-    """Let the browser put the end of ``pause`` into ``text``, the text of ``element`` with ``{time}`` for the end.
-
-    Without a pause, the element keeps its text. Call it after each new text of the element, because a new text of a
-    ``ResultLabel`` forgets the moment.
-    """
+    """Let the browser put the end of ``pause`` into ``text`` at ``{time}``. Call it after each new text."""
     if pause is not None:
         show_time(element, pause.until, ZoneInfo(pause.zone), text)
     return element

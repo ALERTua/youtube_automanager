@@ -642,6 +642,131 @@ def test_the_first_answer_after_the_pause_sends_the_end_of_the_breaker(sessions,
     assert breaker(sessions) == (None, datetime.timedelta(hours=1))
 
 
+def paused_client(sessions, youtube, fake_time, sent) -> AccountClient:
+    """A client whose first call met HTTP 429, with the clock at the end of that pause."""
+    budget = RequestBudget(
+        sessions, clock=fake_time.clock, sleep=fake_time.sleep, random=lambda low, high: 0.0, send=sent.append
+    )
+    client = AccountClient(COOKIES, budget=budget)
+    youtube.page_errors[HOME_URL] = 429
+    with pytest.raises(RequestsPausedError):
+        client.check_session()
+    del youtube.page_errors[HOME_URL]
+    fake_time.now += 3600
+    return client
+
+
+def test_a_bot_check_as_the_first_answer_after_the_pause_sends_no_end_notification(sessions, youtube, fake_time):
+    sent = []
+    client = paused_client(sessions, youtube, fake_time, sent)
+    youtube.answer("account/account_menu", alert(BOT_CHECK_TEXT))
+
+    with pytest.raises(RequestsPausedError, match="a bot check"):
+        client.identity()
+
+    assert [notification.title for notification in sent] == [OPENED_TITLE, OPENED_TITLE]
+    assert breaker(sessions) == (BreakerReason.BOT_CHECK, datetime.timedelta(hours=6))
+
+
+def test_a_try_again_later_page_as_the_first_answer_after_the_pause_sends_no_end_notification(
+    sessions, youtube, fake_time
+):
+    sent = []
+    client = paused_client(sessions, youtube, fake_time, sent)
+    # yt-dlp reports the alert of a list page as a warning only.
+    youtube.page(CHANNELS_URL, YTCFG, alert(TRY_AGAIN_LATER_TEXT))
+
+    with pytest.raises(RequestsPausedError, match="try again later"):
+        client.subscribed_channels()
+
+    assert [notification.title for notification in sent] == [OPENED_TITLE, OPENED_TITLE]
+    assert breaker(sessions) == (BreakerReason.TRY_AGAIN_LATER, datetime.timedelta(hours=2))
+
+
+@pytest.mark.parametrize(
+    "call",
+    [AccountClient.identity, AccountClient.subscribed_channels, lambda client: client.add_video("WL", VIDEO)],
+    ids=["api call", "list page", "change"],
+)
+def test_the_end_of_a_call_without_a_limit_after_the_pause_sends_the_end_notification(
+    sessions, youtube, fake_time, call
+):
+    sent = []
+    client = paused_client(sessions, youtube, fake_time, sent)
+    youtube.answer("account/account_menu", recorded_response("account_menu"))
+    youtube.answer("browse/edit_playlist", {"status": "STATUS_SUCCEEDED"})
+    youtube.page(CHANNELS_URL, YTCFG, load("page_channels")["initial_data"])
+
+    call(client)
+
+    assert [notification.title for notification in sent] == [OPENED_TITLE, CLOSED_TITLE]
+
+
+def test_an_error_answer_without_a_limit_after_the_pause_also_ends_the_pause(sessions, youtube, fake_time):
+    sent = []
+    client = paused_client(sessions, youtube, fake_time, sent)
+    youtube.answer("account/account_menu", 404)
+
+    with pytest.raises(AccountError) as raised:
+        client.identity()
+
+    assert not isinstance(raised.value, RequestsPausedError)
+    assert [notification.title for notification in sent] == [OPENED_TITLE, CLOSED_TITLE]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "The service is currently unavailable. Please try again later.",
+        "This content isn't available, try again later.",
+        "Sign in to confirm you’re not a bot.",
+    ],
+)
+def test_the_message_of_a_server_error_opens_no_breaker(client, youtube, sessions, message):
+    youtube.answer("account/account_menu", (503, message))
+
+    with pytest.raises(AccountError) as raised:
+        client.identity()
+
+    assert not isinstance(raised.value, RequestsPausedError)
+    assert "HTTP Error 503" in str(raised.value)
+    assert breaker(sessions) == (None, None)
+
+
+@pytest.mark.parametrize("text", [TRY_AGAIN_LATER_TEXT, BOT_CHECK_TEXT])
+def test_a_server_error_whose_text_names_a_limit_page_opens_no_breaker(budget, sessions, text):
+    cause = HTTPError(Response(io.BytesIO(b""), HOME_URL, {}, status=503))
+    error = ExtractorError(f"YouTube said: {text}", cause=cause, expected=True)
+
+    mapped = account._account_error(error, "read the account menu", budget)
+
+    assert type(mapped) is AccountError
+    assert breaker(sessions) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Something went wrong. Please try again later.", "Try again later.", "This video isn't available any more"],
+)
+def test_another_alert_that_asks_to_try_again_later_opens_no_breaker(client, youtube, sessions, text):
+    youtube.answer("account/account_menu", alert(text))
+
+    with pytest.raises(AccountError) as raised:
+        client.identity()
+
+    assert not isinstance(raised.value, RequestsPausedError)
+    assert breaker(sessions) == (None, None)
+
+
+def test_the_try_again_later_page_also_matches_with_the_apostrophe_of_youtube(client, youtube, sessions):
+    youtube.answer("account/account_menu", alert(TRY_AGAIN_LATER_TEXT.replace("'", "’")))
+
+    with pytest.raises(RequestsPausedError):
+        client.identity()
+
+    assert breaker(sessions) == (BreakerReason.TRY_AGAIN_LATER, datetime.timedelta(hours=1))
+
+
 # The login check on the real yt-dlp extractor
 
 

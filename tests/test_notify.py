@@ -537,10 +537,9 @@ def test_the_opening_of_the_breaker_names_the_reason_the_pause_and_its_end_in_th
     [
         (timedelta(hours=6), "for 6 hours"),
         (timedelta(hours=24), "for 24 hours"),
-        (timedelta(minutes=90), "for 90 minutes"),
     ],
 )
-def test_the_opening_of_the_breaker_gives_the_pause_in_hours_or_in_minutes(pause, text):
+def test_the_opening_of_the_breaker_gives_the_pause_in_hours(pause, text):
     notification = notify.request_breaker_opened("HTTP 429", pause, datetime(2026, 10, 28, tzinfo=UTC))
 
     assert f" {text}, until 2026-10-28 00:00 UTC." in notification.body

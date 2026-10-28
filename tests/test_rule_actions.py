@@ -700,7 +700,7 @@ def test_an_apply_during_the_pause_of_the_requests_writes_no_run_and_starts_noth
     with pytest.raises(ChildPaused) as raised:
         apply_in_child(runner, db_sessions, 3, SINCE, default_timezone=zone)
 
-    assert raised.value.pause == RequestPause(BreakerReason.BOT_CHECK, paused.until, zone)
+    assert raised.value.pause == RequestPause(BreakerReason.BOT_CHECK, paused.pause.until, zone)
     assert runs(db_sessions) == []
     assert fake_starter.calls == []
     assert not runner.is_active()

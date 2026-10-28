@@ -124,7 +124,7 @@ def work_with_account(settings: Settings, what: str, work: AccountWork) -> int:
     # The account session imports yt-dlp, so only the child loads it, and a yt-dlp update takes effect at the next
     # child.
     from youtube_automanager.engine.account_session import AccountSession, CheckOutcome
-    from youtube_automanager.youtube.account import AccountError, NotLoggedInError, RequestsPausedError
+    from youtube_automanager.youtube.account import AccountError, NotLoggedInError
 
     engine = make_engine(settings.database_url)
     try:
@@ -144,9 +144,9 @@ def work_with_account(settings: Settings, what: str, work: AccountWork) -> int:
         except NotLoggedInError as error:
             account.died(error)
             return fail(what, EXIT_LOGGED_OUT, str(error))
-        except RequestsPausedError as error:
-            return fail_paused(what, error.pause)
         except AccountError as error:
+            if error.pause is not None:
+                return fail_paused(what, error.pause)
             return fail(what, EXIT_YOUTUBE_ERROR, str(error))
         finally:
             account.write_back()
