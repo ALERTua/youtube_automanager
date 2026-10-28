@@ -11,18 +11,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-import fastapi.dependencies.models as fastapi_models
 import pytest
 import ui_support
 from babel.messages.mofile import write_mo
 from babel.messages.pofile import read_po
 from nicegui import Client
-from nicegui import app as nicegui_app
-from nicegui.app.app import State as NiceGUIState
 from nicegui.awaitable_response import AwaitableResponse
-from nicegui.testing.general import nicegui_reset_globals
 from sqlalchemy import create_engine, make_url, select, text
-from ui_support import running_service
+from ui_support import fresh_nicegui, running_service
 
 from youtube_automanager import i18n
 from youtube_automanager.db import make_engine, make_session_factory, upgrade_to_head
@@ -291,39 +287,8 @@ def nicegui_globals(migrated_database, monkeypatch):
     the service stay.
     """
     monkeypatch.setattr(ui_support, "DATABASE_TEMPLATE", migrated_database)
-    with nicegui_reset_globals():
-        try:
-            yield
-        finally:
-            Client.page_routes.clear()
-            forget_endpoints()
-            mark_nicegui_stopped()
-
-
-def mark_nicegui_stopped():
-    """Mark NiceGUI as stopped after a test whose service did not stop cleanly.
-
-    ``lifespan_wrapper`` of ``nicegui/ui_run_with.py`` calls ``_shutdown()`` only after its body ends without an
-    exception. When a test fails inside ``running_service``, the private ``app._state`` stays ``State.STARTED``, and
-    ``app.on_startup`` in ``mount_ui`` refuses each later test of the worker. ``_shutdown()`` would set
-    ``State.STOPPED``, and the reset of NiceGUI at the start of the next test clears the rest.
-    """
-    if not nicegui_app.is_stopped:
-        nicegui_app._state = NiceGUIState.STOPPED
-
-
-def forget_endpoints():
-    """Empty the caches in which FastAPI keeps each endpoint function that it classified.
-
-    ``mount_ui`` makes a new page function for each application, and the function holds its application. The caches
-    of FastAPI keep up to 4096 functions, so without this each test would keep its whole service in memory.
-    """
-    for cached in (
-        fastapi_models._is_gen_callable_cached,
-        fastapi_models._is_async_gen_callable_cached,
-        fastapi_models._is_coroutine_callable_cached,
-    ):
-        cached.cache_clear()
+    with fresh_nicegui():
+        yield
 
 
 class FakeChild:

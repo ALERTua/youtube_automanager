@@ -2,15 +2,19 @@
 
 import asyncio
 import shutil
-from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any
 
+import fastapi.dependencies.models as fastapi_models
 import httpx
 from nicegui import ElementFilter, ui
+from nicegui import app as nicegui_app
+from nicegui.app.app import State as NiceGUIState
 from nicegui.client import Client
 from nicegui.testing import User
+from nicegui.testing.general import nicegui_reset_globals
 from sqlalchemy import make_url
 
 from youtube_automanager.web.app import create_app
@@ -95,6 +99,47 @@ def close_tabs() -> None:
     """
     for client in list(Client.instances.values()):
         client.delete()
+
+
+@contextmanager
+def fresh_nicegui() -> Generator[None]:
+    """Reset the global state of NiceGUI for one test of the pages, and free its service at the end.
+
+    The fixture ``nicegui_globals`` runs each test of the pages in this block.
+    """
+    with nicegui_reset_globals():
+        try:
+            yield
+        finally:
+            Client.page_routes.clear()
+            forget_endpoints()
+            mark_nicegui_stopped()
+
+
+def mark_nicegui_stopped():
+    """Mark NiceGUI as stopped after a test whose service did not stop cleanly.
+
+    ``lifespan_wrapper`` of ``nicegui/ui_run_with.py`` calls ``_shutdown()`` only after its body ends without an
+    exception. When a test fails inside ``running_service``, the private ``app._state`` stays ``State.STARTED``, and
+    ``app.on_startup`` in ``mount_ui`` refuses each later test of the worker. ``_shutdown()`` would set
+    ``State.STOPPED``, and the reset of NiceGUI at the start of the next test clears the rest.
+    """
+    if not nicegui_app.is_stopped:
+        nicegui_app._state = NiceGUIState.STOPPED
+
+
+def forget_endpoints():
+    """Empty the caches in which FastAPI keeps each endpoint function that it classified.
+
+    ``mount_ui`` makes a new page function for each application, and the function holds its application. The caches
+    of FastAPI keep up to 4096 functions, so without this each test would keep its whole service in memory.
+    """
+    for cached in (
+        fastapi_models._is_gen_callable_cached,
+        fastapi_models._is_async_gen_callable_cached,
+        fastapi_models._is_coroutine_callable_cached,
+    ):
+        cached.cache_clear()
 
 
 @asynccontextmanager

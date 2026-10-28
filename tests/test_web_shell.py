@@ -1,8 +1,10 @@
 """The shell of the pages: one route answers each page, and a click in the drawer changes only the content."""
 
 import asyncio
+import gc
 import json
 import re
+import weakref
 from unittest.mock import Mock
 
 import pytest
@@ -13,6 +15,7 @@ from ui_support import (
     element_of,
     elements_of,
     eventually,
+    fresh_nicegui,
     running_service,
     service_with_pages,
     text_of,
@@ -343,6 +346,29 @@ async def test_the_leave_check_of_the_editor_ends_with_its_content(nicegui_globa
             assert layout._LEAVE_CHECKS[client] == []
             user.find(marker="nav:/rules").click()
             await user.should_see(marker="new-rule")
+
+
+async def test_a_finished_test_of_the_pages_frees_its_service(settings, fake_starter):
+    """The cleanup of each test of the pages frees its service. Services that pile up make each later ``gc.collect``
+    of the reset of NiceGUI slower, and the whole suite got 2 to 4 times slower that way."""
+
+    async def visit() -> weakref.ref:
+        async with service_with_pages(settings, fake_starter) as (user, services):
+            # The Rules page registers an AddressFollower, and its editor a LeaveCheck.
+            await user.open("/rules")
+            user.find(marker="new-rule").click()
+            await user.should_see(marker="editor")
+            return weakref.ref(services)
+
+    # NiceGUI and the test runner keep a few references to the last page until the next page replaces them, so the
+    # check takes the service of the first of two tests. The requests set context variables of the task that sends
+    # them, so each visit gets a task of its own, as each test has.
+    with fresh_nicegui():
+        first = await asyncio.create_task(visit())
+    with fresh_nicegui():
+        await asyncio.create_task(visit())
+    gc.collect()
+    assert first() is None
 
 
 async def test_the_first_html_holds_the_content_that_an_async_builder_shows_after_an_await(
