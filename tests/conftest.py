@@ -17,6 +17,8 @@ import ui_support
 from babel.messages.mofile import write_mo
 from babel.messages.pofile import read_po
 from nicegui import Client
+from nicegui import app as nicegui_app
+from nicegui.app.app import State as NiceGUIState
 from nicegui.awaitable_response import AwaitableResponse
 from nicegui.testing.general import nicegui_reset_globals
 from sqlalchemy import create_engine, make_url, select, text
@@ -295,6 +297,19 @@ def nicegui_globals(migrated_database, monkeypatch):
         finally:
             Client.page_routes.clear()
             forget_endpoints()
+            mark_nicegui_stopped()
+
+
+def mark_nicegui_stopped():
+    """Mark NiceGUI as stopped after a test whose service did not stop cleanly.
+
+    ``lifespan_wrapper`` of ``nicegui/ui_run_with.py`` calls ``_shutdown()`` only after its body ends without an
+    exception. When a test fails inside ``running_service``, the private ``app._state`` stays ``State.STARTED``, and
+    ``app.on_startup`` in ``mount_ui`` refuses each later test of the worker. ``_shutdown()`` would set
+    ``State.STOPPED``, and the reset of NiceGUI at the start of the next test clears the rest.
+    """
+    if not nicegui_app.is_stopped:
+        nicegui_app._state = NiceGUIState.STOPPED
 
 
 def forget_endpoints():
