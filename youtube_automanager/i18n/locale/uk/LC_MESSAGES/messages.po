@@ -1103,7 +1103,7 @@ msgstr "Правила {rule} більше немає."
 #. read before.
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
-msgid "Rule {rule} now reads {count} more channels."
+msgid "Rule {rule} now reads more channels: {count}."
 msgstr "Правило {rule} тепер читає ще каналів: {count}."
 
 #: youtube_automanager/web/ui/subscriptions_page.py

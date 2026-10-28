@@ -829,7 +829,7 @@ async def subscriptions_page(services: Services) -> None:
             notify_in(client, text, type="warning")
         elif added:
             # Translators: {count} is the number of the channels that the rule did not read before.
-            text = _("Rule {rule} now reads {count} more channels.").format(rule=rule.name, count=added)
+            text = _("Rule {rule} now reads more channels: {count}.").format(rule=rule.name, count=added)
             result_label.ok(text)
             notify_in(client, text, type="positive")
         else:

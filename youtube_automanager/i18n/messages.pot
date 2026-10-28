@@ -1046,7 +1046,7 @@ msgstr ""
 #. read before.
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
-msgid "Rule {rule} now reads {count} more channels."
+msgid "Rule {rule} now reads more channels: {count}."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py

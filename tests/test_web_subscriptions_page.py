@@ -1633,8 +1633,8 @@ async def test_the_selected_channels_go_into_a_rule_in_one_transaction(
     choose_bulk_rule(user, 1)
     await eventually(lambda: result_of(user), "The result of the add")
 
-    assert result_of(user) == "Rule Science now reads 2 more channels."
-    await user.should_see("Rule Science now reads 2 more channels.")
+    assert result_of(user) == "Rule Science now reads more channels: 2."
+    await user.should_see("Rule Science now reads more channels: 2.")
     assert "text-negative" not in element_of(user, "channel-result").classes
     assert calls == [(1, [FOUND, ALPHA, BRAVO, DELTA])]
     assert {link for link in rule_links(sessions) if link[0] == 1} == {(1, FOUND), (1, ALPHA), (1, BRAVO), (1, DELTA)}
