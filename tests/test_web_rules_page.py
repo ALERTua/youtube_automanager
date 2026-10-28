@@ -764,7 +764,7 @@ async def test_the_editor_lists_the_channels_under_the_search_in_the_order_of_th
     assert [label for _id, label in listed_channels(user)] == ["alpha", "Bravo", "Charlie (@charlie)", "delta", "zulu"]
 
 
-async def test_the_search_of_the_channels_empties_after_each_choice(user, account_copy):
+async def test_the_search_of_the_channels_empties_and_its_menu_closes_after_each_choice(user, account_copy):
     await user.open("/rules")
     await open_editor(user)
 
@@ -772,8 +772,11 @@ async def test_the_search_of_the_channels_empties_after_each_choice(user, accoun
     handlers = [listener.js_handler for listener in select._event_listeners.values() if listener.type == "add"]
 
     # Quasar emits "add" when the user chooses an option with the mouse or the keyboard. The browser then empties the
-    # text of the search at once, without a round trip to the service.
-    assert handlers == [f"() => runMethod({select.id}, 'updateInputValue', [''])"]
+    # text of the search without the filter, which would open the menu again, and closes the menu, at once and without a
+    # round trip to the service.
+    assert handlers == [
+        f"() => {{ runMethod({select.id}, 'updateInputValue', ['', true]); runMethod({select.id}, 'hidePopup', []); }}"
+    ]
 
 
 async def test_a_remove_button_removes_only_its_channel(user, sessions, account_copy):

@@ -18,8 +18,8 @@ from nicegui.client import Client
 from nicegui.functions.notify import notify
 from nicegui.testing import User
 from nicegui.testing.general import nicegui_reset_globals
-from nicegui.testing.user_notify import UserNotify
 from nicegui.testing.user_interaction import UserInteraction
+from nicegui.testing.user_notify import UserNotify
 from sqlalchemy import make_url
 
 from youtube_automanager.web.app import create_app

@@ -96,9 +96,12 @@ CHANNEL_SEARCH_ATTRIBUTE = "data-channel-search"
 CHANNEL_SEARCH_SELECTOR = f"input[{CHANNEL_SEARCH_ATTRIBUTE}]"
 # The attribute of the remove button of a channel in the list under the select. Its value is the id of the channel.
 CHANNEL_REMOVE_ATTRIBUTE = "data-channel-remove"
-# The browser code that empties the search text of the select after the user chose a channel. Quasar keeps the text of
-# a select with ``multiple``, so the user had to delete it before the next search. ``{id}`` is the id of the select.
-CLEAR_SEARCH_HANDLER = "() => runMethod({id}, 'updateInputValue', [''])"
+# The browser code that empties the search text of the select and closes its menu after the user chose a channel.
+# Quasar keeps the text and the menu of a select with ``multiple``, so the user had to delete the text before the next
+# search, and the open menu covered the list under the field. The next typed letter opens the menu again, and the focus
+# stays in the search. The second argument ``true`` skips the filter of Quasar, which would open the menu again.
+# ``{id}`` is the id of the select.
+CLEAR_SEARCH_HANDLER = "() => {{ runMethod({id}, 'updateInputValue', ['', true]); runMethod({id}, 'hidePopup', []); }}"
 
 # The table of a preview shows this many videos on one page.
 PREVIEW_PAGE_SIZE = 20
