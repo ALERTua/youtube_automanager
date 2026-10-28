@@ -1211,6 +1211,29 @@ def test_a_batch_that_stops_at_a_pause_gives_the_pause_to_the_parent(runner, fak
     assert raised.value.pause == PAUSE
 
 
+def test_the_owner_of_a_batch_kills_its_child_and_the_batch_fails(runner, fake_starter):
+    owner = object()
+    fake_starter.plan.append({"blocking": True, "stderr": batch_line(True, outcome(A))})
+    errors = []
+
+    def batch() -> None:
+        try:
+            change_subscriptions_in_child(runner, True, [BatchChannel(A)], owner=owner)
+        except ChildFailed as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=batch)
+    worker.start()
+    assert fake_starter.child_started.wait(WAIT_SECONDS)
+
+    assert runner.kill_short_child(owner) is True
+
+    worker.join(WAIT_SECONDS)
+    assert fake_starter.children[0].killed
+    (error,) = errors
+    assert str(error) == f"The subscription batch process exited with code {fake_starter.children[0].KILLED_CODE}."
+
+
 def test_a_batch_while_a_run_is_active_starts_nothing_and_is_busy(runner, fake_starter):
     run_id = runner.claim(RunTrigger.MANUAL)
     try:

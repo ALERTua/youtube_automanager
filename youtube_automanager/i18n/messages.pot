@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 22:56+0200\n"
+"POT-Creation-Date: 2026-10-28 23:13+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1059,6 +1059,14 @@ msgstr ""
 msgid "Rules"
 msgstr ""
 
+#. Translators: {count} is the number of the channels that a rule reads.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
+"Rules read some of these channels: {count}. The rules still read their "
+"videos."
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "Run"
 msgstr ""
@@ -1209,6 +1217,10 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Stop"
+msgstr ""
+
 #: youtube_automanager/web/ui/service_settings.py
 msgid "Stop at a seen video (default)"
 msgstr ""
@@ -1237,8 +1249,20 @@ msgstr ""
 msgid "Subscribe"
 msgstr ""
 
+#. Translators: {count} is the number of the selected channels that the account
+#. is not subscribed to.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Subscribe ({count})"
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Subscribed"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Subscribed to channels: {done} of {total}."
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -1248,6 +1272,11 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Subscribers"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Subscribing: {done} of {total}"
 msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
@@ -1358,6 +1387,11 @@ msgstr ""
 #: youtube_automanager/web/ui/ytdlp_section.py
 #, python-brace-format
 msgid "The change failed: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "The change of the channels stopped at your request. {result}"
 msgstr ""
 
 #. Translators: {cause} is the English cause from the service, for example an
@@ -1763,6 +1797,10 @@ msgid ""
 "cannot read the stored cookies, and you upload them again."
 msgstr ""
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "These channels did not change:"
+msgstr ""
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "This is not a date, so the filter does not use it."
 msgstr ""
@@ -1775,6 +1813,14 @@ msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "This run has no actions."
+msgstr ""
+
+#. Translators: {duration} is a time, for example "2 min 12 s".
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
+"This takes at least {duration}, because the service sends the requests "
+"with cookies at a limited rate."
 msgstr ""
 
 #: youtube_automanager/web/ui/history_page.py
@@ -1821,6 +1867,19 @@ msgstr ""
 msgid "Unsubscribe"
 msgstr ""
 
+#. Translators: {count} is the number of the selected channels that the account
+#. is subscribed to.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Unsubscribe ({count})"
+msgstr ""
+
+#. Translators: {count} is the number of the channels.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Unsubscribe the YouTube account from these channels: {count}?"
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "Unsubscribe the YouTube account from {title}?"
@@ -1828,7 +1887,17 @@ msgstr ""
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
+msgid "Unsubscribed from channels: {done} of {total}."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
 msgid "Unsubscribed from {title}."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Unsubscribing: {done} of {total}"
 msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py
@@ -2197,6 +2266,18 @@ msgstr ""
 msgid "{field}: {error}"
 msgstr ""
 
+#. Translators: a time in minutes.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{minutes} min"
+msgstr ""
+
+#. Translators: a time in minutes and seconds.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{minutes} min {seconds} s"
+msgstr ""
+
 #. Translators: the name of a rule that is turned off.
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
@@ -2223,9 +2304,21 @@ msgstr ""
 msgid "{result}: {count}"
 msgstr ""
 
+#. Translators: a time in seconds.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{seconds} s"
+msgstr ""
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "{shown} of {total} channels"
+msgstr ""
+
+#. Translators: {cause} is the English answer of YouTube.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{title}: YouTube did not confirm the change: {cause}"
 msgstr ""
 
 #: youtube_automanager/web/ui/ytdlp_section.py

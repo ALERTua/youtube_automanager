@@ -439,6 +439,64 @@ def test_stop_without_an_active_run_returns_at_once(runner):
     assert runner.stop(timeout=WAIT_SECONDS) is True
 
 
+def short_child_in_thread(runner, owner) -> tuple[threading.Thread, list]:
+    ends = []
+    worker = threading.Thread(
+        target=lambda: ends.append(runner.run_short_child(["child"], "The test child", WAIT_SECONDS, owner=owner))
+    )
+    worker.start()
+    return worker, ends
+
+
+def test_kill_short_child_kills_only_the_short_child_of_its_owner(runner, fake_starter):
+    owner, other = object(), object()
+    fake_starter.plan.append({"blocking": True, "stderr": "a line\n"})
+    worker, ends = short_child_in_thread(runner, owner)
+    assert fake_starter.child_started.wait(WAIT_SECONDS)
+    (child,) = fake_starter.children
+
+    assert runner.kill_short_child(other) is False
+    assert runner.kill_short_child(None) is False
+    assert child.poll() is None
+    assert runner.kill_short_child(owner) is True
+
+    worker.join(WAIT_SECONDS)
+    assert child.killed and not child.terminated
+    (end,) = ends
+    assert (end.returncode, end.stopped, end.timed_out) == (child.KILLED_CODE, False, False)
+    # The child ended, so a second kill finds nothing, and the runner takes the next child.
+    assert runner.kill_short_child(owner) is False
+    assert not runner.is_active()
+    assert runner.run_short_child(["child"], "The test child", WAIT_SECONDS).returncode == 0
+
+
+def test_kill_short_child_never_kills_a_sync_run_or_a_child_without_an_owner(runner, fake_starter, db_sessions):
+    fake_starter.plan.append({"blocking": True})
+    run_id = runner.claim(RunTrigger.MANUAL)
+    worker = threading.Thread(target=runner.execute, args=(run_id,))
+    worker.start()
+    assert fake_starter.child_started.wait(WAIT_SECONDS)
+
+    # A sync run has no owner, and None is no owner.
+    assert runner.kill_short_child(None) is False
+    assert runner.kill_short_child(object()) is False
+    fake_starter.children[0].finish(0)
+    worker.join(WAIT_SECONDS)
+    assert not fake_starter.children[0].killed
+    (run,) = read_runs(db_sessions)
+    assert run.status is RunStatus.SUCCEEDED
+
+    fake_starter.child_started.clear()
+    fake_starter.plan.append({"blocking": True})
+    worker, ends = short_child_in_thread(runner, None)
+    assert fake_starter.child_started.wait(WAIT_SECONDS)
+    assert runner.kill_short_child(None) is False
+    fake_starter.children[1].finish(0)
+    worker.join(WAIT_SECONDS)
+    assert not fake_starter.children[1].killed
+    assert ends[0].returncode == 0
+
+
 def test_abandon_fails_the_run_and_releases_the_lock(runner, fake_starter, db_sessions):
     run_id = runner.claim(RunTrigger.MANUAL)
 

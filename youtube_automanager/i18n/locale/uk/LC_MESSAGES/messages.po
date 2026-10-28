@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 22:56+0200\n"
+"POT-Creation-Date: 2026-10-28 23:13+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -1116,6 +1116,16 @@ msgstr "Правило {rule} тепер читає {title}."
 msgid "Rules"
 msgstr "Правила"
 
+#. Translators: {count} is the number of the channels that a rule reads.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
+"Rules read some of these channels: {count}. The rules still read their "
+"videos."
+msgstr ""
+"Правила читають деякі з цих каналів: {count}. Правила й далі читають їхні"
+" відео."
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "Run"
 msgstr "Запуск"
@@ -1268,6 +1278,10 @@ msgstr "Стан"
 msgid "Status"
 msgstr "Статус"
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Stop"
+msgstr "Зупинити"
+
 #: youtube_automanager/web/ui/service_settings.py
 msgid "Stop at a seen video (default)"
 msgstr "Зупинитися на побаченому відео (типово)"
@@ -1296,9 +1310,21 @@ msgstr "Збережені канали"
 msgid "Subscribe"
 msgstr "Підписатися"
 
+#. Translators: {count} is the number of the selected channels that the account
+#. is not subscribed to.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Subscribe ({count})"
+msgstr "Підписатися ({count})"
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Subscribed"
 msgstr "Підписано"
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Subscribed to channels: {done} of {total}."
+msgstr "Акаунт підписався на канали: {done} з {total}."
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
@@ -1308,6 +1334,11 @@ msgstr "Акаунт підписався на {title}."
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Subscribers"
 msgstr "Підписники"
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Subscribing: {done} of {total}"
+msgstr "Підписка: {done} з {total}"
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 msgid "Subscription"
@@ -1437,6 +1468,11 @@ msgstr ""
 #, python-brace-format
 msgid "The change failed: {cause}"
 msgstr "Зміна не вдалася: {cause}"
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "The change of the channels stopped at your request. {result}"
+msgstr "Зміну каналів зупинено на ваш запит. {result}"
 
 #. Translators: {cause} is the English cause from the service, for example an
 #. HTTP error of YouTube.
@@ -1902,6 +1938,10 @@ msgstr ""
 "Потім перезапустіть сервіс. Збережіть ключ: з іншим ключем сервіс не "
 "прочитає збережені cookies, і їх треба завантажити знову."
 
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "These channels did not change:"
+msgstr "Ці канали не змінилися:"
+
 #: youtube_automanager/web/ui/history_page.py
 msgid "This is not a date, so the filter does not use it."
 msgstr "Цей текст не дата, тому фільтр його не використовує."
@@ -1917,6 +1957,16 @@ msgstr ""
 #: youtube_automanager/web/ui/history_page.py
 msgid "This run has no actions."
 msgstr "Цей запуск не має дій."
+
+#. Translators: {duration} is a time, for example "2 min 12 s".
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
+"This takes at least {duration}, because the service sends the requests "
+"with cookies at a limited rate."
+msgstr ""
+"Це триває щонайменше {duration}, бо сервіс надсилає запити з cookies з "
+"обмеженою швидкістю."
 
 #: youtube_automanager/web/ui/history_page.py
 msgid "Time"
@@ -1962,6 +2012,19 @@ msgstr "Невідомо"
 msgid "Unsubscribe"
 msgstr "Відписатися"
 
+#. Translators: {count} is the number of the selected channels that the account
+#. is subscribed to.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Unsubscribe ({count})"
+msgstr "Відписатися ({count})"
+
+#. Translators: {count} is the number of the channels.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Unsubscribe the YouTube account from these channels: {count}?"
+msgstr "Відписати акаунт YouTube від цих каналів: {count}?"
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "Unsubscribe the YouTube account from {title}?"
@@ -1969,8 +2032,18 @@ msgstr "Відписати акаунт YouTube від каналу «{title}»?
 
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
+msgid "Unsubscribed from channels: {done} of {total}."
+msgstr "Акаунт відписався від каналів: {done} з {total}."
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
 msgid "Unsubscribed from {title}."
 msgstr "Акаунт відписався від {title}."
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Unsubscribing: {done} of {total}"
+msgstr "Відписка: {done} з {total}"
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 msgid "Update each day"
@@ -2355,6 +2428,18 @@ msgstr "{field} {operator} {value}"
 msgid "{field}: {error}"
 msgstr "{field}: {error}"
 
+#. Translators: a time in minutes.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{minutes} min"
+msgstr "{minutes} хв"
+
+#. Translators: a time in minutes and seconds.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{minutes} min {seconds} s"
+msgstr "{minutes} хв {seconds} с"
+
 #. Translators: the name of a rule that is turned off.
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
@@ -2381,10 +2466,22 @@ msgstr "{page} - YouTube AutoManager"
 msgid "{result}: {count}"
 msgstr "{result}: {count}"
 
+#. Translators: a time in seconds.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{seconds} s"
+msgstr "{seconds} с"
+
 #: youtube_automanager/web/ui/subscriptions_page.py
 #, python-brace-format
 msgid "{shown} of {total} channels"
 msgstr "Канали: {shown} із {total}"
+
+#. Translators: {cause} is the English answer of YouTube.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{title}: YouTube did not confirm the change: {cause}"
+msgstr "{title}: YouTube не підтвердив зміну: {cause}"
 
 #: youtube_automanager/web/ui/ytdlp_section.py
 #, python-brace-format

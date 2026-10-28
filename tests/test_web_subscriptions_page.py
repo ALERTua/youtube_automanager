@@ -26,6 +26,7 @@ from ui_support import (
     set_value,
     store,
     text_of,
+    texts_of,
 )
 from yt_dlp import YoutubeDL
 
@@ -47,9 +48,9 @@ from youtube_automanager.db.models import (
 from youtube_automanager.engine.sync import FEED_SOURCE
 from youtube_automanager.i18n import set_language
 from youtube_automanager.i18n.setting import NAMES, save_language
-from youtube_automanager.pacing import RequestBudget
+from youtube_automanager.pacing import RequestBudget, minimum_seconds
 from youtube_automanager.request_pause import EXIT_PAUSED, RequestPause
-from youtube_automanager.runner import sync_lock_held
+from youtube_automanager.runner import SyncRunner, sync_lock_held
 from youtube_automanager.short_child import EXIT_LOGGED_OUT, EXIT_UNAVAILABLE, EXIT_YOUTUBE_ERROR
 from youtube_automanager.web.ui import subscriptions_page
 from youtube_automanager.web.ui.common import DAY_CELL_FORMAT, DAY_CELL_SORT, format_time, iso_time, template_text
@@ -1739,6 +1740,435 @@ async def test_the_texts_of_the_selection_have_a_ukrainian_translation(
     choose_bulk_rule(user, 1)
 
     await eventually(lambda: result_of(user) == "Правило Science тепер читає ще каналів: 2.", "The result in Ukrainian")
+
+
+# Subscribe and unsubscribe the selected channels.
+
+
+REJECTED_CAUSE = "the button state did not change"
+
+
+def bulk_of(user) -> list[tuple[str, bool]]:
+    """Return the text of the bulk Subscribe and Unsubscribe of the bar, and whether each can be pressed."""
+    return [(element_of(user, marker).text, element_of(user, marker).enabled) for marker in BULK_BUTTONS]
+
+
+BULK_BUTTONS = ("bulk-subscribe", "bulk-unsubscribe")
+
+
+def batch_line(subscribe: bool, *outcomes: tuple[str, str, str | None], stopped=None) -> str:
+    """Return the result line of a batch child: each outcome is the channel, its kind and its cause."""
+    return stderr_line(
+        {
+            "subscribe": subscribe,
+            "outcomes": [
+                {"channel_id": channel_id, "outcome": kind, "cause": cause} for channel_id, kind, cause in outcomes
+            ],
+            "stopped": stopped,
+        }
+    )
+
+
+def progress_of(user) -> str | None:
+    """Return the counter of the running batch, or None when the bar shows its actions."""
+    if not element_of(user, "batch-progress").visible:
+        return None
+    assert not element_of(user, "selection-actions").visible
+    return element_of(user, "batch-progress-text").text
+
+
+def unchanged_of(user) -> list[str]:
+    return texts_of(user, "batch-unchanged-channel")
+
+
+def confirm_unsubscribe(user) -> None:
+    """Open the question of the bulk Unsubscribe, and press its Unsubscribe."""
+    with user.client:
+        element_of(user, "bulk-unsubscribe-menu").open()
+    click_on(user, element_of(user, "bulk-unsubscribe-confirm"))
+
+
+def set_subscribed(sessions, channel_id: str, subscribed: bool) -> None:
+    """Write the state that the child writes after YouTube confirmed a change. The fake child writes nothing."""
+    with sessions.begin() as session:
+        session.get(Channel, channel_id).is_subscribed = subscribed
+
+
+@pytest.fixture
+def fast_counter(monkeypatch):
+    monkeypatch.setattr(subscriptions_page, "BATCH_POLL_SECONDS", 0.05)
+
+
+async def test_each_bulk_button_counts_the_selected_channels_that_its_action_fits(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"), found(ALPHA, "alpha news"))
+
+    # Alpha and Charlie are subscribed, Bravo and Delta are not.
+    toggle(user, ALPHA)
+    toggle(user, BRAVO)
+    await eventually(lambda: bulk_of(user) == [("Subscribe (1)", True), ("Unsubscribe (1)", True)], "Both counts")
+    # A found channel that is not stored is not subscribed.
+    toggle(user, FOUND, "found-table")
+    await eventually(lambda: bulk_of(user)[0] == ("Subscribe (2)", True), "The found channel counts")
+    toggle(user, ALPHA)
+    await eventually(lambda: bulk_of(user)[1] == ("Unsubscribe (0)", False), "No channel to unsubscribe")
+    toggle(user, CHARLIE)
+    toggle(user, BRAVO)
+    toggle(user, FOUND, "found-table")
+    await eventually(lambda: bulk_of(user) == [("Subscribe (0)", False), ("Unsubscribe (1)", True)], "Only Charlie")
+
+
+def test_the_time_of_a_batch_is_the_shortest_time_of_the_request_budget_in_minutes_and_seconds():
+    assert subscriptions_page.duration_text(0.25) == "1 s"
+    assert subscriptions_page.duration_text(59) == "59 s"
+    assert subscriptions_page.duration_text(59.5) == "1 min"
+    assert subscriptions_page.duration_text(132) == "2 min 12 s"
+    # A batch sends a session check and a read of the page config before its changes.
+    assert minimum_seconds(102) == 348
+    assert subscriptions_page.batch_time_text(100) == (
+        "This takes at least 5 min 48 s, because the service sends the requests with cookies at a limited rate."
+    )
+
+
+async def test_the_bulk_unsubscribe_asks_first_with_the_rules_and_the_time_and_cancel_changes_nothing(
+    user, stored_channels, sessions, fake_starter
+):
+    store(sessions, RuleChannel(rule_id=1, channel_id=CHARLIE))
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, BRAVO)
+    toggle(user, CHARLIE)
+    await eventually(lambda: bulk_of(user)[1] == ("Unsubscribe (2)", True), "Two channels to unsubscribe")
+
+    # Bravo is not subscribed, so the question names only Alpha and Charlie, and a rule reads Charlie.
+    await eventually(
+        lambda: text_of(user, "bulk-unsubscribe-question") == "Unsubscribe the YouTube account from these channels: 2?",
+        "The question",
+    )
+    assert element_of(user, "bulk-unsubscribe-note").text == (
+        "Rules read some of these channels: 1. The rules still read their videos."
+    )
+    assert element_of(user, "bulk-unsubscribe-time").text == subscriptions_page.batch_time_text(2)
+    assert subscriptions_page.batch_time_text(2).startswith("This takes at least 1 s,")
+    assert element_of(user, "bulk-unsubscribe-confirm").text == "Unsubscribe"
+    with user.client:
+        element_of(user, "bulk-unsubscribe-menu").open()
+    click_on(user, element_of(user, "bulk-unsubscribe-cancel"))
+
+    await eventually(lambda: element_of(user, "bulk-unsubscribe-menu").value is False, "The closed question")
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert fake_starter.calls == []
+    assert progress_of(user) is None
+    # Without a channel that a rule reads, the question has no note.
+    toggle(user, CHARLIE)
+    await eventually(lambda: elements_of(user, "bulk-unsubscribe-note") == [], "No note")
+
+
+async def test_the_bulk_subscribe_starts_at_once_counts_the_stored_states_and_keeps_the_rejected_channels(
+    user, stored_channels, sessions, fake_starter, fast_counter
+):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"))
+    toggle(user, ALPHA)
+    toggle(user, BRAVO)
+    toggle(user, DELTA)
+    toggle(user, FOUND, "found-table")
+    await eventually(lambda: bulk_of(user)[0] == ("Subscribe (3)", True), "Three channels to subscribe")
+    fake_starter.plan.append(
+        {
+            "blocking": True,
+            "stderr": batch_line(
+                True, (BRAVO, "confirmed", None), (DELTA, "rejected", REJECTED_CAUSE), (FOUND, "confirmed", None)
+            ),
+        }
+    )
+
+    user.find(marker="bulk-subscribe").click()
+
+    await eventually(lambda: progress_of(user) == "Subscribing: 0 of 3", "The counter of the batch")
+    command, _env = fake_starter.calls[-1]
+    assert command[3:] == ["change-subscriptions"]
+    # Alpha is subscribed already, so the batch has only the other three, with the title for a new row.
+    assert json.loads(fake_starter.inputs[-1]) == {
+        "subscribe": True,
+        "channels": [
+            {"channel_id": BRAVO, "title": "Bravo Cooking"},
+            {"channel_id": DELTA, "title": "Delta Science"},
+            {"channel_id": FOUND, "title": "Found Channel"},
+        ],
+    }
+    assert element_of(user, "batch-stop").enabled
+    # The counter follows the states that the child stores.
+    set_subscribed(sessions, BRAVO, True)
+    await eventually(lambda: progress_of(user) == "Subscribing: 1 of 3", "The first stored change")
+    store(sessions, channel(FOUND, "Found Channel"))
+    await eventually(lambda: progress_of(user) == "Subscribing: 2 of 3", "The second stored change")
+
+    fake_starter.children[-1].finish(0)
+
+    await eventually(lambda: result_of(user) == "Subscribed to channels: 2 of 3.", "The result of the batch")
+    assert "text-negative" in element_of(user, "channel-result").classes
+    await user.should_see("Subscribed to channels: 2 of 3.")
+    assert progress_of(user) is None
+    # The channels that changed leave the selection, and the rejected channel stays with its cause.
+    assert unchanged_of(user) == [f"Delta Science: YouTube did not confirm the change: {REJECTED_CAUSE}"]
+    await eventually(lambda: selected_rows(user) == [ALPHA, DELTA], "The selection after the batch")
+    await bar_is(user, ["Selected: 2"])
+    await eventually(lambda: bulk_of(user) == [("Subscribe (1)", True), ("Unsubscribe (1)", True)], "The new counts")
+    await eventually(lambda: row_of(user, BRAVO)["subscribed"] == "Yes", "The table reads the new states")
+    assert row_of(user, FOUND)["subscribed"] == "Yes"
+    assert not any(row["locked"] for row in rows_of(user, "channels-table"))
+
+
+async def test_a_batch_where_each_channel_changes_clears_its_channels_from_the_selection(
+    user, stored_channels, sessions, fake_starter
+):
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, BRAVO)
+    toggle(user, CHARLIE)
+    fake_starter.plan.append({"stderr": batch_line(False, (ALPHA, "confirmed", None), (CHARLIE, "confirmed", None))})
+    set_subscribed(sessions, ALPHA, False)
+    set_subscribed(sessions, CHARLIE, False)
+
+    confirm_unsubscribe(user)
+
+    await eventually(lambda: result_of(user) == "Unsubscribed from channels: 2 of 2.", "The result of the batch")
+    assert "text-negative" not in element_of(user, "channel-result").classes
+    await user.should_see("Unsubscribed from channels: 2 of 2.")
+    assert unchanged_of(user) == []
+    await eventually(lambda: selected_rows(user) == [BRAVO], "Only Bravo stays selected")
+    await eventually(lambda: row_of(user, ALPHA)["subscribed"] == "No", "The table reads the new states")
+    assert element_of(user, "bulk-unsubscribe-menu").value is False
+
+
+async def test_while_a_batch_runs_no_other_subscription_change_starts(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    await search_for(user, fake_starter, found(FOUND, "Found Channel"))
+    toggle(user, BRAVO)
+    toggle(user, ALPHA)
+    fake_starter.plan.append({"blocking": True, "stderr": batch_line(True, (BRAVO, "confirmed", None))})
+    user.find(marker="bulk-subscribe").click()
+    await eventually(lambda: progress_of(user) == "Subscribing: 0 of 1", "The running batch")
+
+    # The buttons of each row are off, also in the found table, and no row shows the spinner of a single change.
+    assert all(row["locked"] and not row["working"] for row in rows_of(user, "channels-table"))
+    await eventually(lambda: row_of(user, FOUND, "found-table")["locked"], "The found row with its buttons off")
+    assert [enabled for _text, enabled in bulk_of(user)] == [False, False]
+    starts = len(fake_starter.calls)
+    subscribe_row(user, DELTA)
+    unsubscribe_row(user, ALPHA)
+    subscribe_row(user, FOUND, "found-table")
+    # A clear of the selection keeps the bar of the running batch.
+    toggle(user, BRAVO)
+    toggle(user, ALPHA)
+    await asyncio.sleep(SETTLE_SECONDS)
+    assert len(fake_starter.calls) == starts
+    assert progress_of(user) == "Subscribing: 0 of 1"
+    assert element_of(user, "selection-bar").visible
+
+    fake_starter.children[-1].finish(0)
+
+    await eventually(lambda: result_of(user) == "Subscribed to channels: 1 of 1.", "The end of the batch")
+    await bar_is(user, None)
+    await eventually(lambda: not row_of(user, FOUND, "found-table")["locked"], "The found row with its buttons on")
+    assert not any(row["locked"] for row in rows_of(user, "channels-table"))
+
+
+async def test_a_single_change_turns_the_bulk_buttons_off(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, BRAVO)
+    fake_starter.plan.append({"blocking": True, "stderr": stderr_line({"channel_id": DELTA, "subscribed": True})})
+
+    subscribe_row(user, DELTA)
+
+    await eventually(lambda: [enabled for _text, enabled in bulk_of(user)] == [False, False], "The bulk buttons off")
+    fake_starter.children[-1].finish(0)
+    await eventually(lambda: [enabled for _text, enabled in bulk_of(user)] == [True, True], "The bulk buttons on")
+
+
+async def test_stop_kills_the_child_and_the_confirmed_changes_stay(user, stored_channels, sessions, fake_starter):
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, CHARLIE)
+    fake_starter.plan.append({"blocking": True})
+    confirm_unsubscribe(user)
+    await eventually(lambda: progress_of(user) == "Unsubscribing: 0 of 2", "The running batch")
+    # YouTube confirmed Alpha, and the child stored it, before Stop.
+    set_subscribed(sessions, ALPHA, False)
+
+    user.find(marker="batch-stop").click()
+
+    expected = "The change of the channels stopped at your request. Unsubscribed from channels: 1 of 2."
+    await eventually(lambda: result_of(user) == expected, "The result of the stopped batch")
+    assert "text-negative" not in element_of(user, "channel-result").classes
+    assert fake_starter.children[-1].killed
+    assert unchanged_of(user) == ["Charlie"]
+    await eventually(lambda: selected_rows(user) == [CHARLIE], "Charlie stays selected")
+    assert (stored_channel(sessions, ALPHA).is_subscribed, stored_channel(sessions, CHARLIE).is_subscribed) == (
+        False,
+        True,
+    )
+    await eventually(lambda: row_of(user, ALPHA)["subscribed"] == "No", "The table reads the new states")
+    assert progress_of(user) is None
+
+
+async def test_stop_after_the_end_of_the_child_changes_nothing(user, stored_channels, fake_starter, monkeypatch):
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+    fake_starter.plan.append({"blocking": True, "stderr": batch_line(True, (BRAVO, "confirmed", None))})
+    user.find(marker="bulk-subscribe").click()
+    await eventually(lambda: progress_of(user) == "Subscribing: 0 of 1", "The running batch")
+    # The child ends before the kill reaches it, so the runner kills nothing, and Stop stays on.
+    kills = []
+    monkeypatch.setattr(SyncRunner, "kill_short_child", lambda runner, owner: kills.append(owner) or False)
+
+    user.find(marker="batch-stop").click()
+
+    await eventually(lambda: kills, "The kill")
+    assert element_of(user, "batch-stop").enabled
+    fake_starter.children[-1].finish(0)
+    await eventually(lambda: result_of(user) == "Subscribed to channels: 1 of 1.", "The result of the batch")
+
+
+@pytest.mark.parametrize(
+    ("child", "reason"),
+    [
+        (
+            {"exit_code": EXIT_LOGGED_OUT, "stderr": "YouTube answered as logged out\n"},
+            (
+                "YouTube does not accept the stored cookies any more (YouTube answered as logged out). Export new "
+                "YouTube cookies from your browser and upload them to the service."
+            ),
+        ),
+        (
+            {"exit_code": EXIT_YOUTUBE_ERROR, "stderr": "the connection failed: timed out\n"},
+            "YouTube did not give the expected answer: the connection failed: timed out",
+        ),
+        (
+            {"exit_code": EXIT_UNAVAILABLE, "stderr": "COOKIES_KEY is not set\n"},
+            "The YouTube account is not available: COOKIES_KEY is not set",
+        ),
+        (
+            {"exit_code": 1, "stderr": "Traceback (most recent call last):\n"},
+            "The service could not finish the work: The subscription batch process exited with code 1.",
+        ),
+    ],
+    ids=["logged-out", "network", "unavailable", "unknown"],
+)
+async def test_a_batch_that_stops_shows_the_cause_and_keeps_the_unchanged_channels(
+    user, stored_channels, sessions, fake_starter, child, reason
+):
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, CHARLIE)
+    stopped = {"reason": "error", "cause": "x"}
+    lines = batch_line(False, (ALPHA, "confirmed", None), (CHARLIE, "failed", "x"), stopped=stopped)
+    fake_starter.plan.append({**child, "stderr": lines + child["stderr"]})
+    set_subscribed(sessions, ALPHA, False)
+
+    confirm_unsubscribe(user)
+
+    expected = f"Unsubscribed from channels: 1 of 2. {reason}"
+    await eventually(lambda: result_of(user) == expected, "The cause of the stop")
+    assert "text-negative" in element_of(user, "channel-result").classes
+    assert moment_of(user, "channel-result") == (None, None)
+    # The page does not read the outcomes of a stopped batch, so the list names the channel without a cause.
+    assert unchanged_of(user) == ["Charlie"]
+    await eventually(lambda: selected_rows(user) == [CHARLIE], "Charlie stays selected")
+
+
+async def test_a_batch_that_stops_at_a_pause_shows_the_end_of_the_pause(user, stored_channels, sessions, fake_starter):
+    pause = RequestPause(BreakerReason.BOT_CHECK, datetime(2026, 10, 28, 13, 0, tzinfo=UTC), "Europe/Kyiv")
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+    toggle(user, DELTA)
+    stopped = {"reason": "paused", "cause": str(pause)}
+    lines = batch_line(True, (BRAVO, "confirmed", None), (DELTA, "failed", str(pause)), stopped=stopped)
+    fake_starter.plan.append({"exit_code": EXIT_PAUSED, "stderr": lines + pause.to_line() + "\n"})
+    set_subscribed(sessions, BRAVO, True)
+
+    user.find(marker="bulk-subscribe").click()
+
+    template = (
+        "Subscribed to channels: 1 of 2. YouTube limited the requests with the cookies of the account (a bot check). "
+        "The service sends no such request until {time}."
+    )
+    await eventually(lambda: result_of(user) == template.format(time="2026-10-28 15:00 EET"), "The pause")
+    assert moment_of(user, "channel-result") == ("2026-10-28T15:00:00+02:00", "Europe/Kyiv")
+    assert element_of(user, "channel-result").props["data-time-template"] == template
+    assert unchanged_of(user) == ["Delta Science"]
+    await eventually(lambda: selected_rows(user) == [DELTA], "Delta stays selected")
+
+
+async def test_a_batch_during_a_run_starts_nothing_and_says_so(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+
+    with sync_lock_held():
+        user.find(marker="bulk-subscribe").click()
+        await eventually(lambda: result_of(user), "The busy text")
+
+    assert result_of(user).startswith(f"Subscribed to channels: 0 of 1. {BUSY_TEXT}")
+    assert fake_starter.calls == []
+    assert unchanged_of(user) == ["Bravo Cooking"]
+    assert selected_rows(user) == [BRAVO]
+
+
+async def test_the_next_change_clears_the_list_of_the_unchanged_channels(user, stored_channels, fake_starter):
+    await user.open("/subscriptions")
+    toggle(user, BRAVO)
+    fake_starter.plan.append({"stderr": batch_line(True, (BRAVO, "rejected", REJECTED_CAUSE))})
+    user.find(marker="bulk-subscribe").click()
+    await eventually(lambda: unchanged_of(user), "The list of the unchanged channels")
+    fake_starter.plan.append({"stderr": stderr_line({"channel_id": DELTA, "subscribed": True})})
+
+    subscribe_row(user, DELTA)
+
+    await eventually(lambda: result_of(user) == "Subscribed to Delta Science.", "The next result")
+    assert unchanged_of(user) == []
+    assert elements_of(user, "batch-unchanged") == []
+
+
+async def test_the_texts_of_the_bulk_subscription_change_have_a_ukrainian_translation(
+    user, stored_channels, sessions, fake_starter, real_uk_catalog
+):
+    save_language(sessions, "uk")
+    store(sessions, RuleChannel(rule_id=1, channel_id=ALPHA))
+    await user.open("/subscriptions")
+    toggle(user, ALPHA)
+    toggle(user, BRAVO)
+    await eventually(lambda: bulk_of(user) == [("Підписатися (1)", True), ("Відписатися (1)", True)], "The buttons")
+    await eventually(
+        lambda: text_of(user, "bulk-unsubscribe-question") == "Відписати акаунт YouTube від цих каналів: 1?",
+        "The question",
+    )
+    assert element_of(user, "bulk-unsubscribe-note").text == (
+        "Правила читають деякі з цих каналів: 1. Правила й далі читають їхні відео."
+    )
+    assert element_of(user, "bulk-unsubscribe-time").text == (
+        "Це триває щонайменше 1 с, бо сервіс надсилає запити з cookies з обмеженою швидкістю."
+    )
+    assert subscriptions_page.duration_text(132) == "2 хв 12 с"
+    assert subscriptions_page.duration_text(120) == "2 хв"
+    assert subscriptions_page.progress_text(True, 1, 2) == "Підписка: 1 з 2"
+    fake_starter.plan.append({"blocking": True})
+    confirm_unsubscribe(user)
+    await eventually(lambda: progress_of(user) == "Відписка: 0 з 1", "The counter")
+    assert element_of(user, "batch-stop").text == "Зупинити"
+
+    user.find(marker="batch-stop").click()
+
+    await eventually(
+        lambda: result_of(user) == "Зміну каналів зупинено на ваш запит. Акаунт відписався від каналів: 0 з 1.",
+        "The stop in Ukrainian",
+    )
+    assert subscriptions_page.batch_result_text(True, 2, 3) == "Акаунт підписався на канали: 2 з 3."
+    assert texts_of(user, "batch-unchanged-title") == ["Ці канали не змінилися:"]
+    assert subscriptions_page.unchanged_text(subscriptions_page.UnchangedChannel("Delta", "no")) == (
+        "Delta: YouTube не підтвердив зміну: no"
+    )
 
 
 # The translation.
