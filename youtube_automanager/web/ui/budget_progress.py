@@ -166,7 +166,9 @@ class BulkProgress:
 
     ``start`` shows the block and starts the reads of the budget, ``update`` gives it the new progress, and ``stop``
     hides it and ends the reads. The caller puts its own buttons, for example Stop, into ``actions``. ``color`` is the
-    Quasar color of the progress bar, so the block also shows on a colored background.
+    Quasar color of the progress bar, so the block also shows on a colored background. With another color than
+    "primary", the block sits on a colored background, and the text of a pause keeps the color of the other texts,
+    because the color of an error is hard to read there.
     """
 
     def __init__(
@@ -236,7 +238,9 @@ class BulkProgress:
                     .mark("bulk-pause-bar")
                 )
                 self.pause_bar.props["aria-label"] = _("Pause of the requests with cookies")
-                self.pause_text = ui.label().classes("text-negative").mark("bulk-pause-text")
+                self.pause_text = ui.label().mark("bulk-pause-text")
+                if color == "primary":
+                    self.pause_text.classes("text-negative")
         self.element.set_visibility(False)
         self._draw()
         self.timer = ui.timer(BUDGET_POLL_SECONDS, self._poll, active=False, immediate=False)

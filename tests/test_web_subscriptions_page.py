@@ -2276,6 +2276,8 @@ async def test_a_batch_during_a_pause_shows_the_end_of_the_pause_in_the_time_of_
         "sends no such request until {time}."
     )
     assert moment_of(user, "bulk-pause-text") == moment_of(user, "bulk-pause-until")
+    # The red of an error is hard to read on the colored bar, so the text keeps the white of the bar.
+    assert "text-negative" not in element_of(user, "bulk-pause-text").classes
     # About 4.5 min of the pause of 1 h passed.
     assert element_of(user, "bulk-pause-bar").value == pytest.approx(0.075, abs=0.02)
 

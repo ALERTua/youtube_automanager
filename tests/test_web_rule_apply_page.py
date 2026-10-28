@@ -1341,11 +1341,23 @@ async def test_the_dialog_shows_the_state_of_the_request_budget_while_the_apply_
         await eventually(lambda: text_of(user, "bulk-progress-title") == "Adding videos: 1 of 1", "The added count")
         assert element_of(user, "bulk-progress-bar").value == 1
         assert text_of(user, "bulk-progress-remaining") == "at least ~0:00 left"
+        # A pause of the requests with cookies shows instead of the tokens, and its text has the color of an error.
+        with sessions.begin() as session:
+            row = session.get(RequestBudgetState, 1)
+            row.breaker_reason, row.breaker_level = BreakerReason.BOT_CHECK, 1
+            row.breaker_opened_at, row.breaker_until = utc_now(), utc_now() + timedelta(hours=6)
+        await eventually(lambda: element_of(user, "bulk-pause").visible, "The pause")
+        assert not element_of(user, "bulk-budget").visible
+        assert "text-negative" in element_of(user, "bulk-pause-text").classes
+        assert moment_of(user, "bulk-pause-text")[1] == ZONE
+        with sessions.begin() as session:
+            session.get(RequestBudgetState, 1).breaker_reason = None
+        await eventually(lambda: element_of(user, "bulk-budget").visible, "The end of the pause")
 
         gate.release()
 
-        await eventually(lambda: not element_of(user, "bulk-progress").visible, "The end of the block")
-        assert text_of(user, "apply-status").startswith("The apply is done.")
+        await eventually(lambda: text_of(user, "apply-status").startswith("The apply is done."), "The end")
+        assert not element_of(user, "bulk-progress").visible
 
 
 async def test_the_banner_shows_a_running_apply_after_a_new_load_of_the_page(
