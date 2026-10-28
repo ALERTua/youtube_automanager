@@ -3,7 +3,6 @@
 !pyproject.toml
 !uv.lock
 !youtube_automanager/
-!youtube_automanager/i18n/locale/
+# The image compiles the code and the catalogs itself, so the bytecode and a .mo file of the host stay out.
 **/__pycache__/
-# The image compiles the catalogs itself, so a .mo file of the host stays out.
 **/*.mo
