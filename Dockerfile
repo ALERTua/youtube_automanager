@@ -105,9 +105,10 @@ WORKDIR $APP_DIR
 COPY --link --from=deps $APP_DIR/.venv/lib $APP_DIR/.venv/lib
 COPY --link --from=deps --exclude=lib $APP_DIR/.venv $APP_DIR/.venv
 
-# The code goes into its own small layer, so a change of the code does not push the dependencies again.
-COPY youtube_automanager youtube_automanager
-# The compiled catalogs: the .po files are in the code layer already.
+# The code goes into its own small layer, so a change of the code does not push the dependencies again. The service
+# reads only the compiled catalogs, so the .po files and the .pot template stay out.
+COPY --exclude=**/*.po --exclude=**/*.pot youtube_automanager youtube_automanager
+# The compiled catalogs, without their .po files.
 COPY --from=catalog --exclude=**/*.po $APP_DIR/youtube_automanager/i18n/locale youtube_automanager/i18n/locale
 RUN python -m compileall -q --invalidation-mode unchecked-hash youtube_automanager
 
