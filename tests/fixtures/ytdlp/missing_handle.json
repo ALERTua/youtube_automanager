@@ -1,0 +1,12 @@
+{
+ "url": "https://www.youtube.com/@thishandledoesnotexist0x9q7z",
+ "options": {
+  "playlist_items": "0"
+ },
+ "error": {
+  "message": "ERROR: [youtube:tab] @thishandledoesnotexist0x9q7z: Unable to download API page: HTTP Error 404: Not Found (caused by <HTTPError 404: Not Found>)",
+  "cause": "HTTPError",
+  "status": 404,
+  "url": "https://www.youtube.com/youtubei/v1/navigation/resolve_url?prettyPrint=false"
+ }
+}

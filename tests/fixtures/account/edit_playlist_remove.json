@@ -1,0 +1,16 @@
+{
+ "ep": "browse/edit_playlist",
+ "query": {
+  "playlistId": "WL",
+  "actions": [
+   {
+    "action": "ACTION_REMOVE_VIDEO_BY_VIDEO_ID",
+    "removedVideoId": "SKOJfQG3qis"
+   }
+  ]
+ },
+ "response": {
+  "responseContext": {},
+  "status": "STATUS_SUCCEEDED"
+ }
+}

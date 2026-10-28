@@ -1,0 +1,72 @@
+name: Newest yt-dlp
+
+# The service installs each new yt-dlp release into its data folder, but the tests use the locked version. This run
+# tells early when a new release breaks the account client or the public source. Its second job tells when a
+# recorded answer of YouTube or PyPI in the test fixtures is older than the limit of tests/fixtures/check_age.py.
+on:
+  schedule:
+    # Each Monday at 05:17 UTC.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, nightly]
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install the dependencies
+        run: uv sync --locked --all-groups
+
+      # --no-config keeps the uv configuration of the project out of this install, as the updater of the service does.
+      # The nightly builds are pre-releases on PyPI. --no-deps keeps each other library at its locked version.
+      - name: Install the newest yt-dlp
+        env:
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          prerelease=()
+          if [ "$CHANNEL" = nightly ]; then prerelease=(--prerelease allow); fi
+          uv pip install --no-config --python .venv --upgrade --no-deps "${prerelease[@]}" yt-dlp
+          uv run --no-sync python -c "import yt_dlp.version as v; print('yt-dlp', v.__version__, v.CHANNEL)"
+
+      # --no-sync keeps the newest yt-dlp, because a sync would install the locked version again.
+      - name: Run the tests of the account client and the public source
+        run: uv run --no-sync pytest -q tests/test_account_client.py tests/test_public_source.py
+
+  fixture-age:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+    steps:
+      # The script reads the date of the last commit of each fixture, so the checkout needs the whole history.
+      - name: Check out the code with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Tell when a recorded fixture is older than the limit
+        run: uv run --no-project python tests/fixtures/check_age.py

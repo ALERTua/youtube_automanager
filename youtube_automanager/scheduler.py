@@ -1,0 +1,504 @@
+"""The schedule of the sync runs: the async interface of the service over APScheduler.
+
+The rest of the service calls APScheduler only through this module, so a move to another major version of APScheduler
+changes only this module. The schedule lives in the ``schedule`` table. APScheduler keeps its jobs in memory, and
+a change of the schedule acts at once, without a restart. Next to the sync job, the scheduler runs one cleanup job,
+which the owner of the history gives to it, and the daily update of yt-dlp.
+"""
+
+import asyncio
+import enum
+import logging
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
+from typing import Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.base import BaseTrigger
+from apscheduler.triggers.combining import OrTrigger
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
+from youtube_automanager.db.models import DEFAULT_CRON_EXPRESSION, RunTrigger, Schedule, ScheduleKind
+from youtube_automanager.runner import SyncRunner
+
+LOG = logging.getLogger(__name__)
+
+JOB_ID = "sync"
+ROTATION_JOB_ID = "cookie_rotation"
+# The wait before the first turn of the cookie rotation, and before the next turn after a turn that failed.
+ROTATION_DELAY_S = 60.0
+CLEANUP_JOB_ID = "cleanup"
+YTDLP_JOB_ID = "ytdlp_update"
+
+# The cleanup of the old history runs each day at this time of the day, in the time zone of the schedule.
+CLEANUP_HOUR = 3
+CLEANUP_MINUTE = 30
+
+# The shortest interval of an interval schedule, 15 minutes. When the service reads a stored row with a shorter interval
+# from an older version of the service, it writes this interval into the row.
+MIN_INTERVAL_S = 15 * 60
+# The longest interval of an interval schedule, one year. A longer one makes the date arithmetic of APScheduler fail
+# with an OverflowError or an OSError, and a schedule row that fails like this stops the start of the service.
+MAX_INTERVAL_S = 365 * 24 * 60 * 60
+
+# Standard cron counts the days of the week from Sunday, and 7 is Sunday again. APScheduler 3 counts 0 as Monday.
+# A name means the same day in both, so the numbers become names before APScheduler sees them.
+_CRON_WEEKDAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+_WEEKDAY_NUMBERS = re.compile(r"(\*|\d+)(?:-(\d+))?(?:/(\d+))?")
+
+
+class RotationTurns(Protocol):
+    """The cookie rotation as the scheduler runs it. ``turn`` blocks and returns the seconds until the next turn."""
+
+    def turn(self) -> float: ...
+
+
+class SchedulerState(enum.StrEnum):
+    STOPPED = "stopped"
+    RUNNING = "running"
+    PAUSED = "paused"
+
+
+class RunNowOutcome(enum.StrEnum):
+    STARTED = "started"
+    ALREADY_ACTIVE = "already_active"
+
+
+@dataclass(frozen=True)
+class RunNowResult:
+    outcome: RunNowOutcome
+    run_id: int | None = None
+
+
+@dataclass(frozen=True)
+class ScheduleSpec:
+    """A schedule of the runs. The constructor refuses a schedule that APScheduler cannot follow."""
+
+    kind: ScheduleKind
+    timezone: str
+    cron_expression: str | None = None
+    interval_s: int | None = None
+    enabled: bool = True
+
+    def __post_init__(self) -> None:
+        build_trigger(self)
+
+    @classmethod
+    def from_row(cls, row: Schedule) -> ScheduleSpec:
+        """Return the schedule of ``row``."""
+        return cls(
+            kind=row.kind,
+            timezone=row.timezone,
+            cron_expression=row.cron_expression,
+            interval_s=row.interval_s,
+            enabled=row.enabled,
+        )
+
+
+def _zone(name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(name)
+    # A name that is no valid file name, for example "*" on Windows or a very long name, raises OSError.
+    except (ZoneInfoNotFoundError, ValueError, OSError) as error:
+        raise ValueError(f"Unknown time zone {name!r}") from error
+
+
+def _weekday_names(field: str) -> str:
+    """Translate the numbers of a standard cron day-of-week field into day names. Names stay as they are."""
+    parts = []
+    for part in field.split(","):
+        match = _WEEKDAY_NUMBERS.fullmatch(part)
+        if match is None:
+            parts.append(part)
+            continue
+        first_text, last_text, step_text = match.groups()
+        if first_text == "*":
+            if last_text is not None:
+                raise ValueError(f"Wrong day of the week {part!r}")
+            if step_text is None:
+                parts.append(part)
+                continue
+            first, last = 0, 6
+        else:
+            first = int(first_text)
+            # "5/2" means from 5 to the end of the week, as in APScheduler.
+            last = int(last_text) if last_text is not None else (6 if step_text is not None else first)
+        step = int(step_text) if step_text is not None else 1
+        if not (0 <= first <= last <= 7) or step < 1:
+            raise ValueError(f"Wrong day of the week {part!r}: use 0 to 7, where 0 and 7 are Sunday")
+        days = sorted({day % 7 for day in range(first, last + 1, step)})
+        parts.extend(_CRON_WEEKDAYS[day] for day in days)
+    return ",".join(parts)
+
+
+def _cron_trigger(expression: str, zone: ZoneInfo) -> BaseTrigger:
+    """Build a trigger that fires as standard cron fires for ``expression``.
+
+    When both the day of the month and the day of the week are set, standard cron fires on a day that matches either
+    of them, but APScheduler 3 fires only on a day that matches both. Such an expression becomes two triggers.
+    """
+    fields = expression.split()
+    if len(fields) != 5:
+        raise ValueError(f"A cron expression has 5 fields, got {len(fields)}: {expression!r}")
+    minute, hour, day, month, day_of_week = fields
+    day_of_week = _weekday_names(day_of_week)
+    if not day.startswith("*") and not day_of_week.startswith("*"):
+        return OrTrigger(
+            [
+                CronTrigger(minute=minute, hour=hour, day=day, month=month, timezone=zone),
+                CronTrigger(minute=minute, hour=hour, month=month, day_of_week=day_of_week, timezone=zone),
+            ]
+        )
+    return CronTrigger(minute=minute, hour=hour, day=day, month=month, day_of_week=day_of_week, timezone=zone)
+
+
+def build_trigger(spec: ScheduleSpec) -> BaseTrigger:
+    """Return the APScheduler trigger of ``spec``. Raise ValueError when the schedule is wrong."""
+    zone = _zone(spec.timezone)
+    if spec.kind is ScheduleKind.CRON:
+        if not spec.cron_expression:
+            raise ValueError("A cron schedule needs a cron expression")
+        return _cron_trigger(spec.cron_expression, zone)
+    if spec.kind is ScheduleKind.INTERVAL:
+        if spec.interval_s is None or spec.interval_s < MIN_INTERVAL_S:
+            raise ValueError(
+                f"An interval schedule needs an interval of {MIN_INTERVAL_S} s ({MIN_INTERVAL_S // 60} minutes) "
+                f"or more, got {spec.interval_s}"
+            )
+        if spec.interval_s > MAX_INTERVAL_S:
+            raise ValueError(
+                f"An interval schedule needs an interval of {MAX_INTERVAL_S} s or less, got {spec.interval_s}"
+            )
+        return IntervalTrigger(seconds=spec.interval_s, timezone=zone)
+    raise ValueError(f"Unknown schedule kind {spec.kind!r}")
+
+
+def _daily_trigger(at: time, timezone: str) -> CronTrigger:
+    return CronTrigger(hour=at.hour, minute=at.minute, timezone=_zone(timezone))
+
+
+def _cleanup_trigger(timezone: str) -> CronTrigger:
+    return _daily_trigger(time(CLEANUP_HOUR, CLEANUP_MINUTE), timezone)
+
+
+def _following_times(trigger: BaseTrigger, first: datetime, count: int) -> list[datetime]:
+    times = [first]
+    while len(times) < count:
+        following = trigger.get_next_fire_time(times[-1], times[-1])
+        if following is None:
+            break
+        times.append(following)
+    return times
+
+
+def upcoming_run_times(spec: ScheduleSpec, count: int, now: datetime | None = None) -> list[datetime]:
+    """Return the next ``count`` run times of ``spec`` after ``now``, for example to show a schedule before a save.
+
+    An interval schedule counts from ``now``. A disabled schedule has no run times.
+    """
+    if not spec.enabled or count < 1:
+        return []
+    now = now or datetime.now(UTC)
+    trigger = (
+        IntervalTrigger(seconds=spec.interval_s, start_date=now, timezone=_zone(spec.timezone))
+        if spec.kind is ScheduleKind.INTERVAL
+        else build_trigger(spec)
+    )
+    first = trigger.get_next_fire_time(None, now)
+    if first is not None and first <= now:
+        first = trigger.get_next_fire_time(first, now)
+    return [] if first is None else _following_times(trigger, first, count)
+
+
+def _replan(scheduler: AsyncIOScheduler, job_id: str, trigger: BaseTrigger, enabled: bool) -> None:
+    """Give the job ``job_id`` the trigger ``trigger``, and keep it paused unless ``enabled``."""
+    if enabled:
+        scheduler.reschedule_job(job_id, trigger=trigger)
+    else:
+        # reschedule_job sets a next run time, so it would also resume a paused job.
+        scheduler.modify_job(job_id, trigger=trigger, next_run_time=None)
+
+
+def _describe_daily(at: time, enabled: bool, timezone: str) -> str:
+    return f"each day at {at:%H:%M} in {timezone}" if enabled else "never, because it is off"
+
+
+def load_schedule(sessions: sessionmaker[Session], default_timezone: str) -> ScheduleSpec:
+    """Return the schedule from the single row of the ``schedule`` table.
+
+    When the table is empty, first write the default row: enabled, cron ``0 18 * * *``, and ``default_timezone``.
+    When the row is an interval schedule below ``MIN_INTERVAL_S``, first write ``MIN_INTERVAL_S`` into the row and log
+    one warning. An older version of the service accepted a shorter interval, and such a row must not stop the start.
+    """
+    with sessions.begin() as session:
+        row = session.get(Schedule, 1)
+        if row is None:
+            row = Schedule(
+                id=1,
+                enabled=True,
+                kind=ScheduleKind.CRON,
+                cron_expression=DEFAULT_CRON_EXPRESSION,
+                interval_s=None,
+                timezone=default_timezone,
+            )
+            session.add(row)
+            LOG.info("Wrote the default schedule: cron %r in %s", DEFAULT_CRON_EXPRESSION, default_timezone)
+        if row.kind is ScheduleKind.INTERVAL and row.interval_s is not None and row.interval_s < MIN_INTERVAL_S:
+            LOG.warning(
+                "The stored interval of %s s is below the shortest interval, so the schedule row now holds %s s",
+                row.interval_s,
+                MIN_INTERVAL_S,
+            )
+            row.interval_s = MIN_INTERVAL_S
+        return ScheduleSpec.from_row(row)
+
+
+def stored_timezone(session: Session, default_timezone: str) -> str:
+    """Read the time zone of the schedule in the open ``session``. This call blocks."""
+    return session.scalar(select(Schedule.timezone).where(Schedule.id == 1)) or default_timezone
+
+
+def read_timezone(sessions: sessionmaker[Session], default_timezone: str) -> str:
+    """Read the time zone of the schedule. This call blocks."""
+    with sessions() as session:
+        return stored_timezone(session, default_timezone)
+
+
+def save_schedule(sessions: sessionmaker[Session], spec: ScheduleSpec) -> None:
+    """Write ``spec`` into the single row of the ``schedule`` table. This call blocks.
+
+    ``spec`` is already valid, because the constructor of ``ScheduleSpec`` refuses a wrong schedule.
+    """
+    with sessions.begin() as session:
+        row = session.get(Schedule, 1)
+        if row is None:
+            row = Schedule(id=1)
+            session.add(row)
+        row.enabled = spec.enabled
+        row.kind = spec.kind
+        row.cron_expression = spec.cron_expression
+        row.interval_s = spec.interval_s
+        row.timezone = spec.timezone
+
+
+def save_enabled(sessions: sessionmaker[Session], enabled: bool) -> None:
+    """Write the ``enabled`` flag into the row of the ``schedule`` table, so a pause survives a restart.
+
+    This call blocks. It raises LookupError when the table has no row, which ``load_schedule`` writes at the start.
+    """
+    with sessions.begin() as session:
+        row = session.get(Schedule, 1)
+        if row is None:
+            raise LookupError("The schedule table has no row")
+        row.enabled = enabled
+
+
+class Scheduler:
+    """Starts ``SyncRunner`` runs by a schedule and on request, and runs the daily cleanup and yt-dlp update.
+
+    Each method runs on the event loop of the service. A pause or a new schedule acts only in this process: the caller
+    keeps the ``enabled`` flag and the schedule in the ``schedule`` table, so they survive a restart.
+
+    ``cleanup`` is a blocking function. It runs once when the scheduler starts, and then each day at ``CLEANUP_HOUR``
+    and ``CLEANUP_MINUTE`` in the time zone of the schedule, also while the schedule is paused. A failed cleanup only
+    writes a log entry, and the next one runs as planned. Without ``cleanup``, the scheduler has no cleanup job.
+    """
+
+    def __init__(self, runner: SyncRunner, cleanup: Callable[[], object] | None = None):
+        self._runner = runner
+        self._cleanup = cleanup
+        self._scheduler: AsyncIOScheduler | None = None
+        # The time zone of the schedule, which each daily job follows.
+        self._timezone = "UTC"
+        # The time of the day of the yt-dlp update and whether it runs, after ``start_ytdlp_updates``.
+        self._ytdlp_plan: tuple[time, bool] | None = None
+
+    def _running_scheduler(self) -> AsyncIOScheduler:
+        if self._scheduler is None:
+            raise RuntimeError("The scheduler is not running")
+        return self._scheduler
+
+    async def start(self, spec: ScheduleSpec) -> None:
+        if self._scheduler is not None:
+            raise RuntimeError("The scheduler is already running")
+        trigger = build_trigger(spec)
+        scheduler = AsyncIOScheduler(timezone=UTC)
+        scheduler.start()
+        self._timezone = spec.timezone
+        # A synchronous job runs in the thread pool of the event loop. Without a misfire grace time, a run that starts
+        # late, for example after a busy event loop, still starts. A missed run is never queued twice.
+        options = {} if spec.enabled else {"next_run_time": None}
+        scheduler.add_job(
+            self._runner.run_scheduled,
+            trigger=trigger,
+            id=JOB_ID,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=None,
+            **options,
+        )
+        if self._cleanup is not None:
+            # An explicit first run time makes the job run once at the start, and then by its daily trigger.
+            scheduler.add_job(
+                self._cleanup,
+                trigger=_cleanup_trigger(spec.timezone),
+                id=CLEANUP_JOB_ID,
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=None,
+                next_run_time=datetime.now(UTC),
+            )
+        self._scheduler = scheduler
+        LOG.info("The scheduler started: %s", self._describe(spec))
+
+    async def shutdown(self) -> None:
+        """Stop the schedule. An active run goes on: ``SyncRunner.stop`` stops it."""
+        scheduler = self._scheduler
+        if scheduler is None:
+            return
+        self._scheduler = None
+        # AsyncIOScheduler cannot wait for a job in a thread, and it shuts down on the next turn of the event loop.
+        scheduler.shutdown(wait=False)
+        await asyncio.sleep(0)
+        LOG.info("The scheduler stopped")
+
+    async def apply(self, spec: ScheduleSpec) -> None:
+        """Replace the schedule. A disabled ``spec`` pauses the schedule, and an enabled one resumes it."""
+        scheduler = self._running_scheduler()
+        _replan(scheduler, JOB_ID, build_trigger(spec), spec.enabled)
+        self._timezone = spec.timezone
+        if self._cleanup is not None:
+            # The cleanup follows the time zone of the schedule, also while the schedule is paused.
+            scheduler.reschedule_job(CLEANUP_JOB_ID, trigger=_cleanup_trigger(spec.timezone))
+        if self._ytdlp_plan is not None:
+            # So does the yt-dlp update, and it stays on or off.
+            at, enabled = self._ytdlp_plan
+            _replan(scheduler, YTDLP_JOB_ID, _daily_trigger(at, spec.timezone), enabled)
+        LOG.info("The schedule changed: %s", self._describe(spec))
+
+    async def pause(self) -> None:
+        self._running_scheduler().pause_job(JOB_ID)
+        LOG.info("The schedule is paused")
+
+    async def resume(self) -> None:
+        scheduler = self._running_scheduler()
+        if scheduler.get_job(JOB_ID).next_run_time is None:
+            scheduler.resume_job(JOB_ID)
+        LOG.info("The schedule is resumed")
+
+    async def run_now(self) -> RunNowResult:
+        """Start a run now, also while the schedule is paused. Start nothing when a run is already active."""
+        scheduler = self._running_scheduler()
+        run_id = await asyncio.to_thread(self._runner.claim, RunTrigger.MANUAL)
+        if run_id is None:
+            return RunNowResult(RunNowOutcome.ALREADY_ACTIVE)
+        try:
+            # A run that never starts would keep the sync lock, so this job has no misfire grace time either.
+            scheduler.add_job(self._runner.execute, args=(run_id,), id=f"manual-{run_id}", misfire_grace_time=None)
+        except Exception as error:
+            await asyncio.to_thread(self._runner.abandon, run_id, f"The service cannot start the run: {error}")
+            raise
+        return RunNowResult(RunNowOutcome.STARTED, run_id)
+
+    async def next_run_times(self, count: int) -> list[datetime]:
+        """Return the next ``count`` run times of the schedule. A paused or stopped schedule has none."""
+        return self._next_times(JOB_ID, count)
+
+    def _next_times(self, job_id: str, count: int) -> list[datetime]:
+        if self._scheduler is None or count < 1:
+            return []
+        job = self._scheduler.get_job(job_id)
+        if job is None or job.next_run_time is None:
+            return []
+        return _following_times(job.trigger, job.next_run_time, count)
+
+    async def start_rotation(self, rotation: RotationTurns, first_delay_s: float = ROTATION_DELAY_S) -> None:
+        """Run the turns of the cookie rotation next to the sync job. Each turn plans the next one.
+
+        A pause of the schedule does not stop the rotation. A turn that fails writes a log entry, and the next turn
+        still comes.
+        """
+        self._running_scheduler()
+        self._plan_rotation(rotation, first_delay_s)
+
+    def _plan_rotation(self, rotation: RotationTurns, delay_s: float) -> None:
+        scheduler = self._scheduler
+        if scheduler is None:
+            # The scheduler stopped during the turn.
+            return
+        # The turn that plans the next one still counts as running, so the job allows a second instance.
+        scheduler.add_job(
+            self._rotation_turn,
+            trigger=DateTrigger(run_date=datetime.now(UTC) + timedelta(seconds=delay_s)),
+            args=(rotation,),
+            id=ROTATION_JOB_ID,
+            replace_existing=True,
+            max_instances=2,
+            misfire_grace_time=None,
+        )
+
+    async def _rotation_turn(self, rotation: RotationTurns) -> None:
+        try:
+            delay_s = await asyncio.to_thread(rotation.turn)
+        except Exception:
+            LOG.exception("A turn of the cookie rotation failed")
+            delay_s = ROTATION_DELAY_S
+        self._plan_rotation(rotation, delay_s)
+
+    async def next_cleanup_times(self, count: int) -> list[datetime]:
+        """Return the next ``count`` run times of the cleanup. A scheduler without a cleanup has none."""
+        return self._next_times(CLEANUP_JOB_ID, count)
+
+    async def start_ytdlp_updates(self, update: Callable[[], object], at: time, enabled: bool) -> None:
+        """Run the blocking ``update`` each day at the time ``at`` in the time zone of the schedule, while ``enabled``.
+
+        A pause of the schedule does not stop the updates, and a change of the time zone of the schedule moves them.
+        ``plan_ytdlp_updates`` changes the time and turns the updates on and off without a restart.
+        """
+        scheduler = self._running_scheduler()
+        # A job that is off has no next run time, as a paused schedule.
+        options = {} if enabled else {"next_run_time": None}
+        scheduler.add_job(
+            update,
+            trigger=_daily_trigger(at, self._timezone),
+            id=YTDLP_JOB_ID,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=None,
+            **options,
+        )
+        self._ytdlp_plan = (at, enabled)
+        LOG.info("The yt-dlp update runs %s", _describe_daily(at, enabled, self._timezone))
+
+    async def plan_ytdlp_updates(self, at: time, enabled: bool) -> None:
+        """Move the daily yt-dlp update to the time ``at``, and turn it on or off. The change acts at once."""
+        scheduler = self._running_scheduler()
+        if self._ytdlp_plan is None:
+            raise RuntimeError("The yt-dlp updates are not started")
+        _replan(scheduler, YTDLP_JOB_ID, _daily_trigger(at, self._timezone), enabled)
+        self._ytdlp_plan = (at, enabled)
+        LOG.info("The yt-dlp update now runs %s", _describe_daily(at, enabled, self._timezone))
+
+    async def next_ytdlp_update_times(self, count: int) -> list[datetime]:
+        """Return the next ``count`` times of the yt-dlp update. Updates that are off have none."""
+        return self._next_times(YTDLP_JOB_ID, count)
+
+    async def state(self) -> SchedulerState:
+        if self._scheduler is None:
+            return SchedulerState.STOPPED
+        job = self._scheduler.get_job(JOB_ID)
+        if job is None or job.next_run_time is None:
+            return SchedulerState.PAUSED
+        return SchedulerState.RUNNING
+
+    @staticmethod
+    def _describe(spec: ScheduleSpec) -> str:
+        when = f"cron {spec.cron_expression!r}" if spec.kind is ScheduleKind.CRON else f"every {spec.interval_s} s"
+        return f"{when} in {spec.timezone}, {'enabled' if spec.enabled else 'paused'}"

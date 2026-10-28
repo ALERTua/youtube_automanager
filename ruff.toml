@@ -14,7 +14,7 @@ exclude = [
     "tryouts*.py",
 ]
 
-# [lint] keeps the default rules of ruff: E4, E7, E9 and F
+# [lint] keeps the default rule set of ruff. "uv run ruff check --show-settings" lists it.
 
 [format]
 quote-style = "double"

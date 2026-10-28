@@ -1,0 +1,2135 @@
+# Translations template for PROJECT.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the PROJECT project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PROJECT VERSION\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-10-27 20:42+0200\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: youtube_automanager/web/ui/service_settings.py
+msgid "A fixed number of the newest videos"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"A new mode starts each source again at the next run. That run stores the "
+"current videos of each source as seen and adds none of them, so the "
+"videos that came since the last run are not checked."
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "A run is already active, so no new run started."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"A setting of the service changed how far a run reads the channels. So the"
+" next run adds no video that is already on the channels. After that run, "
+"the rule adds the videos that come later."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"A setting of the service changed how far a run reads the channels. So the"
+" next run adds only the videos from the day in Also add videos from. "
+"After that run, the rule adds the videos that come later."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"A sync run or another task with YouTube is active now. Delete the rule "
+"when it ends."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid ""
+"A target gets an event when the target is on, the event is checked, and "
+"the level of the event is at least the lowest level of the target. Each "
+"target shows only the start of its URL, because a URL holds the token of "
+"its service."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Action"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Actions"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid "Actions of run {id}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Add 1 video"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Add a condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Add a file"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Add a group"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Add a target"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Add the channel to a rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Add to rule…"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Add {count} videos"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Added"
+msgstr ""
+
+#. Translators: the column of the videos that the rule added in the last 7 days
+#. and in the last 30 days.
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Added 7 d / 30 d"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "All"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "All of these conditions"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "All playlists"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Already in the playlist"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Also add videos from"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Also add videos from: {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "An apply of the rule \"{name}\" runs. Videos added: {count}."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Another target has this name."
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid ""
+"Another task works with YouTube now: a sync run, a session check, a "
+"refresh of the lists, a channel action or a yt-dlp update. Try again when"
+" it ends."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Any of these conditions"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Apply the rule \"{name}\" to videos from a date"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Apply to videos from a date"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Apprise URL"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid ""
+"Apprise does not accept this URL. The link below lists the URL of each "
+"service."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Back"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Back to the rules"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+#: youtube_automanager/web/ui/notifications_section.py
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Cancel"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Case-sensitive"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Change the mode"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Change the name or the URL"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Change the processing mode?"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Change the rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Change the target"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Changed"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rule_form.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Channel"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Channel error"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Channels"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Check the session"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Choose a channel."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Choose a day at most {days} days back."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Choose a day that is not in the future."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Choose a field and a comparison."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Choose a live status."
+msgstr ""
+
+#: youtube_automanager/rules_store.py
+msgid "Choose a target playlist."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Choose at least one channel."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Choose the first day of the videos."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Choose whether the video is a Short."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Close"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Close each private window of Firefox. All private windows share one "
+"session, so only a new private window after that gives a new session."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Close the private window without a sign-out. A sign-out ends the session "
+"of the exported cookies, and a YouTube tab that stays open can end it "
+"within about 20 minutes."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Condition as JsonLogic"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Cookie file (cookies.txt)"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Cookie rotation"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Cookie session"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Cookies expire soon"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Cookies refused"
+msgstr ""
+
+#. Translators: the name of a new rule that the button Duplicate makes from the
+#. rule {name}.
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Copy of {name}"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Cron"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Cron expression"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Current schedule"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Custom JSON condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Dashboard"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Data folder"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Date"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Days of history to keep"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Dead"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Deferred"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Delete"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "Delete the rule \"{name}\"?"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Delete the target"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+#, python-brace-format
+msgid "Delete the target \"{name}\"?"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Detail"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Disabled"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/settings_draft.py
+msgid "Discard"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Discard the changes?"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Duplicate"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Duration"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Each rule already reads this channel."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"Each run adds the new videos that the rule matches. The videos that are "
+"already on the channels come only from the day in Also add videos from. A"
+" rule that is off adds nothing and keeps that day for the first run after"
+" you turn it on."
+msgstr ""
+
+#: youtube_automanager/web/ui/service_settings.py
+msgid ""
+"Each run reads a source down to the upload day of the newest video that "
+"an earlier run saw."
+msgstr ""
+
+#: youtube_automanager/web/ui/service_settings.py
+#, python-brace-format
+msgid ""
+"Each run reads a source from its newest video down to the first video "
+"that an earlier run saw, and always at least the {count} newest videos."
+msgstr ""
+
+#: youtube_automanager/web/ui/service_settings.py
+msgid ""
+"Each run reads the given number of the newest videos of a source, and "
+"checks each one that an earlier run did not see."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Each video"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "Each {entries} videos cost one more request to YouTube for each source."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Earliest cookie expiry"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Edit"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Enabled"
+msgstr ""
+
+#. Translators: the name of the switch that turns the rule {name} on and off,
+#. for a screen reader.
+#: youtube_automanager/web/ui/rules_page.py
+#, python-brace-format
+msgid "Enabled: {name}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Enter a date."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Enter a name, an @handle, a channel ID or a channel URL."
+msgstr ""
+
+#: youtube_automanager/rules_store.py
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Enter a name."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Enter a pattern."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Enter a text."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Enter a whole number of days, 1 or more."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Enter a whole number of videos, 1 or more."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Enter the Apprise URL of the target."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Enter the time as HH:MM, from 00:00 to 23:59."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Enter whole minutes, 0 or more, and whole seconds from 0 to 59."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
+msgid "Error"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Expiring"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Export the cookies of youtube.com as a cookies.txt file in the Netscape "
+"format, with a cookie export add-on that has the permission to run in "
+"private windows."
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Failed"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Failure"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Field"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Find a channel on YouTube"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Finished"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid ""
+"Finished runs that started more than {days} days ago: {count}. The next "
+"cleanup deletes them. It runs at the start of the service and each day at"
+" {time} ({zone})."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid ""
+"Five fields: minute, hour, day, month, weekday. Example: 0 18 * * * is "
+"18:00 each day."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "From"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+#, python-brace-format
+msgid ""
+"From {minimum} s ({minutes} minutes) to {maximum} s (one year). Example: "
+"3600 is each hour."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Go back"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid ""
+"Go back from yt-dlp {active} to {previous}? The daily update then skips "
+"{active}, and it installs only a newer version."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Go back to the previous version"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Group type"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Handle"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "History"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"How far each run reads the videos of each channel and of the "
+"subscriptions feed."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "How to export the cookies"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Image of the service"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "In progress"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"In the same window, open https://www.youtube.com/robots.txt in a new tab,"
+" and close the YouTube tab, so that this page is the only tab of the "
+"window."
+msgstr ""
+
+#. Translators: {zone} is the name of a time zone, for example Europe/Kyiv.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "In the time zone of the schedule, {zone}."
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Info"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "Installed {new} into the data folder."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Interval"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Interval in seconds"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Keep editing"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid "Keep the history for {days} days?"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Last check"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Last run"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Last update"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "Lists refreshed: {time}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Live status"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Lowest level"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Make a key with this command, and give it to the service as COOKIES_KEY, "
+"for example in the file .env:"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Manual"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Matches"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Matches now"
+msgstr ""
+
+#: youtube_automanager/web/ui/layout.py
+msgid "Menu"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Minutes"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Name"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Name or @handle"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Name, @handle, channel ID or channel URL"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Never"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rules_page.py
+msgid "New rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "New target"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Next run"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Next runs"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Next runs of this schedule"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Next update"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Nightly"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rules_page.py
+msgid "No Shorts"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No channel is stored yet. Press Refresh lists."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No channel matches the filters."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
+msgid "No cookies are stored yet."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "No date"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/settings_page.py
+msgid "No expiry date"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No handle"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "No longer matches"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "No notification target yet. The button Add a target creates one."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"No playlist is stored yet. Close the editor and refresh the lists with "
+"the button Refresh lists at the top of the page."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No rule exists yet. Create a rule first."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "No rule has the id {id}. Another tab can have deleted it."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "No rule matches the filters."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "No rule reads this channel."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "No rule yet. The button New rule creates one."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "No run is planned"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "No run matches the filters."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
+msgid "No run yet."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "No update is planned"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "None"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "None of these conditions"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Not subscribed"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Notifications"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Number of the newest videos"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "OK"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"One apply adds the {limit} oldest of the {count} videos. Apply again to "
+"add the rest."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Open"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Open a new private window, and sign in to YouTube there with the account "
+"that the service uses."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Open on YouTube"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Operator"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Or paste the text of the cookie file"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Pattern"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Pause"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Paused"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Playlist"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Preview"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Preview of the next run"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Previous version"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Processing mode"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Refresh"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "Refresh lists"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "Refreshing the lists..."
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Remove all files"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Remove the condition"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Remove the file"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Remove the group"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Result"
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Resume"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Retention"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Rotate the cookie session"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Rule apply"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Rule {rule} already reads {title}."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Rule {rule} does not exist any more."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Rule {rule} now reads {title}."
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Rules"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Run"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Run failed"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Run now"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Run summary"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+#, python-brace-format
+msgid "Run {id} started."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Running"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid "Runs {first}-{last} of {total}"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#: youtube_automanager/web/ui/notifications_section.py
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/settings_draft.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Save"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Schedule"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Schedule paused or resumed"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Scheduler"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Search"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Seconds"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Send a test"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Settings"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Short"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Shorts"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "Show the URL"
+msgstr ""
+
+#: youtube_automanager/web/ui/layout.py
+msgid "Skip to the content"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Skipped"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Skipped version"
+msgstr ""
+
+#: youtube_automanager/web/ui/errors.py
+msgid ""
+"Something went wrong on this page. The log of the service holds the "
+"details."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Source"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Stable"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
+msgid "Started"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/scheduler_page.py
+#: youtube_automanager/web/ui/settings_page.py
+msgid "State"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
+msgid "Status"
+msgstr ""
+
+#: youtube_automanager/web/ui/service_settings.py
+msgid "Stop at a seen video (default)"
+msgstr ""
+
+#: youtube_automanager/web/ui/service_settings.py
+msgid "Stop at the date mark"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Stop the upload"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Stopped"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Store the pasted cookies"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Stored channels"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscribe"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscribed"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Subscribed to {title}."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscribers"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscription"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Subscriptions"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+msgid "Subscriptions feed"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Succeeded"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Success"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Target playlist"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Text"
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid ""
+"The URL names the service and its token, for example "
+"tgram://bottoken/ChatID for Telegram."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"The YouTube account is not available now, so the matching videos wait for"
+" it. Upload new YouTube cookies on the Settings page."
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service, for example that
+#. no cookies are stored.
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "The YouTube account is not available: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"The apply adds each video of the rule sources since the day that the rule"
+" matches to the playlist {playlist}, the oldest first, and at most "
+"{limit} videos at a time. It skips each video that the service added to "
+"this playlist before, each upcoming or live video, and each video that "
+"the rule cannot decide yet."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "The apply did not start. {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "The apply ended, but its run {run} is not in the database any more."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "The apply failed: {error} The History page shows it as run {run}."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"The apply is done with errors. Videos added: {count}. Errors: {errors}. "
+"The History page shows them in run {run}."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"The apply is done. Videos added: {count}. The History page shows it as "
+"run {run}."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"The apply runs. Each add takes {seconds} s or more, so the apply takes "
+"{minutes} min or more. The History page shows the apply as a run."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"The apply runs. Videos added: {added} of {count}. The History page shows "
+"the apply as run {run}."
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "The change failed: {cause}"
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service, for example an
+#. HTTP error of YouTube.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The check with YouTube gave no clear answer, so the service stored "
+"nothing. Upload or paste the cookies again. The cause: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+#, python-brace-format
+msgid "The condition is not valid JSON: {error}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The cookies work and are stored."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"The editor has changes that are not saved. The apply uses the saved "
+"version of the rule."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The file is larger than 1 MB, so it is no cookie file of YouTube."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The file is no text in UTF-8, so it is no cookie file."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The form changed while the preview ran. Press Preview again."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The history keeps the actions of the rule."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "The interval must be a whole number of seconds."
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid ""
+"The lists are refreshed. Channels: {channels_new} new, {channels_updated}"
+" changed, {channels_unsubscribed} no longer subscribed. Playlists: "
+"{playlists_new} new, {playlists_updated} changed."
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "The lists did not refresh. {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+msgid "The lists were never refreshed."
+msgstr ""
+
+#. Translators: {time} is the expiry time of the login cookies, for example
+#. "2026-10-12 18:30 EEST".
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The login cookies of this export expired on {time}. Export new cookies "
+"and upload them."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The next run adds no video for this rule."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid ""
+"The next run adds the videos of this channel from the last {days} days "
+"that the rule matches. After that, the rule adds each new video of the "
+"channel. To add older videos, open the rule and change Also add videos "
+"from."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"The next run adds the {limit} oldest of the {count} videos from the day "
+"in Also add videos from. The runs after it add the rest."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"The next run also adds the videos from this day that the rule matches, "
+"the oldest first. Leave the field empty to add only new videos."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The next run also checks each new video that comes before the run starts."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"The next run does not add the videos that are already on these channels: "
+"{channels}. Set Also add videos from to add them from that day."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid ""
+"The nightly builds get the fixes for the changes of YouTube first, and "
+"they change more often. A new channel installs at the next update."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+#, python-brace-format
+msgid "The pattern does not compile: {error}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "The preview failed. {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"The preview shows what the next run does with the rule as the form shows "
+"it now: the videos that it will add, and the matching videos that wait. "
+"The preview adds nothing."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid ""
+"The read stops after {limit} videos of a channel, so the older videos of "
+"these channels are not in the list: {sources}"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "The retention is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The rotation renews the session of the stored cookies about each "
+"{minutes} minutes, the way an open YouTube tab does. It is on by default."
+" A saved change acts at the next turn of the rotation, without a restart."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rules_page.py
+msgid "The rule does not exist any more, so the page did not save it."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The rule is deleted."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"The rule is off, so no run uses it. The preview shows what the next run "
+"does with the rule on."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The rule is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The rule matches no video of its sources since this day."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "The rules that name this channel still read its videos."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "The schedule has no run time."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "The schedule is off. No run starts until you turn it on."
+msgstr ""
+
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "The schedule is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "The search failed. {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The service cannot store cookies, because COOKIES_KEY is not set."
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service. It never holds
+#. the key.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The service cannot store cookies, because COOKIES_KEY is not valid: "
+"{cause}"
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service, for example that
+#. COOKIES_KEY is not set.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The service cannot use these cookies, so it stored nothing: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The service checks the cookies with YouTube. This takes up to a minute."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The service checks the session with YouTube. This takes up to a minute."
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "The service could not finish the work: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+#, python-brace-format
+msgid ""
+"The service deletes older runs with their actions at its start and each "
+"day at {time} ({zone})."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid ""
+"The service installs the newest yt-dlp of the saved channel. This can "
+"take a few minutes."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid ""
+"The service reads YouTube with yt-dlp. It installs the new releases from "
+"PyPI into its data folder, and the next run uses the new version without "
+"a new image of the service."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"The service reads the subscriptions and changes the playlists of your "
+"account with the cookies of a YouTube session. The page never shows a "
+"cookie value."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The service reads the videos on YouTube. This takes up to a few minutes."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "The service works with YouTube. This takes up to a minute."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "The services of Apprise and their URLs"
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service, for example that
+#. no cookies are stored.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The session check cannot use the stored cookies: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The session check failed: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_draft.py
+msgid "The settings are saved."
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service.
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The stored mode is not valid, so each run stops with an error: {cause}. "
+"Choose a mode and save it."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "The subscription did not change. {reason}"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid ""
+"The subscriptions of the account from the last refresh, and each channel "
+"that a rule reads. Click a channel to see its actions."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "The table shows the newest {shown} of the {total} videos."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+msgid "The target does not exist any more."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+#, python-brace-format
+msgid "The target {name} is deleted."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+#, python-brace-format
+msgid "The target {name} is saved."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+#, python-brace-format
+msgid ""
+"The test notification to {name} failed. The log of the service names the "
+"cause."
+msgstr ""
+
+#: youtube_automanager/web/ui/notifications_section.py
+#, python-brace-format
+msgid "The test notification went to {name}."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The text holds no login cookie of {domain}. Export the cookies of "
+"youtube.com while you are signed in to YouTube."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "The text is empty. Upload the cookie file, or paste its text."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "The text is not a Netscape cookie file: {cause}."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid ""
+"The text lacks these login cookies of {domain}: {names}. Export the "
+"cookies again while you are signed in to YouTube."
+msgstr ""
+
+#. Translators: {cause} is the English cause from the service, for example the
+#. error of uv.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "The update failed: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "The visual editor cannot show this condition. Edit it as JsonLogic."
+msgstr ""
+
+#: youtube_automanager/web/ui/theme.py
+msgid "Theme: as the system of the device. Click for the dark theme."
+msgstr ""
+
+#: youtube_automanager/web/ui/theme.py
+msgid "Theme: dark. Click for the light theme."
+msgstr ""
+
+#: youtube_automanager/web/ui/theme.py
+msgid "Theme: light. Click for the theme of the system."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Then restart the service. Keep the key: with another key, the service "
+"cannot read the stored cookies, and you upload them again."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "This is not a date, so the filter does not use it."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid ""
+"This rule has no channels now, so it reads the subscriptions feed. After "
+"this change, it reads only its channels, and not the subscriptions feed."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "This run has no actions."
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Time"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Time of the update"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/scheduler_page.py
+msgid "Time zone"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Title"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "To"
+msgstr ""
+
+#: youtube_automanager/web/ui/dates.py
+msgid "Today"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
+msgid "Trigger"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Undecided"
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Unknown"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Unsubscribe"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Unsubscribe the YouTube account from this channel?"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "Unsubscribed from {title}."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Update each day"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Update now"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "Updated from {old} to {new}."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Upload date"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+msgid "Upload new cookies"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "Upload the file here, or paste its text."
+msgstr ""
+
+#: youtube_automanager/web/ui/common.py
+msgid "Upload the files"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"Use Firefox. Chrome and other Chromium browsers can give cookies that "
+"stop to work a few hours after the export."
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Use the image version"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid ""
+"Use yt-dlp {image} of the image instead of {active} of the data folder? "
+"The service keeps {active} as the previous version. The daily update then"
+" skips {active}, and it installs only a newer version."
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "Version"
+msgstr ""
+
+#: youtube_automanager/web/ui/history_page.py
+msgid "Video"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Video added"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "Video id"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
+msgid "Videos added"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Videos from"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/history_page.py
+msgid "Videos seen"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Waits for the YouTube account"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Waits: no value yet for a field of the rule"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Waits: the video is upcoming or live"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Warning"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Will be added"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "With Docker Compose, run the command in the image of the service:"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "With rules"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid ""
+"Without channels, the rule reads the subscriptions feed. The feed needs "
+"the YouTube account."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_editor.py
+msgid "Without conditions, the rule takes each video of its channels."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Without rules"
+msgstr ""
+
+#: youtube_automanager/web/ui/rules_page.py
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "Yes"
+msgstr ""
+
+#: youtube_automanager/web/ui/__init__.py youtube_automanager/web/ui/layout.py
+msgid "YouTube AutoManager"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"YouTube accepts the cookies, but they expire soon. Export new cookies and"
+" upload them."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "YouTube accepts the cookies."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "YouTube cookies"
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid "YouTube did not give the expected answer: {cause}"
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid "YouTube does not accept the cookies. Export new cookies and upload them."
+msgstr ""
+
+#: youtube_automanager/web/ui/account_lists.py
+#, python-brace-format
+msgid ""
+"YouTube does not accept the stored cookies any more ({cause}). Export new"
+" YouTube cookies from your browser and upload them to the service."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"YouTube does not accept these cookies, so the service did not store them."
+" Export new cookies and upload them."
+msgstr ""
+
+#: youtube_automanager/web/ui/settings_page.py
+msgid ""
+"YouTube does not accept these cookies. The service kept the stored "
+"cookies. Export new cookies and upload them."
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+msgid "YouTube found no channel for this text."
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "a live stream that just ended"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "a past live stream"
+msgstr ""
+
+#. Translators: the word between two conditions that must both match.
+#: youtube_automanager/web/ui/rule_form.py
+msgid "and"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is a Short"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is after"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is at least"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is at most"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is before"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is less than"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is more than"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is not"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is not a Short"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is on"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is on or after"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is on or before"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "is one of"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "live now"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "matches the pattern"
+msgstr ""
+
+#. Translators: conditions that no video of the rule may match. "or" joins the
+#. conditions.
+#: youtube_automanager/web/ui/rule_form.py
+#, python-brace-format
+msgid "not ({conditions})"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "not live"
+msgstr ""
+
+#. Translators: the word between two conditions of which one must match.
+#: youtube_automanager/web/ui/rule_form.py
+msgid "or"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "the video is a Short"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "the video is not a Short"
+msgstr ""
+
+#: youtube_automanager/web/ui/rule_form.py
+msgid "upcoming"
+msgstr ""
+
+#: youtube_automanager/web/ui/dashboard.py
+#: youtube_automanager/web/ui/ytdlp_section.py
+msgid "yt-dlp"
+msgstr ""
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "yt-dlp update"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "yt-dlp {active} is active now."
+msgstr ""
+
+#. Translators: {active} and {left} are versions of yt-dlp, for example
+#. 2026.8.19.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "yt-dlp {active} is active now. The daily update skips {left}."
+msgstr ""
+
+#. Translators: a channel that left the subscriptions. A rule can still read it
+#. by its id.
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "{channel}, not subscribed"
+msgstr ""
+
+#. Translators: a pattern condition in which the case of the letters counts.
+#: youtube_automanager/web/ui/rule_form.py
+#, python-brace-format
+msgid "{condition} (case-sensitive)"
+msgstr ""
+
+#. Translators: the channels of the condition "Channel is one of", when they
+#. are too many to name.
+#: youtube_automanager/web/ui/rule_form.py
+#, python-brace-format
+msgid "{count} channels"
+msgstr ""
+
+#. Translators: The label of the checkbox of an event, for example "Run summary
+#. · Success".
+#: youtube_automanager/web/ui/notifications_section.py
+#, python-brace-format
+msgid "{event} · {level}"
+msgstr ""
+
+#. Translators: one condition of a rule, for example: Title matches the pattern
+#. "Levels of". {field} is the name
+#. of a video field, and {operator} is the comparison, for example "is at
+#. least".
+#: youtube_automanager/web/ui/rule_form.py
+#, python-brace-format
+msgid "{field} {operator} {value}"
+msgstr ""
+
+#. Translators: the error of one condition. {field} is the name of a video
+#. field, for example "Title".
+#: youtube_automanager/web/ui/rule_form.py
+#, python-brace-format
+msgid "{field}: {error}"
+msgstr ""
+
+#. Translators: the name of a rule that is turned off.
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{name} (off)"
+msgstr ""
+
+#. Translators: one step of a numbered list, for example "1. Use Firefox."
+#: youtube_automanager/web/ui/settings_page.py
+#, python-brace-format
+msgid "{number}. {step}"
+msgstr ""
+
+#. Translators: the title of the browser tab. {page} is the name of the page,
+#. for example "Dashboard".
+#: youtube_automanager/web/ui/layout.py
+#, python-brace-format
+msgid "{page} - YouTube AutoManager"
+msgstr ""
+
+#. Translators: {result} is the result of a preview for a video, for example
+#. "Will be added".
+#: youtube_automanager/web/ui/rule_editor.py
+#, python-brace-format
+msgid "{result}: {count}"
+msgstr ""
+
+#: youtube_automanager/web/ui/subscriptions_page.py
+#, python-brace-format
+msgid "{shown} of {total} channels"
+msgstr ""
+
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid "{version} is already the newest version."
+msgstr ""
+
+#. Translators: {version} is a version of yt-dlp, for example 2026.8.19.
+#: youtube_automanager/web/ui/ytdlp_section.py
+#, python-brace-format
+msgid ""
+"{version} is the version that you left, so the daily update does not "
+"install it."
+msgstr ""

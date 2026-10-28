@@ -1,0 +1,218 @@
+{
+ "url": "https://www.youtube.com/feed/playlists",
+ "info": {
+  "_type": "playlist",
+  "id": "playlists",
+  "title": "playlists",
+  "channel_id": null,
+  "extractor_key": "YoutubeTab",
+  "webpage_url": "https://www.youtube.com/feed/playlists",
+  "entries": [
+   {
+    "title": "Liked videos",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/LL/hqdefault0.jpg",
+      "height": 270,
+      "width": 480
+     }
+    ],
+    "duration": null,
+    "view_count": null,
+    "timestamp": null,
+    "live_status": null,
+    "availability": null,
+    "channel_url": null,
+    "uploader_url": null,
+    "creators": null,
+    "channel": "View full playlist",
+    "uploader": "View full playlist",
+    "ie_key": "YoutubeTab",
+    "id": "LL",
+    "_type": "url",
+    "url": "https://www.youtube.com/playlist?list=LL"
+   },
+   {
+    "title": "Watch later",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/WL/hqdefault0.jpg",
+      "height": 270,
+      "width": 480
+     }
+    ],
+    "duration": null,
+    "view_count": null,
+    "timestamp": null,
+    "live_status": null,
+    "availability": null,
+    "channel_url": null,
+    "uploader_url": null,
+    "creators": null,
+    "channel": "View full playlist",
+    "uploader": "View full playlist",
+    "ie_key": "YoutubeTab",
+    "id": "WL",
+    "_type": "url",
+    "url": "https://www.youtube.com/playlist?list=WL"
+   },
+   {
+    "title": "Fake playlist 3",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/PLfakeOwn0000000000000000000000001/hqdefault0.jpg",
+      "height": 270,
+      "width": 480
+     }
+    ],
+    "duration": null,
+    "view_count": null,
+    "timestamp": null,
+    "live_status": null,
+    "availability": null,
+    "channel_url": null,
+    "uploader_url": null,
+    "creators": null,
+    "channel": "View full playlist",
+    "uploader": "View full playlist",
+    "ie_key": "YoutubeTab",
+    "id": "PLfakeOwn0000000000000000000000001",
+    "_type": "url",
+    "url": "https://www.youtube.com/playlist?list=PLfakeOwn0000000000000000000000001"
+   },
+   {
+    "title": "Saved Shorts",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/YS/hqdefault0.jpg",
+      "height": 270,
+      "width": 480
+     }
+    ],
+    "duration": null,
+    "view_count": null,
+    "timestamp": null,
+    "live_status": null,
+    "availability": null,
+    "channel_url": null,
+    "uploader_url": null,
+    "creators": null,
+    "channel": "View full playlist",
+    "uploader": "View full playlist",
+    "ie_key": "YoutubeTab",
+    "id": "YS",
+    "_type": "url",
+    "url": "https://www.youtube.com/playlist?list=YS"
+   },
+   {
+    "title": "Fake playlist 5",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/PLfakeOwn0000000000000000000000002/hqdefault0.jpg",
+      "height": 270,
+      "width": 480
+     }
+    ],
+    "duration": null,
+    "view_count": null,
+    "timestamp": null,
+    "live_status": null,
+    "availability": null,
+    "channel_url": null,
+    "uploader_url": null,
+    "creators": null,
+    "channel": "View full playlist",
+    "uploader": "View full playlist",
+    "ie_key": "YoutubeTab",
+    "id": "PLfakeOwn0000000000000000000000002",
+    "_type": "url",
+    "url": "https://www.youtube.com/playlist?list=PLfakeOwn0000000000000000000000002"
+   },
+   {
+    "title": "Favorites",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/FLfakeFavorites000000003/hqdefault0.jpg",
+      "height": 270,
+      "width": 480
+     }
+    ],
+    "duration": null,
+    "view_count": null,
+    "timestamp": null,
+    "live_status": null,
+    "availability": null,
+    "channel_url": null,
+    "uploader_url": null,
+    "creators": null,
+    "channel": "View full playlist",
+    "uploader": "View full playlist",
+    "ie_key": "YoutubeTab",
+    "id": "FLfakeFavorites000000003",
+    "_type": "url",
+    "url": "https://www.youtube.com/playlist?list=FLfakeFavorites000000003"
+   },
+   {
+    "title": "Fake playlist 7",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/PLfakeSaved00000000000000000000004/hqdefault0.jpg",
+      "height": 240,
+      "width": 240
+     },
+     {
+      "url": "https://i.ytimg.com/vi/PLfakeSaved00000000000000000000004/hqdefault1.jpg",
+      "height": 480,
+      "width": 480
+     },
+     {
+      "url": "https://i.ytimg.com/vi/PLfakeSaved00000000000000000000004/hqdefault2.jpg",
+      "height": 720,
+      "width": 720
+     }
+    ],
+    "duration": null,
+    "view_count": null,
+    "timestamp": null,
+    "live_status": null,
+    "availability": null,
+    "channel_url": "https://www.youtube.com/channel/UCfakeChannel00000000004",
+    "uploader_url": null,
+    "creators": null,
+    "channel": "Fake channel 4",
+    "channel_id": "UCfakeChannel00000000004",
+    "uploader": "Fake channel 4",
+    "ie_key": "YoutubeTab",
+    "id": "PLfakeSaved00000000000000000000004",
+    "_type": "url",
+    "url": "https://www.youtube.com/playlist?list=PLfakeSaved00000000000000000000004"
+   },
+   {
+    "title": "Fake playlist 8",
+    "thumbnails": [
+     {
+      "url": "https://i.ytimg.com/vi/PLfakeSaved00000000000000000000005/hqdefault0.jpg",
+      "height": 270,
+      "width": 480
+     }
+    ],
+    "duration": null,
+    "view_count": null,
+    "timestamp": null,
+    "live_status": null,
+    "availability": null,
+    "channel_url": "https://www.youtube.com/channel/UCfakeChannel00000000005",
+    "uploader_url": "https://www.youtube.com/@fakehandle3",
+    "creators": null,
+    "channel": "Fake channel 5",
+    "channel_id": "UCfakeChannel00000000005",
+    "uploader": "Fake channel 5",
+    "uploader_id": "@fakehandle3",
+    "ie_key": "YoutubeTab",
+    "id": "PLfakeSaved00000000000000000000005",
+    "_type": "url",
+    "url": "https://www.youtube.com/playlist?list=PLfakeSaved00000000000000000000005"
+   }
+  ]
+ }
+}

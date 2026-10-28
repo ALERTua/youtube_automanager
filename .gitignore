@@ -4,6 +4,11 @@
 /.idea/
 **/__pycache__
 /cookies*.txt
+/data/
+# The compiled catalogs of "just mo". The image build makes them again from the .po files.
+*.mo
+# The data file of the coverage report of "just cov" and of the CI run
+/.coverage
 .claude/*
 !.claude/memory/
 plans

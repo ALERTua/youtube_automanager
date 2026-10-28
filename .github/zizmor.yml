@@ -1,0 +1,13 @@
+# The configuration of the workflow security audit: https://docs.zizmor.sh/configuration/
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # The shared workflows of the owner of the repository go by their version tag.
+        "ALERTua/*": ref-pin
+        # Each other action goes by its full commit hash, which Dependabot updates with the version comment.
+        "*": hash-pin
+  dependabot-cooldown:
+    config:
+      # Dependabot waits 3 days for a new release, the same as its own default
+      days: 3

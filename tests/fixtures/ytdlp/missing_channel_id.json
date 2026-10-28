@@ -1,0 +1,14 @@
+{
+ "url": "https://www.youtube.com/channel/UCzzzzzzzzzzzzzzzzzzzzzz",
+ "options": {
+  "playlist_items": "0"
+ },
+ "error": {
+  "message": "ERROR: [youtube:tab] UCzzzzzzzzzzzzzzzzzzzzzz: YouTube said: This channel does not exist.",
+  "cause": "ExtractorError",
+  "orig_msg": "YouTube said: This channel does not exist.",
+  "expected": true,
+  "video_id": "UCzzzzzzzzzzzzzzzzzzzzzz",
+  "ie": "youtube:tab"
+ }
+}

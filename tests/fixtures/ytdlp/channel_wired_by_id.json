@@ -1,0 +1,100 @@
+{
+ "url": "https://www.youtube.com/channel/UCftwRNsjfRo08xYE31tkiyw",
+ "options": {
+  "playlist_items": "0"
+ },
+ "info": {
+  "id": "UCftwRNsjfRo08xYE31tkiyw",
+  "channel": "WIRED",
+  "channel_id": "UCftwRNsjfRo08xYE31tkiyw",
+  "title": "WIRED",
+  "availability": "public",
+  "channel_follower_count": 13000000,
+  "description": "For future reference.",
+  "tags": [
+   "wired",
+   "technology",
+   "tech",
+   "gadgets",
+   "autocomplete interview",
+   "wired tech support",
+   "wired autocomplete interview"
+  ],
+  "thumbnails": [
+   {
+    "url": "https://yt3.googleusercontent.com/3xLaRljIs8OZjbxyGnMlpHXtzrxY-keMiy9foklNwa9G5wzB2stC4ND56rZfZAuyLKmRLMm2cik=s900-c-k-c0x00ffffff-no-rj",
+    "height": 900,
+    "width": 900
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/3xLaRljIs8OZjbxyGnMlpHXtzrxY-keMiy9foklNwa9G5wzB2stC4ND56rZfZAuyLKmRLMm2cik=s0",
+    "id": "avatar_uncropped",
+    "preference": 1
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ca2twqu-zDARUJ6Y-G5zb59L681Qk5Li-qLH3-A6lDZigJ3jSBITcD7pK53fsErKKbdTUwbx7A=w1060-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 175,
+    "width": 1060,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ca2twqu-zDARUJ6Y-G5zb59L681Qk5Li-qLH3-A6lDZigJ3jSBITcD7pK53fsErKKbdTUwbx7A=w1138-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 188,
+    "width": 1138,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ca2twqu-zDARUJ6Y-G5zb59L681Qk5Li-qLH3-A6lDZigJ3jSBITcD7pK53fsErKKbdTUwbx7A=w1707-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 283,
+    "width": 1707,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ca2twqu-zDARUJ6Y-G5zb59L681Qk5Li-qLH3-A6lDZigJ3jSBITcD7pK53fsErKKbdTUwbx7A=w2120-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 351,
+    "width": 2120,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ca2twqu-zDARUJ6Y-G5zb59L681Qk5Li-qLH3-A6lDZigJ3jSBITcD7pK53fsErKKbdTUwbx7A=w2276-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 377,
+    "width": 2276,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ca2twqu-zDARUJ6Y-G5zb59L681Qk5Li-qLH3-A6lDZigJ3jSBITcD7pK53fsErKKbdTUwbx7A=w2560-fcrop64=1,00005a57ffffa5a8-k-c0xffffffff-no-nd-rj",
+    "height": 424,
+    "width": 2560,
+    "preference": -10
+   },
+   {
+    "url": "https://yt3.googleusercontent.com/ca2twqu-zDARUJ6Y-G5zb59L681Qk5Li-qLH3-A6lDZigJ3jSBITcD7pK53fsErKKbdTUwbx7A=s0",
+    "id": "banner_uncropped",
+    "preference": -5
+   }
+  ],
+  "uploader_id": "@WIRED",
+  "uploader_url": "https://www.youtube.com/@WIRED",
+  "channel_is_verified": true,
+  "modified_date": null,
+  "view_count": null,
+  "playlist_count": null,
+  "uploader": "WIRED",
+  "channel_url": "https://www.youtube.com/channel/UCftwRNsjfRo08xYE31tkiyw",
+  "_type": "playlist",
+  "entries": [],
+  "webpage_url": "https://www.youtube.com/channel/UCftwRNsjfRo08xYE31tkiyw",
+  "original_url": "https://www.youtube.com/channel/UCftwRNsjfRo08xYE31tkiyw",
+  "webpage_url_basename": "UCftwRNsjfRo08xYE31tkiyw",
+  "webpage_url_domain": "youtube.com",
+  "extractor": "youtube:tab",
+  "extractor_key": "YoutubeTab",
+  "epoch": 1791747377,
+  "_version": {
+   "version": "2026.08.19",
+   "current_git_head": null,
+   "release_git_head": "594bd50c2c78ac432f81600d309fdc4e0a92d82c",
+   "repository": "yt-dlp/yt-dlp"
+  }
+ }
+}

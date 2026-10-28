@@ -1,0 +1,100 @@
+{
+ "url": "https://www.youtube.com/feed/channels",
+ "info": {
+  "_type": "playlist",
+  "id": "channels",
+  "title": "channels",
+  "channel_id": null,
+  "extractor_key": "YoutubeTab",
+  "webpage_url": "https://www.youtube.com/feed/channels",
+  "entries": [
+   {
+    "_type": "url",
+    "url": "https://www.youtube.com/channel/UCfakeChannel00000000001",
+    "id": "UCfakeChannel00000000001",
+    "ie_key": "YoutubeTab",
+    "channel": "Fake channel 1",
+    "uploader": "Fake channel 1",
+    "channel_id": "UCfakeChannel00000000001",
+    "channel_url": "https://www.youtube.com/channel/UCfakeChannel00000000001",
+    "title": "Fake channel 1",
+    "uploader_id": "@fakehandle1",
+    "uploader_url": "https://www.youtube.com/@fakehandle1",
+    "channel_follower_count": 1000,
+    "thumbnails": [
+     {
+      "url": "//yt3.ggpht.com/fake-avatar-1=s88-c-k-c0x00ffffff-no-rj",
+      "height": 88,
+      "width": 88
+     },
+     {
+      "url": "//yt3.ggpht.com/fake-avatar-1=s176-c-k-c0x00ffffff-no-rj",
+      "height": 176,
+      "width": 176
+     }
+    ],
+    "playlist_count": null,
+    "description": "Fake description 1",
+    "channel_is_verified": null
+   },
+   {
+    "_type": "url",
+    "url": "https://www.youtube.com/channel/UCfakeChannel00000000002",
+    "id": "UCfakeChannel00000000002",
+    "ie_key": "YoutubeTab",
+    "channel": "Fake channel 2",
+    "uploader": "Fake channel 2",
+    "channel_id": "UCfakeChannel00000000002",
+    "channel_url": "https://www.youtube.com/channel/UCfakeChannel00000000002",
+    "title": "Fake channel 2",
+    "uploader_id": null,
+    "uploader_url": null,
+    "channel_follower_count": 2000,
+    "thumbnails": [
+     {
+      "url": "//yt3.ggpht.com/fake-avatar-2=s88-c-k-c0x00ffffff-no-rj",
+      "height": 88,
+      "width": 88
+     },
+     {
+      "url": "//yt3.ggpht.com/fake-avatar-2=s176-c-k-c0x00ffffff-no-rj",
+      "height": 176,
+      "width": 176
+     }
+    ],
+    "playlist_count": null,
+    "description": null,
+    "channel_is_verified": null
+   },
+   {
+    "_type": "url",
+    "url": "https://www.youtube.com/channel/UCfakeChannel00000000003",
+    "id": "UCfakeChannel00000000003",
+    "ie_key": "YoutubeTab",
+    "channel": "Fake channel 3",
+    "uploader": "Fake channel 3",
+    "channel_id": "UCfakeChannel00000000003",
+    "channel_url": "https://www.youtube.com/channel/UCfakeChannel00000000003",
+    "title": "Fake channel 3",
+    "uploader_id": "@fakehandle2",
+    "uploader_url": "https://www.youtube.com/@fakehandle2",
+    "channel_follower_count": 3000,
+    "thumbnails": [
+     {
+      "url": "https://yt3.ggpht.com/fake-avatar-3=s88-c-k-c0x00ffffff-no-rj",
+      "height": 88,
+      "width": 88
+     },
+     {
+      "url": "https://yt3.ggpht.com/fake-avatar-3=s176-c-k-c0x00ffffff-no-rj",
+      "height": 176,
+      "width": 176
+     }
+    ],
+    "playlist_count": null,
+    "description": "Fake description 3",
+    "channel_is_verified": true
+   }
+  ]
+ }
+}

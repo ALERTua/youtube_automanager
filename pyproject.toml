@@ -1,27 +1,62 @@
 [project]
 name = "youtube-automanager"
-version = "0.1.2"
+version = "1.0.0"
 description = "Adds videos to your YouTube playlists automatically based on rules"
 readme = "README.md"
-requires-python = "==3.14.*"
+requires-python = "==3.15.*"
 dependencies = [
+    "alembic",
+    "apprise",
+    "apscheduler",
+    "cryptography",
+    "datalogic-py",
     "fastapi",
-    "global-logger",
-    "google-api-python-client",
-    "google-auth-oauthlib",
-    "knockknock",
-    "oauth2client",
-    "pendulum",
-    "python-worker",
-    "python-youtube",
-    "pyyaml",
+    "nicegui",
+    "packaging",
+    "psycopg[binary]",
+    "pydantic-settings",
     "sqlalchemy",
-    "trustme",
+    "tzdata",
     "uvicorn",
+    "yt-dlp",
 ]
 
 [dependency-groups]
 dev = [
+    "babel",
+    "httpx",
+    "httpx2",
     "pre-commit-uv",
+    "pytest",
+    "pytest-cov",
+    "pytest-timeout",
+    "pytest-xdist",
     "ruff",
+    "ty",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# A test that hangs ends after this many seconds. The longest designed wait of the suite is 90 s, in the tests of the
+# runner that start real child processes.
+timeout = 120
+# Each warning fails its test, so a new deprecation shows up in the run and not after the next upgrade.
+filterwarnings = ["error"]
+
+# The message catalog template of the user interface. After a change of a translated text, run this command in the
+# repository root:
+# uv run pybabel extract -F pyproject.toml --add-location=file --sort-output --add-comments=Translators: -o youtube_automanager/i18n/messages.pot youtube_automanager
+[[tool.babel.mappings]]
+method = "python"
+pattern = "**.py"
+
+[tool.ty.src]
+include = ["youtube_automanager", "tests"]
+
+# The test helper `element_of` returns `ui.element`, and typed helpers for each element kind are a later change.
+[[tool.ty.overrides]]
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"

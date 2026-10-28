@@ -1,0 +1,21 @@
+# Start: copy .env.example to .env, set COOKIES_KEY and TZ in it, then run "docker compose up -d".
+# The web UI and the API answer on port 8080 of the host. The web UI has no password by default. Set UI_PASSWORD
+# in .env to add one. The password goes over plain HTTP, so reach the service from outside through a VPN or through
+# a reverse proxy with HTTPS.
+services:
+  youtube-automanager:
+    image: ghcr.io/alertua/youtube_automanager:latest
+    build: .
+    container_name: youtube_automanager
+    restart: unless-stopped
+    # The stop of the service waits up to 10 s for the child process of a run alone, and "docker stop" waits 10 s.
+    stop_grace_period: 30s
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      # The database and the yt-dlp releases of the updater.
+      - ./data:/data
+    # The service runs as the user 1000:1000 of the image. If ./data belongs to another user, give that user here,
+    # for example "99:100" on Unraid.
+    # user: "1000:1000"
