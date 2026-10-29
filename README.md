@@ -325,34 +325,6 @@ A route that starts a run, checks the session, refreshes the lists or deletes a 
 
 </details>
 
-<details>
-<summary>Migration from version 0.1</summary>
-
-Version 1.0 replaces version 0.1 completely. It reads no YAML configuration, and it uses no Data API. The old data folder and the old configuration do not move to the new service, so you make the rules again in the web UI.
-
-What changed:
-
-- The rules live in the database, and you edit them in the web UI. The service does not read the file `youtube_automanager.yaml` any more.
-- The service uses the cookies of your browser session, not an OAuth client of Google Cloud. The service does not use the client secrets file and the stored tokens of version 0.1 any more.
-- A rule matches a channel only by its channel ID, which you choose from your subscriptions or from a search. A channel name or a handle can change, and another channel can take it later.
-- The criteria of a rule now combine with "all of" by default. In version 0.1, a channel and a title pattern of one rule combined with "or". So the rule added each video of the channel, and each video with that title from any subscription.
-- Watch Later works as a target playlist.
-- The service runs all the time with its own schedule. It needs no cron job and no external scheduler.
-
-How to move:
-
-1. Write down the rules of your `youtube_automanager.yaml`: the channels, the title patterns, the minimum duration and the target playlist of each rule.
-2. Stop and remove the container of version 0.1.
-3. Start the new version with a new folder, as the section "Install" tells.
-4. Upload your cookies on the Settings page, as the section "Connect your YouTube account" tells.
-5. On the Rules page, click "Refresh lists", then make each rule again. A minimum duration of 120 seconds becomes the condition "Duration is at least 2:00", or use the switch "No Shorts".
-6. Check each rule with "Preview". The first run of each channel takes a baseline. So use "Apply to videos from a date" for the videos since the stop of the old service.
-7. When the new service works, delete the old data folder and the credentials of the Google Cloud project.
-
-The image tags `0.1` and `0.1.2` keep version 0.1, if you need it again.
-
-</details>
-
 ## Contributing
 
 To run the service from the source code, run the tests or update the translations, read [CONTRIBUTING.md](CONTRIBUTING.md).
