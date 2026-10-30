@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  youtube_automanager\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-28 23:36+0200\n"
+"POT-Creation-Date: 2026-10-30 18:08+0200\n"
 "PO-Revision-Date: 2026-10-27 21:20+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: uk\n"
@@ -1171,6 +1171,10 @@ msgstr "Запустити зараз"
 #: youtube_automanager/web/ui/notification_targets.py
 msgid "Run summary"
 msgstr "Підсумок запуску"
+
+#: youtube_automanager/web/ui/notification_targets.py
+msgid "Run summary without videos and errors"
+msgstr "Підсумок запуску без відео й помилок"
 
 #: youtube_automanager/web/ui/common.py
 #, python-brace-format

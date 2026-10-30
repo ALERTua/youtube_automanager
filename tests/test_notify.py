@@ -104,6 +104,7 @@ def test_each_event_has_its_level():
         Event.COOKIE_SESSION_DEAD: Level.FAILURE,
         Event.COOKIE_EXPIRY_WARNING: Level.WARNING,
         Event.RUN_SUMMARY: Level.SUCCESS,
+        Event.RUN_SUMMARY_EMPTY: Level.SUCCESS,
         Event.RUN_FAILED: Level.FAILURE,
         Event.CHANNEL_ERROR: Level.WARNING,
         Event.YTDLP_UPDATE_RESULT: Level.INFO,
@@ -379,6 +380,7 @@ def test_the_repr_of_a_target_hides_its_url():
     ("notification", "event"),
     [
         (notify.run_summary(_videos(2), ["an error"]), Event.RUN_SUMMARY),
+        (notify.run_summary([], []), Event.RUN_SUMMARY_EMPTY),
         (notify.run_failed("boom"), Event.RUN_FAILED),
         (notify.cookie_session_dead(), Event.COOKIE_SESSION_DEAD),
         (notify.cookie_expiry(1, datetime(2026, 10, 12, tzinfo=UTC)), Event.COOKIE_EXPIRY_WARNING),
@@ -459,6 +461,34 @@ def test_run_summary_without_videos_says_so():
 
     assert "0 videos added" in notification.title
     assert "no videos" in notification.body
+
+
+@pytest.mark.parametrize(
+    ("added", "errors", "event"),
+    [
+        (0, [], Event.RUN_SUMMARY_EMPTY),
+        (0, ["Channel A: HTTP Error 404"], Event.RUN_SUMMARY),
+        (1, [], Event.RUN_SUMMARY),
+    ],
+)
+def test_only_a_run_without_videos_and_errors_gives_the_empty_summary(added, errors, event):
+    assert notify.run_summary(_videos(added), errors).event is event
+
+
+def test_a_target_without_the_empty_summary_gets_the_other_summaries(sent):
+    target = Target("t", "testcapture://t", events=DEFAULT_EVENTS - {Event.RUN_SUMMARY_EMPTY})
+    notifier = Notifier([target])
+
+    empty = notifier.send(notify.run_summary([], []))
+    with_error = notifier.send(notify.run_summary([], ["an error"]))
+    with_video = notifier.send(notify.run_summary(_videos(1), []))
+
+    assert (empty, with_error, with_video) == (
+        SendReport(skipped=("t",)),
+        SendReport(succeeded=("t",)),
+        SendReport(succeeded=("t",)),
+    )
+    assert len(sent) == 2
 
 
 @pytest.mark.parametrize(("days_left", "when"), [(3, "in 3 days"), (1, "in 1 day"), (0, "today")])

@@ -30,6 +30,7 @@ EVENT_LABELS = {
     Event.COOKIE_SESSION_DEAD: N_("Cookies refused"),
     Event.COOKIE_EXPIRY_WARNING: N_("Cookies expire soon"),
     Event.RUN_SUMMARY: N_("Run summary"),
+    Event.RUN_SUMMARY_EMPTY: N_("Run summary without videos and errors"),
     Event.RUN_FAILED: N_("Run failed"),
     Event.CHANNEL_ERROR: N_("Channel error"),
     Event.YTDLP_UPDATE_RESULT: N_("yt-dlp update"),

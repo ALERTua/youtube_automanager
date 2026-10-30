@@ -44,6 +44,8 @@ class Event(StrEnum):
     COOKIE_SESSION_DEAD = "cookie_session_dead"
     COOKIE_EXPIRY_WARNING = "cookie_expiry_warning"
     RUN_SUMMARY = "run_summary"
+    # The summary of a run without an added video and without an error, so a target can leave out only these.
+    RUN_SUMMARY_EMPTY = "run_summary_empty"
     RUN_FAILED = "run_failed"
     CHANNEL_ERROR = "channel_error"
     YTDLP_UPDATE_RESULT = "ytdlp_update_result"
@@ -56,6 +58,7 @@ EVENT_LEVELS: dict[Event, Level] = {
     Event.COOKIE_SESSION_DEAD: Level.FAILURE,
     Event.COOKIE_EXPIRY_WARNING: Level.WARNING,
     Event.RUN_SUMMARY: Level.SUCCESS,
+    Event.RUN_SUMMARY_EMPTY: Level.SUCCESS,
     Event.RUN_FAILED: Level.FAILURE,
     Event.CHANNEL_ERROR: Level.WARNING,
     Event.YTDLP_UPDATE_RESULT: Level.INFO,
@@ -69,6 +72,7 @@ DEFAULT_EVENTS: frozenset[Event] = frozenset(
         Event.COOKIE_SESSION_DEAD,
         Event.COOKIE_EXPIRY_WARNING,
         Event.RUN_SUMMARY,
+        Event.RUN_SUMMARY_EMPTY,
         Event.RUN_FAILED,
         Event.CHANNEL_ERROR,
         Event.YTDLP_UPDATE_RESULT,
@@ -232,6 +236,7 @@ def _limited(lines: Sequence[str]) -> list[str]:
 
 
 def run_summary(added: Sequence[AddedVideo], errors: Sequence[str]) -> Notification:
+    """Sum up a run. A run without an added video and without an error gives the event ``RUN_SUMMARY_EMPTY``."""
     title = f"{APP_NAME}: {_count(len(added), 'video')} added"
     if errors:
         title += f", {_count(len(errors), 'error')}"
@@ -244,7 +249,8 @@ def run_summary(added: Sequence[AddedVideo], errors: Sequence[str]) -> Notificat
     if errors:
         items = [f"- {error}" for error in errors]
         parts.append("\n".join([f"{_count(len(errors), 'error')}:", *_limited(items)]))
-    return Notification(Event.RUN_SUMMARY, title, "\n\n".join(parts))
+    event = Event.RUN_SUMMARY if added or errors else Event.RUN_SUMMARY_EMPTY
+    return Notification(event, title, "\n\n".join(parts))
 
 
 def run_failed(error_text: str) -> Notification:
