@@ -1272,7 +1272,9 @@ def test_the_real_wiring_reads_through_yt_dlp_functions_and_sends_to_the_stored_
     monkeypatch.setattr(public, "iter_channel_uploads", iter_channel_uploads)
     monkeypatch.setattr(public, "shorts_video_ids", shorts_video_ids)
     with db_sessions.begin() as session:
-        session.add(NotificationTarget(name="t", url="testsync://t", min_level=0, events=["run_summary"], enabled=True))
+        session.add(
+            NotificationTarget(name="t", url="testsync://t", min_level=0, events=["run_summary_empty"], enabled=True)
+        )
     sync.rule("no shorts", ANY, channels=[A], no_shorts=True)
     old = entries("old", 30)
     sync.sources.uploads[A] = [entry("short", duration_s=20), *old]

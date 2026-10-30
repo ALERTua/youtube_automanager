@@ -331,6 +331,7 @@ def test_the_request_budget_table_starts_empty_with_one_row_at_most_and_downgrad
 
 
 BREAKER_COLUMNS = {"breaker_until", "breaker_level", "breaker_reason", "breaker_opened_at"}
+REQUEST_BREAKER = "a7d4c2e9f1b3"
 
 
 def insert_target(connection, target_id: int, events: list[str]) -> None:
@@ -362,7 +363,7 @@ def test_the_breaker_columns_keep_the_budget_and_each_stored_target_gets_the_bre
             # A target that has the event already, for example after a downgrade that the user undid by hand.
             insert_target(connection, 3, ["request_breaker", "run_summary"])
 
-        command.upgrade(config, "head")
+        command.upgrade(config, REQUEST_BREAKER)
 
         columns = {column["name"]: column["nullable"] for column in inspect(engine).get_columns("request_budget")}
         assert {name: columns.get(name) for name in BREAKER_COLUMNS} == dict.fromkeys(BREAKER_COLUMNS, True)
@@ -392,6 +393,49 @@ def test_the_breaker_columns_keep_the_budget_and_each_stored_target_gets_the_bre
     finally:
         engine.dispose()
     assert current_revision(database_url) == REQUEST_BUDGET
+
+
+RUN_SUMMARY_EMPTY = "b3e8f15c7a29"
+
+
+def test_each_stored_target_with_the_run_summary_gets_the_empty_summary_after_it(database_url):
+    config = alembic_config(database_url)
+    command.upgrade(config, REQUEST_BREAKER)
+    engine = create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            insert_target(connection, 1, ["cookie_session_dead", "run_summary", "run_failed"])
+            insert_target(connection, 2, ["run_failed"])
+            insert_target(connection, 3, [])
+            # A target that has the event already, for example after a downgrade that the user undid by hand.
+            insert_target(connection, 4, ["run_summary", "run_summary_empty"])
+            # Without the run summary, the target got no empty summary before either.
+            insert_target(connection, 5, ["run_summary_empty"])
+
+        command.upgrade(config, RUN_SUMMARY_EMPTY)
+
+        with engine.begin() as connection:
+            assert stored_events(connection) == {
+                1: ["cookie_session_dead", "run_summary", "run_summary_empty", "run_failed"],
+                2: ["run_failed"],
+                3: [],
+                4: ["run_summary", "run_summary_empty"],
+                5: ["run_summary_empty"],
+            }
+
+        command.downgrade(config, REQUEST_BREAKER)
+
+        with engine.connect() as connection:
+            assert stored_events(connection) == {
+                1: ["cookie_session_dead", "run_summary", "run_failed"],
+                2: ["run_failed"],
+                3: [],
+                4: ["run_summary"],
+                5: [],
+            }
+    finally:
+        engine.dispose()
+    assert current_revision(database_url) == REQUEST_BREAKER
 
 
 def test_comparison_finds_a_column_that_the_migrations_lack(sqlite_url):
