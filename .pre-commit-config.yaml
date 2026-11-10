@@ -27,7 +27,7 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.13.6
+    rev: 0.13.7
     hooks:
       - id: uv-lock
 
@@ -51,7 +51,7 @@ repos:
 
   # Workflow security audit: https://docs.zizmor.sh
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: v1.31.1
+    rev: v1.32.0
     hooks:
       - id: zizmor
         args: [--offline, --config=.github/zizmor.yml]
